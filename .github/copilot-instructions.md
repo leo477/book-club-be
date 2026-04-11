@@ -78,6 +78,7 @@ src/
 | SEO, microcopy, semantic HTML, API docs, i18n copy | `web-quality-enhancer` |
 | Pre-commit review, PR readiness, Husky | `reviewer` |
 | Angular architecture, signals, routing, forms, services | `dev` |
+| Java backend, Spring Boot, JPA, Kafka, microservices | `java-backend-dev` |
 
 ### Delegation Rules
 
@@ -100,3 +101,4 @@ When invoking agents via the `task` tool, **always use the model specified below
 | `tester` | `gpt-4.1` | Visual regression, Lighthouse, contract testing setup |
 | `ui` | `claude-haiku-4.5` | Design system, Tailwind, animations, accessibility |
 | `web-quality-enhancer` | `claude-sonnet-4.6` | SEO, microcopy, semantic HTML, API docs |
+| `java-backend-dev` | `claude-sonnet-4.6` | Java 21 Spring Boot microservices, JPA, Kafka, REST API design |
