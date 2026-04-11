@@ -1,0 +1,42 @@
+api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/main/java/**/controller/**
+          - src/main/java/**/rest/**
+
+service:
+  - changed-files:
+      - any-glob-to-any-file: src/main/java/**/service/**
+
+config:
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/main/resources/**
+          - src/main/java/**/config/**
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Dockerfile
+          - .dockerignore
+          - docker-compose*.yml
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: src/test/**
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: .github/**
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "*.md"
+          - docs/**
+
+build:
+  - changed-files:
+      - any-glob-to-any-file:
+          - pom.xml
+          - .mvn/**

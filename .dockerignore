@@ -1,0 +1,8 @@
+.git
+.github
+.idea
+target/
+*.md
+*.log
+.mvn/wrapper/*.jar
+docker-compose*.yml

@@ -1,0 +1,96 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+# Default to least-privilege; individual jobs override only what they need.
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Set up Java 21
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Cache Maven dependencies
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      - name: Build and test
+        run: mvn verify --no-transfer-progress
+      - name: Upload test reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+
+  docker-build-push:
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbea8a61e3b08b10dc2bd3a9a6f0 # v5
+        with:
+          images: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/book-club-be
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ github.sha }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  trivy-scan:
+    needs: docker-build-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # required to upload SARIF results to GitHub Security tab
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # 0.30.0
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/book-club-be:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Upload Trivy scan SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
+        with:
+          sarif_file: trivy-results.sarif
+
+  deploy-render:
+    needs: trivy-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        run: curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
