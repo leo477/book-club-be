@@ -5,7 +5,6 @@ on:
     branches:
       - main
 
-# Default to least-privilege; individual jobs override only what they need.
 permissions:
   contents: read
 
@@ -14,7 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-test:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Ruff check
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+      - name: Mypy strict
+        run: mypy app/
+
+  test:
+    needs: lint
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -33,39 +52,27 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - name: Set up Java 21
-        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          distribution: temurin
-          java-version: 21
-      - name: Cache Maven dependencies
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-maven-
-      - name: Build and test
-        run: mvn verify --no-transfer-progress
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run pytest
+        run: pytest -v --tb=short
         env:
-          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/bookclub_test
-          SPRING_DATASOURCE_USERNAME: test
-          SPRING_DATASOURCE_PASSWORD: test
-      - name: Upload test reports
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: surefire-reports
-          path: target/surefire-reports/
-
-      - name: Upload JaCoCo coverage report
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_test
+          SECRET_KEY: test-secret
+      - name: Upload pytest results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: jacoco-report
-          path: target/site/jacoco/
+          name: pytest-results
+          path: .pytest_cache/
 
   docker-build-push:
-    needs: build-test
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -100,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write # required to upload SARIF results to GitHub Security tab
+      security-events: write
     steps:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # 0.30.0
@@ -123,12 +130,11 @@ jobs:
     steps:
       - name: Trigger Render deploy
         run: curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
-
       - name: Wait for deploy to be healthy
         run: |
           echo "Waiting for Render deploy to complete..."
           for i in $(seq 1 24); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.RENDER_APP_URL }}/actuator/health")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.RENDER_APP_URL }}/health")
             if [ "$STATUS" = "200" ]; then
               echo "App is healthy (HTTP 200)"
               exit 0

@@ -1,18 +1,17 @@
 api:
   - changed-files:
       - any-glob-to-any-file:
-          - src/main/java/**/controller/**
-          - src/main/java/**/rest/**
+          - app/routers/**
 
 service:
   - changed-files:
-      - any-glob-to-any-file: src/main/java/**/service/**
+      - any-glob-to-any-file: app/services/**
 
 config:
   - changed-files:
       - any-glob-to-any-file:
-          - src/main/resources/**
-          - src/main/java/**/config/**
+          - app/config.py
+          - app/database.py
 
 docker:
   - changed-files:
@@ -23,7 +22,7 @@ docker:
 
 tests:
   - changed-files:
-      - any-glob-to-any-file: src/test/**
+      - any-glob-to-any-file: tests/**
 
 ci:
   - changed-files:
@@ -38,5 +37,7 @@ docs:
 build:
   - changed-files:
       - any-glob-to-any-file:
-          - pom.xml
-          - .mvn/**
+          - pyproject.toml
+          - requirements*.txt
+          - alembic.ini
+          - alembic/**
