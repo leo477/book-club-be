@@ -79,6 +79,28 @@ jobs:
         with:
           name: pytest-results-pr-${{ github.event.pull_request.number }}
           path: .pytest_cache/
+  sonarcloud:
+    name: SonarCloud
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0 # full history for blame/annotations
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-pr-${{ github.event.pull_request.number }}
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.qualitygate.wait=true
+
   security-scan:
     runs-on: ubuntu-latest
     steps:
