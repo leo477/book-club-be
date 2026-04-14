@@ -1,5 +1,6 @@
 import pytest
 
+
 # Helper functions
 async def register_user(async_client, email="test@example.com", password="password123", displayName="Test User", role="user"):
     return await async_client.post("/api/v1/auth/register", json={

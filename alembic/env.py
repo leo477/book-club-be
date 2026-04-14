@@ -2,11 +2,11 @@ import asyncio
 import os
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from alembic import context
 from app.database import Base
-from app.models import *  # noqa: F401, F403
+from app.models import *  # noqa: F403
 
 config = context.config
 
@@ -41,7 +41,7 @@ async def run_async_migrations() -> None:
     await connectable.dispose()
 
 
-def do_run_migrations(connection) -> None:  # type: ignore[no-untyped-def]
+def do_run_migrations(connection: object) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()

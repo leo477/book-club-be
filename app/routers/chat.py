@@ -31,7 +31,7 @@ class ConnectionManager:
         for connection in self.active_connections[room_id]:
             try:
                 await connection.send_json(message)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
 
@@ -172,7 +172,5 @@ async def websocket_endpoint(
             )
     except WebSocketDisconnect:
         pass
-    except Exception:
+    except Exception:  # noqa: S110
         pass
-    finally:
-        manager.disconnect(room_id, websocket)

@@ -4,7 +4,6 @@ from datetime import datetime
 from sqlalchemy import DateTime, Enum, ForeignKey, PrimaryKeyConstraint, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql import func
 
 from app.database import Base
 

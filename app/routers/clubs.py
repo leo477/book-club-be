@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db_dep, get_settings_dep
 from app.config import Settings
+from app.dependencies import get_current_user, get_db_dep, get_settings_dep
 from app.models.club import Club
 from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
@@ -175,7 +175,7 @@ async def cancel_club(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
 
     club.status = "cancelled"
-    club.cancelled_at = datetime.now(tz=timezone.utc)
+    club.cancelled_at = datetime.now(tz=UTC)
     await db.commit()
     await db.refresh(club)
     return await build_club_response(club, db)

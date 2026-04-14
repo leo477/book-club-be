@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
@@ -22,7 +22,7 @@ class UserProfileResponse(BaseModel):
     email: str
     displayName: str
     role: str
-    avatarUrl: Optional[str] = None
+    avatarUrl: str | None = None
     createdAt: str
     socialsPublic: bool
     socials: dict

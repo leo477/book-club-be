@@ -1,6 +1,5 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Callable
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request

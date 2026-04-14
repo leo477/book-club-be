@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, delete, select
@@ -129,7 +129,7 @@ async def ban_member(
     if not user_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    banned_at = datetime.now(tz=timezone.utc)
+    banned_at = datetime.now(tz=UTC)
     ban = ClubBan(
         id=uuid.uuid4(),
         club_id=cid,

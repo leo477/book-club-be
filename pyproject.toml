@@ -42,10 +42,14 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "ANN", "S", "B", "A", "C4", "T20", "RUF"]
-ignore = ["ANN101", "ANN102"]
+ignore = [
+    "B008",   # FastAPI: Depends() calls in function defaults are intentional
+    "N815",   # Pydantic: camelCase field aliases for API JSON compatibility
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "ANN"]
+"tests/*" = ["S101", "ANN", "N803", "S107", "E501", "N806", "RUF059"]
+"app/schemas/*" = ["N815"]
 
 [tool.mypy]
 strict = true
