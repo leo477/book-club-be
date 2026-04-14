@@ -37,11 +37,15 @@ class ConnectionManager:
             self.active_connections[room_id].remove(websocket)
 
     async def broadcast(self, room_id: str, message: dict[str, object]) -> None:
-        for connection in self.active_connections[room_id]:
+        for connection in list(self.active_connections[room_id]):
             try:
                 await connection.send_json(message)
-            except (WebSocketDisconnect, RuntimeError):
-                pass
+            except WebSocketDisconnect:
+                self.disconnect(room_id, connection)
+                logger.debug("WebSocket disconnected during broadcast for room %s", room_id)
+            except RuntimeError:
+                self.disconnect(room_id, connection)
+                logger.warning("Runtime error while broadcasting to room %s", room_id)
 
 
 logger = logging.getLogger(__name__)
