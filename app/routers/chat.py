@@ -17,13 +17,6 @@ from app.services.auth_service import decode_access_token
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
-def _sanitize_for_log(value: str) -> str:
-    return "".join(
-        ch if ch.isprintable() and ch not in "\r\n" else ("\\r" if ch == "\r" else "\\n" if ch == "\n" else "")
-        for ch in str(value)
-    )
-
-
 class ConnectionManager:
     def __init__(self) -> None:
         self.active_connections: dict[str, list[WebSocket]] = defaultdict(list)
@@ -42,10 +35,10 @@ class ConnectionManager:
                 await connection.send_json(message)
             except WebSocketDisconnect:
                 self.disconnect(room_id, connection)
-                logger.debug("WebSocket disconnected during broadcast for room %s", _sanitize_for_log(room_id))
+                logger.debug("WebSocket disconnected during broadcast")
             except RuntimeError:
                 self.disconnect(room_id, connection)
-                logger.warning("Runtime error while broadcasting to room %s", _sanitize_for_log(room_id))
+                logger.warning("Runtime error while broadcasting to a room")
 
 
 logger = logging.getLogger(__name__)
@@ -184,6 +177,6 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         pass
     except Exception as exc:
-        logger.exception("Unexpected WebSocket error in room %s", _sanitize_for_log(room_id), exc_info=exc)
+        logger.exception("Unexpected WebSocket error", exc_info=exc)
     finally:
         manager.disconnect(room_id, websocket)
