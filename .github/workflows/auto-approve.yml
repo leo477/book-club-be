@@ -1,0 +1,33 @@
+name: Auto Approve
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  pull-requests: write
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-latest
+    if: github.actor == 'leo477'
+    timeout-minutes: 15
+    steps:
+      - name: Wait for all required checks to pass
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Waiting for required checks on PR #${{ github.event.pull_request.number }}..."
+          gh pr checks ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --required \
+            --watch \
+            --interval 30
+
+      - name: Approve PR
+        uses: hmarr/auto-approve-action@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
