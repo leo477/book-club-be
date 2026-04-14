@@ -1,5 +1,7 @@
+import logging
 import uuid
 from collections import defaultdict
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
@@ -27,14 +29,15 @@ class ConnectionManager:
         if websocket in self.active_connections[room_id]:
             self.active_connections[room_id].remove(websocket)
 
-    async def broadcast(self, room_id: str, message: dict) -> None:  # type: ignore[type-arg]
+    async def broadcast(self, room_id: str, message: dict[str, object]) -> None:
         for connection in self.active_connections[room_id]:
             try:
                 await connection.send_json(message)
-            except Exception:  # noqa: S110
+            except (WebSocketDisconnect, RuntimeError):
                 pass
 
 
+logger = logging.getLogger(__name__)
 manager = ConnectionManager()
 
 
@@ -45,8 +48,8 @@ manager = ConnectionManager()
 )
 async def get_chat_rooms(
     club_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db_dep),
-    _current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[ChatRoomResponse]:
     result = await db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id))
     rooms = result.scalars().all()
@@ -60,10 +63,10 @@ async def get_chat_rooms(
 )
 async def get_messages(
     room_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _current_user: Annotated[User, Depends(get_current_user)],
     before: str | None = None,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db_dep),
-    _current_user: User = Depends(get_current_user),
 ) -> list[ChatMessageResponse]:
     query = (
         select(ChatMessage, User.display_name)
@@ -101,8 +104,8 @@ async def get_messages(
 async def send_message(
     room_id: uuid.UUID,
     body: SendMessageRequest,
-    db: AsyncSession = Depends(get_db_dep),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatMessageResponse:
     msg = ChatMessage(room_id=room_id, sender_id=current_user.id, text=body.text)
     db.add(msg)
@@ -121,7 +124,7 @@ async def send_message(
 async def websocket_endpoint(
     websocket: WebSocket,
     room_id: str,
-    db: AsyncSession = Depends(get_db_dep),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await manager.connect(room_id, websocket)
     try:
@@ -132,7 +135,6 @@ async def websocket_endpoint(
             token_data = decode_access_token(token, settings)
         except HTTPException:
             await websocket.close(code=1008)
-            manager.disconnect(room_id, websocket)
             return
 
         user_id = token_data.get("sub")
@@ -141,7 +143,6 @@ async def websocket_endpoint(
         user = user_result.scalar_one_or_none()
         if not user:
             await websocket.close(code=1008)
-            manager.disconnect(room_id, websocket)
             return
 
         while True:
@@ -170,5 +171,7 @@ async def websocket_endpoint(
             )
     except WebSocketDisconnect:
         pass
-    except Exception:  # noqa: S110
-        pass
+    except Exception as exc:
+        logger.exception("Unexpected WebSocket error in room %s", room_id, exc_info=exc)
+    finally:
+        manager.disconnect(room_id, websocket)

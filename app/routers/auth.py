@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
@@ -17,8 +18,8 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     req: RegisterRequest,
-    db: AsyncSession = Depends(get_db_dep),
-    settings: Settings = Depends(get_settings_dep),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> AuthResponse:
     result = await db.execute(select(User).where(User.email == req.email))
     if result.scalar_one_or_none() is not None:
@@ -47,8 +48,8 @@ async def register(
 @router.post("/login", response_model=AuthResponse, status_code=status.HTTP_200_OK)
 async def login(
     req: LoginRequest,
-    db: AsyncSession = Depends(get_db_dep),
-    settings: Settings = Depends(get_settings_dep),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> AuthResponse:
     result = await db.execute(select(User).where(User.email == req.email))
     user = result.scalar_one_or_none()
@@ -65,13 +66,13 @@ async def login(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
-    _current_user: User = Depends(get_current_user),
+    _current_user: Annotated[User, Depends(get_current_user)],
 ) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=UserProfileResponse, status_code=status.HTTP_200_OK)
 async def me(
-    current_user: User = Depends(get_current_user),
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserProfileResponse:
     return UserProfileResponse.model_validate(current_user)
