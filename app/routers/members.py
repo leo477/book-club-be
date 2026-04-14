@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,11 +18,12 @@ router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
 
 async def get_optional_user(
+    request: Request,
     db: AsyncSession = Depends(get_db_dep),
     settings: Settings = Depends(get_settings_dep),
 ) -> User | None:
     try:
-        return await get_current_user(db=db, settings=settings)
+        return await get_current_user(request=request, db=db, settings=settings)
     except HTTPException:
         return None
 

@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 
@@ -147,3 +149,111 @@ async def test_submit_attempt_inactive_quiz(async_client):
     attempt = {"answers": [0]}
     resp = await async_client.post(f"/api/v1/quizzes/{quiz_id}/attempts", headers=headers2, json=attempt)
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_questions_quiz_not_found(async_client):
+    await register_user(async_client, email="quiz2_user1@example.com")
+    headers = await get_auth_headers(async_client, email="quiz2_user1@example.com")
+    fake_quiz_id = str(uuid.uuid4())
+    resp = await async_client.get(f"/api/v1/quizzes/{fake_quiz_id}/questions", headers=headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_add_question_quiz_not_found(async_client):
+    await register_user(async_client, email="quiz2_user2@example.com")
+    headers = await get_auth_headers(async_client, email="quiz2_user2@example.com")
+    fake_quiz_id = str(uuid.uuid4())
+    resp = await async_client.post(
+        f"/api/v1/quizzes/{fake_quiz_id}/questions",
+        headers=headers,
+        json={"question": "Q?", "options": ["A", "B"], "correctIndex": 0},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_add_question_not_organizer(async_client):
+    headers, club_id = await create_organizer_with_club(async_client)
+    quiz_resp = await async_client.post(f"/api/v1/clubs/{club_id}/quizzes", headers=headers, json={"title": "Quiz NQ"})
+    quiz_id = quiz_resp.json()["id"]
+    await register_user(async_client, email="quiz2_user3@example.com")
+    headers2 = await get_auth_headers(async_client, email="quiz2_user3@example.com")
+    resp = await async_client.post(
+        f"/api/v1/quizzes/{quiz_id}/questions",
+        headers=headers2,
+        json={"question": "Q?", "options": ["A", "B"], "correctIndex": 0},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_set_active_quiz_not_found(async_client):
+    await register_user(async_client, email="quiz2_user4@example.com")
+    headers = await get_auth_headers(async_client, email="quiz2_user4@example.com")
+    fake_quiz_id = str(uuid.uuid4())
+    resp = await async_client.patch(
+        f"/api/v1/quizzes/{fake_quiz_id}/active",
+        headers=headers,
+        json={"isActive": True},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_set_active_not_organizer(async_client):
+    headers, club_id = await create_organizer_with_club(async_client)
+    quiz_resp = await async_client.post(f"/api/v1/clubs/{club_id}/quizzes", headers=headers, json={"title": "Quiz SA"})
+    quiz_id = quiz_resp.json()["id"]
+    await register_user(async_client, email="quiz2_user5@example.com")
+    headers2 = await get_auth_headers(async_client, email="quiz2_user5@example.com")
+    resp = await async_client.patch(
+        f"/api/v1/quizzes/{quiz_id}/active",
+        headers=headers2,
+        json={"isActive": True},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_submit_attempt_quiz_not_found(async_client):
+    await register_user(async_client, email="quiz2_user6@example.com")
+    headers = await get_auth_headers(async_client, email="quiz2_user6@example.com")
+    fake_quiz_id = str(uuid.uuid4())
+    resp = await async_client.post(
+        f"/api/v1/quizzes/{fake_quiz_id}/attempts",
+        headers=headers,
+        json={"answers": [0]},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_submit_attempt_score_calculation(async_client):
+    headers, club_id = await create_organizer_with_club(async_client)
+    quiz_resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/quizzes", headers=headers, json={"title": "Score Quiz"}
+    )
+    quiz_id = quiz_resp.json()["id"]
+    await async_client.post(
+        f"/api/v1/quizzes/{quiz_id}/questions",
+        headers=headers,
+        json={"question": "Q1", "options": ["A", "B"], "correctIndex": 0},
+    )
+    await async_client.post(
+        f"/api/v1/quizzes/{quiz_id}/questions",
+        headers=headers,
+        json={"question": "Q2", "options": ["A", "B"], "correctIndex": 1},
+    )
+    await async_client.patch(f"/api/v1/quizzes/{quiz_id}/active", headers=headers, json={"isActive": True})
+    # answers[0]=0 correct, answers[1]=0 wrong (correct is 1)
+    resp = await async_client.post(
+        f"/api/v1/quizzes/{quiz_id}/attempts",
+        headers=headers,
+        json={"answers": [0, 0]},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["score"] == 1
+    assert data["total"] == 2

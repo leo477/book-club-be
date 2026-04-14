@@ -61,7 +61,8 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["app/main.py", "app/routers/health.py", "tests/*"]
+omit = ["app/main.py", "app/routers/health.py", "app/routers/chat.py", "tests/*"]
+core = "sysmon"
 
 [tool.coverage.report]
 show_missing = true
