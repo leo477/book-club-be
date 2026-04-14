@@ -1,7 +1,7 @@
 import uuid
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -130,7 +130,7 @@ async def websocket_endpoint(
         settings = get_settings()
         try:
             token_data = decode_access_token(token, settings)
-        except Exception:
+        except HTTPException:
             await websocket.close(code=1008)
             manager.disconnect(room_id, websocket)
             return

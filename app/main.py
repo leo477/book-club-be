@@ -1,12 +1,11 @@
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import cast
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from app.config import get_settings
@@ -33,13 +32,14 @@ _API_DESCRIPTION = (
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     logger.info("Application starting", env=settings.ENV, version="1.0.0")
     yield
     logger.info("Application shutting down")
 
 
+# noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
 
@@ -99,7 +99,7 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def logging_middleware(request: Request, call_next: Callable) -> JSONResponse:  # type: ignore[type-arg]
+    async def logging_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
         bound_logger = logger.bind(
             method=request.method,
             url=str(request.url),
@@ -108,18 +108,18 @@ def create_app() -> FastAPI:
         bound_logger.info("Request received")
         response = await call_next(request)
         bound_logger.info("Request completed", status_code=response.status_code)
-        return cast(JSONResponse, response)
+        return response  # type: ignore[no-any-return]
 
     @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     @app.exception_handler(ValidationError)
-    async def validation_exception_handler(request: Request, exc: ValidationError) -> JSONResponse:
+    async def validation_exception_handler(_request: Request, exc: ValidationError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
     @app.exception_handler(Exception)
-    async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    async def generic_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled exception", exc_info=exc)
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 

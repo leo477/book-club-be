@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, delete, func, or_, select
@@ -30,7 +29,7 @@ async def get_optional_user(
     settings: Settings = Depends(get_settings_dep),
 ) -> User | None:
     try:
-        return cast(User | None, await get_current_user(request=request, db=db, settings=settings))
+        return await get_current_user(request=request, db=db, settings=settings)
     # noinspection PyBroadException
     except HTTPException:
         return None
@@ -95,7 +94,7 @@ async def list_my_clubs(
 @router.get("/{club_id}", response_model=ClubResponse)
 async def get_club(
     club_id: str,
-    current_user: User | None = Depends(get_optional_user),
+    _current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db_dep),
 ) -> ClubResponse:
     result = await db.execute(select(Club).where(Club.id == uuid.UUID(club_id)))

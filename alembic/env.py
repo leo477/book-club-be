@@ -4,9 +4,22 @@ from logging.config import fileConfig
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from alembic import context
+from alembic import context  # type: ignore[attr-defined]
 from app.database import Base
-from app.models import *  # noqa: F403
+from app.models import (  # noqa: F401
+    ChatMessage,
+    ChatRoom,
+    Club,
+    ClubBan,
+    ClubMember,
+    Meeting,
+    MeetingAttendee,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+    RandomizerSession,
+    User,
+)
 
 config = context.config
 
