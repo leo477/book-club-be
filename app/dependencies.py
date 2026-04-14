@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -26,8 +26,8 @@ def get_settings_dep() -> Settings:
 
 async def get_current_user(
     request: Request,
-    db: AsyncSession = Depends(get_db_dep),
-    settings: Settings = Depends(get_settings_dep),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> User:
     from app.models.user import User as UserModel
     from app.services.auth_service import decode_access_token

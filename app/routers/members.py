@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, delete, select
@@ -19,8 +20,8 @@ router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
 async def get_optional_user(
     request: Request,
-    db: AsyncSession = Depends(get_db_dep),
-    settings: Settings = Depends(get_settings_dep),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> User | None:
     try:
         return await get_current_user(request=request, db=db, settings=settings)
@@ -49,8 +50,8 @@ async def _require_organizer(club_id: uuid.UUID, user: User, db: AsyncSession) -
 @router.get("/members", response_model=list[MemberResponse])
 async def list_members(
     club_id: str,
-    _current_user: User | None = Depends(get_optional_user),
-    db: AsyncSession = Depends(get_db_dep),
+    _current_user: Annotated[User | None, Depends(get_optional_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> list[MemberResponse]:
     cid = uuid.UUID(club_id)
     result = await db.execute(
@@ -91,8 +92,8 @@ async def list_members(
 async def remove_member(
     club_id: str,
     user_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_dep),
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     cid = uuid.UUID(club_id)
     uid = uuid.UUID(user_id)
@@ -111,8 +112,8 @@ async def ban_member(
     club_id: str,
     user_id: str,
     body: BanRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_dep),
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> BanResponse:
     cid = uuid.UUID(club_id)
     uid = uuid.UUID(user_id)
@@ -148,8 +149,8 @@ async def ban_member(
 @router.get("/bans", response_model=list[BanResponse])
 async def list_bans(
     club_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_dep),
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> list[BanResponse]:
     cid = uuid.UUID(club_id)
     _ = await _require_organizer(cid, current_user, db)

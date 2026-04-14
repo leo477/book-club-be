@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,8 +22,8 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 @router.get("/me/stats", response_model=UserStatsResponse)
 async def get_my_stats(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_dep),
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> UserStatsResponse:
     clubs_result = await db.execute(
         select(func.count()).select_from(ClubMember).where(ClubMember.user_id == current_user.id)
@@ -55,8 +57,8 @@ async def get_my_stats(
 @router.patch("/me", response_model=UserProfileResponse)
 async def update_profile(
     body: UpdateProfileRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_dep),
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> UserProfileResponse:
     if body.displayName is not None:
         current_user.display_name = body.displayName
@@ -68,8 +70,8 @@ async def update_profile(
 @router.patch("/me/role", response_model=UserProfileResponse)
 async def update_role(
     body: UpdateRoleRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_dep),
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> UserProfileResponse:
     current_user.role = body.role
     await db.commit()
@@ -80,8 +82,8 @@ async def update_role(
 @router.patch("/me/socials", response_model=UserProfileResponse)
 async def update_socials(
     body: UpdateSocialsRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_dep),
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> UserProfileResponse:
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(current_user, field, value)
@@ -93,8 +95,8 @@ async def update_socials(
 @router.patch("/me/socials-visibility", response_model=UserProfileResponse)
 async def update_socials_visibility(
     body: UpdateSocialsVisibilityRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_dep),
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> UserProfileResponse:
     current_user.socials_public = body.socialsPublic
     await db.commit()

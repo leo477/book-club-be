@@ -1,4 +1,5 @@
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -16,8 +17,8 @@ router = APIRouter(prefix="/api/v1/clubs/{club_id}/meetings", tags=["meetings"])
 @router.get("", response_model=list[MeetingResponse], status_code=status.HTTP_200_OK)
 async def get_meetings(
     club_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db_dep),
-    _current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[MeetingResponse]:
     club_result = await db.execute(select(Club).where(Club.id == club_id))
     if club_result.scalar_one_or_none() is None:

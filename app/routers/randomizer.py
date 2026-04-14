@@ -1,4 +1,5 @@
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
@@ -36,8 +37,8 @@ def _build_response(session: RandomizerSession) -> RandomizerSessionResponse:
 @router.get("/history", response_model=list[RandomizerSessionResponse], status_code=status.HTTP_200_OK)
 async def get_history(
     club_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db_dep),
-    _current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[RandomizerSessionResponse]:
     result = await db.execute(
         select(RandomizerSession)
@@ -52,8 +53,8 @@ async def get_history(
 async def create_session(
     club_id: uuid.UUID,
     body: CreateRandomizerSessionRequest,
-    db: AsyncSession = Depends(get_db_dep),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> RandomizerSessionResponse:
     session = RandomizerSession(
         club_id=club_id,

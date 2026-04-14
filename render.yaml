@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: book-club-be
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: standard
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars: []
+    
+previews:
+  generation: off

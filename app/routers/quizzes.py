@@ -1,5 +1,5 @@
 import uuid
-from typing import cast
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -40,8 +40,8 @@ async def is_club_organizer(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSes
 )
 async def get_quizzes(
     club_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db_dep),
-    _current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[QuizResponse]:
     result = await db.execute(select(Quiz).where(Quiz.club_id == club_id))
     quizzes = result.scalars().all()
@@ -66,8 +66,8 @@ async def get_quizzes(
 async def create_quiz(
     club_id: uuid.UUID,
     req: CreateQuizRequest,
-    db: AsyncSession = Depends(get_db_dep),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> QuizResponse:
     if not await is_club_organizer(club_id, current_user.id, db):
         raise HTTPException(
@@ -105,8 +105,8 @@ async def create_quiz(
 )
 async def get_questions(
     quiz_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db_dep),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[QuizQuestionResponse]:
     quiz_result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
     quiz = quiz_result.scalar_one_or_none()
@@ -126,7 +126,7 @@ async def get_questions(
             id=str(q.id),
             quizId=str(q.quiz_id),
             question=q.question,
-            options=cast(list[str], q.options),
+            options=q.options,
             correctIndex=q.correct_index if organizer else None,
         )
         for q in questions_db
@@ -141,8 +141,8 @@ async def get_questions(
 async def add_question(
     quiz_id: uuid.UUID,
     req: AddQuestionRequest,
-    db: AsyncSession = Depends(get_db_dep),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> QuizQuestionResponse:
     quiz_result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
     quiz = quiz_result.scalar_one_or_none()
@@ -173,7 +173,7 @@ async def add_question(
         id=str(question.id),
         quizId=str(question.quiz_id),
         question=question.question,
-        options=cast(list[str], question.options),
+        options=question.options,
     )
 
 
@@ -185,8 +185,8 @@ async def add_question(
 async def set_active(
     quiz_id: uuid.UUID,
     req: SetActiveRequest,
-    db: AsyncSession = Depends(get_db_dep),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> QuizResponse:
     quiz_result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
     quiz = quiz_result.scalar_one_or_none()
@@ -224,8 +224,8 @@ async def set_active(
 async def submit_attempt(
     quiz_id: uuid.UUID,
     req: SubmitAttemptRequest,
-    db: AsyncSession = Depends(get_db_dep),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> AttemptResponse:
     quiz_result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
     quiz = quiz_result.scalar_one_or_none()
@@ -265,5 +265,5 @@ async def submit_attempt(
         userId=str(attempt.user_id),
         score=attempt.score,
         total=attempt.total,
-        answers=cast(list[int], attempt.answers),
+        answers=attempt.answers,
     )
