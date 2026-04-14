@@ -1,0 +1,141 @@
+name: Security Vulnerability Issues
+
+on:
+  schedule:
+    - cron: '0 9 * * 0'  # Every Sunday at 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  scan-and-manage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run pip-audit
+        id: audit
+        run: |
+          pip-audit -r requirements.txt --format=json -o pip-audit-results.json || true
+          echo "done=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create or close CVE issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let results = [];
+            try {
+              results = JSON.parse(fs.readFileSync('pip-audit-results.json', 'utf8'));
+            } catch {
+              core.info('No pip-audit results found or file is empty.');
+            }
+
+            // Collect all active CVE IDs from the scan
+            const activeCves = new Set();
+            const vulnsByVulnId = new Map();
+
+            for (const dep of results) {
+              for (const vuln of (dep.vulns ?? [])) {
+                const vulnId = vuln.id;
+                activeCves.add(vulnId);
+                vulnsByVulnId.set(vulnId, {
+                  dep: dep.name,
+                  version: dep.version,
+                  vuln,
+                });
+              }
+            }
+
+            // Fetch all open security issues managed by this workflow
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'security,automated',
+              state: 'open',
+              per_page: 100,
+            });
+
+            const openCveIssueMap = new Map();
+            for (const issue of openIssues) {
+              const match = issue.title.match(/\[(CVE-[\w-]+|PYSEC-[\w-]+)\]/);
+              if (match) {
+                openCveIssueMap.set(match[1], issue);
+              }
+            }
+
+            // Create issues for new CVEs
+            for (const [vulnId, info] of vulnsByVulnId) {
+              if (openCveIssueMap.has(vulnId)) {
+                core.info(`Issue already open for ${vulnId}, skipping.`);
+                continue;
+              }
+
+              const fixedIn = info.vuln.fix_versions?.join(', ') || 'no fix available yet';
+              const aliases = info.vuln.aliases?.join(', ') || '—';
+              const body = [
+                `## Security vulnerability: ${vulnId}`,
+                '',
+                `| Field | Value |`,
+                `|---|---|`,
+                `| **Package** | \`${info.dep}\` |`,
+                `| **Installed version** | \`${info.version}\` |`,
+                `| **Vulnerability ID** | \`${vulnId}\` |`,
+                `| **Aliases** | ${aliases} |`,
+                `| **Fix available in** | ${fixedIn} |`,
+                '',
+                `### Description`,
+                info.vuln.description ?? '_No description available._',
+                '',
+                `### Remediation`,
+                fixedIn !== 'no fix available yet'
+                  ? `Upgrade \`${info.dep}\` to version **${fixedIn}** or later.`
+                  : `No fixed version is available yet. Monitor the advisory for updates.`,
+                '',
+                `_Detected by [pip-audit](https://github.com/pypa/pip-audit) on ${new Date().toISOString().slice(0,10)}._`,
+              ].join('\n');
+
+              const { data: issue } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `[${vulnId}] ${info.dep} ${info.version} — security vulnerability`,
+                body,
+                labels: ['security', 'automated'],
+              });
+              core.info(`Created issue #${issue.number} for ${vulnId}: ${issue.html_url}`);
+            }
+
+            // Close issues for CVEs that are no longer detected
+            for (const [vulnId, issue] of openCveIssueMap) {
+              if (!activeCves.has(vulnId)) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: `**${vulnId}** is no longer detected by pip-audit — closing this issue automatically.\n\n_Scanned on ${new Date().toISOString().slice(0,10)}._`,
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+                core.info(`Closed resolved issue #${issue.number} (${vulnId})`);
+              }
+            }
+
+            core.info(`Scan complete. Active CVEs: ${activeCves.size}, open issues: ${openCveIssueMap.size}`);

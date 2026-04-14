@@ -19,22 +19,27 @@ jobs:
       contents: write
       pull-requests: write
       checks: write
+      security-events: write
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       - name: 'Qodana Scan'
+        id: qodana
         uses: JetBrains/qodana-action@v2025.2
-        env:
-          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
         with:
-          # When pr-mode is set to true, Qodana analyzes only the files that have been changed
+          linter: jetbrains/qodana-python:2025.2
           pr-mode: false
           use-caches: true
           post-pr-comment: true
           use-annotations: true
-          # Upload Qodana results (SARIF, other artifacts, logs) as an artifact to the job
-          upload-result: false
-          # quick-fixes available in Ultimate and Ultimate Plus plans
+          upload-result: true
           push-fixes: 'none'
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+      - name: 'Upload SARIF to GitHub Security tab'
+        uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
+        if: always() && steps.qodana.outputs.results-dir != ''
+        with:
+          sarif_file: ${{ steps.qodana.outputs.results-dir }}/qodana.sarif.json

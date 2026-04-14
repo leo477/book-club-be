@@ -1,0 +1,269 @@
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.dependencies import get_current_user, get_db_dep
+from app.models.club_member import ClubMember
+from app.models.quiz import Quiz, QuizAttempt, QuizQuestion
+from app.models.user import User
+from app.schemas.quizzes import (
+    AddQuestionRequest,
+    AttemptResponse,
+    CreateQuizRequest,
+    QuizQuestionResponse,
+    QuizResponse,
+    SetActiveRequest,
+    SubmitAttemptRequest,
+)
+
+router = APIRouter(prefix="/api/v1", tags=["quizzes"])
+
+
+async def is_club_organizer(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
+    result = await db.execute(
+        select(ClubMember).where(
+            ClubMember.club_id == club_id,
+            ClubMember.user_id == user_id,
+            ClubMember.role == "organizer",
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+@router.get(
+    "/clubs/{club_id}/quizzes",
+    response_model=list[QuizResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_quizzes(
+    club_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _current_user: Annotated[User, Depends(get_current_user)],
+) -> list[QuizResponse]:
+    result = await db.execute(select(Quiz).where(Quiz.club_id == club_id))
+    quizzes = result.scalars().all()
+    return [
+        QuizResponse(
+            id=str(q.id),
+            clubId=str(q.club_id),
+            createdBy=str(q.created_by),
+            title=q.title,
+            description=q.description,
+            isActive=q.is_active,
+        )
+        for q in quizzes
+    ]
+
+
+@router.post(
+    "/clubs/{club_id}/quizzes",
+    response_model=QuizResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_quiz(
+    club_id: uuid.UUID,
+    req: CreateQuizRequest,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> QuizResponse:
+    if not await is_club_organizer(club_id, current_user.id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "Not an organizer", "code": "FORBIDDEN"},
+        )
+
+    quiz = Quiz(
+        id=uuid.uuid4(),
+        club_id=club_id,
+        created_by=current_user.id,
+        title=req.title,
+        description=req.description,
+        is_active=False,
+    )
+    db.add(quiz)
+    await db.flush()
+    await db.refresh(quiz)
+
+    return QuizResponse(
+        id=str(quiz.id),
+        clubId=str(quiz.club_id),
+        createdBy=str(quiz.created_by),
+        title=quiz.title,
+        description=quiz.description,
+        isActive=quiz.is_active,
+    )
+
+
+@router.get(
+    "/quizzes/{quiz_id}/questions",
+    response_model=list[QuizQuestionResponse],
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+)
+async def get_questions(
+    quiz_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[QuizQuestionResponse]:
+    quiz_result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
+    quiz = quiz_result.scalar_one_or_none()
+    if quiz is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Quiz not found", "code": "QUIZ_NOT_FOUND"},
+        )
+
+    organizer = await is_club_organizer(quiz.club_id, current_user.id, db)
+
+    questions_result = await db.execute(select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id))
+    questions_db = questions_result.scalars().all()
+
+    return [
+        QuizQuestionResponse(
+            id=str(q.id),
+            quizId=str(q.quiz_id),
+            question=q.question,
+            options=q.options,
+            correctIndex=q.correct_index if organizer else None,
+        )
+        for q in questions_db
+    ]
+
+
+@router.post(
+    "/quizzes/{quiz_id}/questions",
+    response_model=QuizQuestionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_question(
+    quiz_id: uuid.UUID,
+    req: AddQuestionRequest,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> QuizQuestionResponse:
+    quiz_result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
+    quiz = quiz_result.scalar_one_or_none()
+    if quiz is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Quiz not found", "code": "QUIZ_NOT_FOUND"},
+        )
+
+    if not await is_club_organizer(quiz.club_id, current_user.id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "Not an organizer", "code": "FORBIDDEN"},
+        )
+
+    question = QuizQuestion(
+        id=uuid.uuid4(),
+        quiz_id=quiz_id,
+        question=req.question,
+        options=req.options,
+        correct_index=req.correctIndex,
+    )
+    db.add(question)
+    await db.flush()
+    await db.refresh(question)
+
+    return QuizQuestionResponse(
+        id=str(question.id),
+        quizId=str(question.quiz_id),
+        question=question.question,
+        options=question.options,
+    )
+
+
+@router.patch(
+    "/quizzes/{quiz_id}/active",
+    response_model=QuizResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def set_active(
+    quiz_id: uuid.UUID,
+    req: SetActiveRequest,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> QuizResponse:
+    quiz_result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
+    quiz = quiz_result.scalar_one_or_none()
+    if quiz is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Quiz not found", "code": "QUIZ_NOT_FOUND"},
+        )
+
+    if not await is_club_organizer(quiz.club_id, current_user.id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "Not an organizer", "code": "FORBIDDEN"},
+        )
+
+    quiz.is_active = req.isActive
+    await db.flush()
+    await db.refresh(quiz)
+
+    return QuizResponse(
+        id=str(quiz.id),
+        clubId=str(quiz.club_id),
+        createdBy=str(quiz.created_by),
+        title=quiz.title,
+        description=quiz.description,
+        isActive=quiz.is_active,
+    )
+
+
+@router.post(
+    "/quizzes/{quiz_id}/attempts",
+    response_model=AttemptResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_attempt(
+    quiz_id: uuid.UUID,
+    req: SubmitAttemptRequest,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> AttemptResponse:
+    quiz_result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
+    quiz = quiz_result.scalar_one_or_none()
+    if quiz is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Quiz not found", "code": "QUIZ_NOT_FOUND"},
+        )
+
+    if not quiz.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "Quiz is not active", "code": "QUIZ_NOT_ACTIVE"},
+        )
+
+    questions_result = await db.execute(select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id))
+    questions_db = questions_result.scalars().all()
+    total = len(questions_db)
+
+    score = sum(1 for i, q in enumerate(questions_db) if i < len(req.answers) and req.answers[i] == q.correct_index)
+
+    attempt = QuizAttempt(
+        id=uuid.uuid4(),
+        quiz_id=quiz_id,
+        user_id=current_user.id,
+        score=score,
+        total=total,
+        answers=req.answers,
+    )
+    db.add(attempt)
+    await db.flush()
+    await db.refresh(attempt)
+
+    return AttemptResponse(
+        id=str(attempt.id),
+        quizId=str(attempt.quiz_id),
+        userId=str(attempt.user_id),
+        score=attempt.score,
+        total=attempt.total,
+        answers=attempt.answers,
+    )

@@ -79,6 +79,7 @@ src/
 | Pre-commit review, PR readiness, Husky | `reviewer` |
 | Angular architecture, signals, routing, forms, services | `dev` |
 | Java backend, Spring Boot, JPA, Kafka, microservices | `java-backend-dev` |
+| Python backend, FastAPI, Django, SQLAlchemy, PostgreSQL | `python-backend-dev` |
 
 ### Delegation Rules
 
@@ -102,3 +103,4 @@ When invoking agents via the `task` tool, **always use the model specified below
 | `ui` | `claude-haiku-4.5` | Design system, Tailwind, animations, accessibility |
 | `web-quality-enhancer` | `claude-sonnet-4.6` | SEO, microcopy, semantic HTML, API docs |
 | `java-backend-dev` | `claude-sonnet-4.6` | Java 21 Spring Boot microservices, JPA, Kafka, REST API design |
+| `python-backend-dev` | `claude-sonnet-4.6` | Python FastAPI/Django REST APIs, SQLAlchemy, Pydantic, pytest, Docker |
