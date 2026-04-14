@@ -16,9 +16,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    role: Mapped[str] = mapped_column(
-        Enum("user", "organizer", name="user_role_enum"), nullable=False, default="user"
-    )
+    role: Mapped[str] = mapped_column(Enum("user", "organizer", name="user_role_enum"), nullable=False, default="user")
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     socials_public: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     telegram: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -27,6 +25,4 @@ class User(Base):
     linkedin: Mapped[str | None] = mapped_column(String(100), nullable=True)
     github: Mapped[str | None] = mapped_column(String(100), nullable=True)
     goodreads: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -1,4 +1,5 @@
 import uuid
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -117,9 +118,7 @@ async def get_questions(
 
     organizer = await is_club_organizer(quiz.club_id, current_user.id, db)
 
-    questions_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
-    )
+    questions_result = await db.execute(select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id))
     questions_db = questions_result.scalars().all()
 
     return [
@@ -127,7 +126,7 @@ async def get_questions(
             id=str(q.id),
             quizId=str(q.quiz_id),
             question=q.question,
-            options=q.options,
+            options=cast(list[str], q.options),
             correctIndex=q.correct_index if organizer else None,
         )
         for q in questions_db
@@ -174,8 +173,7 @@ async def add_question(
         id=str(question.id),
         quizId=str(question.quiz_id),
         question=question.question,
-        options=question.options,
-        correctIndex=question.correct_index,
+        options=cast(list[str], question.options),
     )
 
 
@@ -243,17 +241,11 @@ async def submit_attempt(
             detail={"error": "Quiz is not active", "code": "QUIZ_NOT_ACTIVE"},
         )
 
-    questions_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
-    )
+    questions_result = await db.execute(select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id))
     questions_db = questions_result.scalars().all()
     total = len(questions_db)
 
-    score = sum(
-        1
-        for i, q in enumerate(questions_db)
-        if i < len(req.answers) and req.answers[i] == q.correct_index
-    )
+    score = sum(1 for i, q in enumerate(questions_db) if i < len(req.answers) and req.answers[i] == q.correct_index)
 
     attempt = QuizAttempt(
         id=uuid.uuid4(),
@@ -273,5 +265,5 @@ async def submit_attempt(
         userId=str(attempt.user_id),
         score=attempt.score,
         total=attempt.total,
-        answers=attempt.answers,
+        answers=cast(list[int], attempt.answers),
     )

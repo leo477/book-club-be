@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 concurrency:
   group: pr-${{ github.event.pull_request.number }}
@@ -32,6 +33,8 @@ jobs:
         run: ruff format --check .
       - name: Mypy strict
         run: mypy app/
+      - name: Bandit security lint
+        run: bandit -r app/ -ll -x app/routers/health.py
 
   test:
     needs: lint
@@ -46,7 +49,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U test -d bookclub_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -60,17 +63,59 @@ jobs:
           cache: 'pip'
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
-      - name: Run pytest
-        run: pytest -v --tb=short
+      - name: Run pytest with coverage
+        run: pytest -v --tb=short --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=70
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_test
           SECRET_KEY: test-secret
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-pr-${{ github.event.pull_request.number }}
+          path: coverage.xml
       - name: Upload pytest results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pytest-results-pr-${{ github.event.pull_request.number }}
           path: .pytest_cache/
+  sonarcloud:
+    name: SonarCloud
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0 # full history for blame/annotations
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-pr-${{ github.event.pull_request.number }}
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.qualitygate.wait=true
+      - name: Export SonarCloud issues as SARIF
+        if: always()
+        run: |
+          curl -sf -u "${SONAR_TOKEN}:" \
+            "https://sonarcloud.io/api/issues/export_sarif?projectKey=leo477_book-club-be&organization=leo477" \
+            -o sonarcloud.sarif.json \
+          || echo '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"SonarCloud","rules":[]}},"results":[]}]}' > sonarcloud.sarif.json
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Upload SonarCloud SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: sonarcloud.sarif.json
+          category: sonarcloud
 
   security-scan:
     runs-on: ubuntu-latest

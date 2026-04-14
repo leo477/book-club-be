@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,15 +18,18 @@ router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
 
 async def get_optional_user(
+    request: Request,
     db: AsyncSession = Depends(get_db_dep),
     settings: Settings = Depends(get_settings_dep),
 ) -> User | None:
     try:
-        return await get_current_user(db=db, settings=settings)
+        return await get_current_user(request=request, db=db, settings=settings)
+    # noinspection PyBroadException
     except HTTPException:
         return None
 
 
+# noinspection PyShadowingNames
 async def _require_organizer(club_id: uuid.UUID, user: User, db: AsyncSession) -> ClubMember:
     result = await db.execute(
         select(ClubMember).where(
@@ -46,20 +49,18 @@ async def _require_organizer(club_id: uuid.UUID, user: User, db: AsyncSession) -
 @router.get("/members", response_model=list[MemberResponse])
 async def list_members(
     club_id: str,
-    current_user: User | None = Depends(get_optional_user),
+    _current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db_dep),
 ) -> list[MemberResponse]:
     cid = uuid.UUID(club_id)
     result = await db.execute(
-        select(ClubMember, User)
-        .join(User, ClubMember.user_id == User.id)
-        .where(ClubMember.club_id == cid)
+        select(ClubMember, User).join(User, ClubMember.user_id == User.id).where(ClubMember.club_id == cid)
     )
     rows = result.all()
 
     members: list[MemberResponse] = []
     for membership, user in rows:
-        socials: dict | None = None
+        socials: dict[str, str] | None = None
         if user.socials_public:
             socials = {
                 k: v
@@ -95,21 +96,13 @@ async def remove_member(
 ) -> None:
     cid = uuid.UUID(club_id)
     uid = uuid.UUID(user_id)
-    await _require_organizer(cid, current_user, db)
+    _ = await _require_organizer(cid, current_user, db)
 
-    existing = await db.execute(
-        select(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == uid)
-        )
-    )
+    existing = await db.execute(select(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == uid)))
     if not existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
 
-    await db.execute(
-        delete(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == uid)
-        )
-    )
+    await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == uid)))
     await db.commit()
 
 
@@ -123,13 +116,13 @@ async def ban_member(
 ) -> BanResponse:
     cid = uuid.UUID(club_id)
     uid = uuid.UUID(user_id)
-    await _require_organizer(cid, current_user, db)
+    _ = await _require_organizer(cid, current_user, db)
 
     user_result = await db.execute(select(User).where(User.id == uid))
     if not user_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    banned_at = datetime.now(tz=timezone.utc)
+    banned_at = datetime.now(tz=UTC)
     ban = ClubBan(
         id=uuid.uuid4(),
         club_id=cid,
@@ -140,11 +133,7 @@ async def ban_member(
     )
     db.add(ban)
 
-    await db.execute(
-        delete(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == uid)
-        )
-    )
+    await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == uid)))
     await db.commit()
 
     return BanResponse(
@@ -163,7 +152,7 @@ async def list_bans(
     db: AsyncSession = Depends(get_db_dep),
 ) -> list[BanResponse]:
     cid = uuid.UUID(club_id)
-    await _require_organizer(cid, current_user, db)
+    _ = await _require_organizer(cid, current_user, db)
 
     result = await db.execute(select(ClubBan).where(ClubBan.club_id == cid))
     bans = result.scalars().all()

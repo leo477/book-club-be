@@ -2,11 +2,24 @@ import asyncio
 import os
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from alembic import context  # type: ignore[attr-defined]
 from app.database import Base
-from app.models import *  # noqa: F401, F403
+from app.models import (  # noqa: F401
+    ChatMessage,
+    ChatRoom,
+    Club,
+    ClubBan,
+    ClubMember,
+    Meeting,
+    MeetingAttendee,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+    RandomizerSession,
+    User,
+)
 
 config = context.config
 
@@ -33,15 +46,13 @@ def run_migrations_offline() -> None:
 
 
 async def run_async_migrations() -> None:
-    connectable = create_async_engine(
-        DATABASE_URL, connect_args={"statement_cache_size": 0}
-    )
+    connectable = create_async_engine(DATABASE_URL, connect_args={"statement_cache_size": 0})
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
 
 
-def do_run_migrations(connection) -> None:  # type: ignore[no-untyped-def]
+def do_run_migrations(connection: object) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()

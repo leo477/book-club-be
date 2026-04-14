@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
@@ -22,30 +22,31 @@ class UserProfileResponse(BaseModel):
     email: str
     displayName: str
     role: str
-    avatarUrl: Optional[str] = None
+    avatarUrl: str | None = None
     createdAt: str
     socialsPublic: bool
-    socials: dict
+    socials: dict[str, str | None]
 
+    # noinspection PyMethodDecoratorAdapted
     @model_validator(mode="before")
     @classmethod
     def build_from_orm(cls, v: object) -> object:
         if hasattr(v, "display_name"):
             return {
-                "id": str(v.id),  # type: ignore[union-attr]
-                "email": v.email,  # type: ignore[union-attr]
-                "displayName": v.display_name,  # type: ignore[union-attr]
-                "role": v.role,  # type: ignore[union-attr]
-                "avatarUrl": v.avatar_url,  # type: ignore[union-attr]
-                "createdAt": v.created_at.isoformat() if v.created_at else "",  # type: ignore[union-attr]
-                "socialsPublic": v.socials_public,  # type: ignore[union-attr]
+                "id": str(v.id),  # type: ignore[attr-defined]
+                "email": v.email,  # type: ignore[attr-defined]
+                "displayName": v.display_name,
+                "role": v.role,  # type: ignore[attr-defined]
+                "avatarUrl": v.avatar_url,  # type: ignore[attr-defined]
+                "createdAt": v.created_at.isoformat() if v.created_at else "",  # type: ignore[attr-defined]
+                "socialsPublic": v.socials_public,  # type: ignore[attr-defined]
                 "socials": {
-                    "telegram": v.telegram,  # type: ignore[union-attr]
-                    "instagram": v.instagram,  # type: ignore[union-attr]
-                    "twitter": v.twitter,  # type: ignore[union-attr]
-                    "linkedin": v.linkedin,  # type: ignore[union-attr]
-                    "github": v.github,  # type: ignore[union-attr]
-                    "goodreads": v.goodreads,  # type: ignore[union-attr]
+                    "telegram": v.telegram,  # type: ignore[attr-defined]
+                    "instagram": v.instagram,  # type: ignore[attr-defined]
+                    "twitter": v.twitter,  # type: ignore[attr-defined]
+                    "linkedin": v.linkedin,  # type: ignore[attr-defined]
+                    "github": v.github,  # type: ignore[attr-defined]
+                    "goodreads": v.goodreads,  # type: ignore[attr-defined]
                 },
             }
         return v

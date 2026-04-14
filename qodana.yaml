@@ -9,3 +9,5 @@ linter: jetbrains/qodana-python:2025.2
 
 profile:
   name: qodana.starter
+
+bootstrap: pip install -r requirements.txt -r requirements-dev.txt

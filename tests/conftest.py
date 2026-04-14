@@ -1,4 +1,5 @@
 import json
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -22,18 +23,22 @@ _orig_array_result = ARRAY.result_processor
 
 def _array_bind(self, dialect):
     if dialect.name != "postgresql":
+
         def process(value):
             return json.dumps(value) if value is not None else None
+
         return process
     return _orig_array_bind(self, dialect)
 
 
 def _array_result(self, dialect, coltype):
     if dialect.name != "postgresql":
+
         def process(value):
             if value is None:
                 return None
             return json.loads(value) if isinstance(value, str) else value
+
         return process
     return _orig_array_result(self, dialect, coltype)
 
@@ -47,6 +52,7 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 @pytest.fixture(scope="session")
 def event_loop_policy():
     import asyncio
+
     return asyncio.DefaultEventLoopPolicy()
 
 

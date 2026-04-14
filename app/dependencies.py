@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import uuid
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -7,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.database import get_db
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 async def get_db_dep() -> AsyncGenerator[AsyncSession, None]:
@@ -22,8 +28,8 @@ async def get_current_user(
     request: Request,
     db: AsyncSession = Depends(get_db_dep),
     settings: Settings = Depends(get_settings_dep),
-) -> object:
-    from app.models.user import User
+) -> User:
+    from app.models.user import User as UserModel
     from app.services.auth_service import decode_access_token
 
     auth_header = request.headers.get("Authorization")
@@ -42,7 +48,7 @@ async def get_current_user(
             detail={"error": "Invalid token", "code": "INVALID_TOKEN"},
         )
 
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    result = await db.execute(select(UserModel).where(UserModel.id == uuid.UUID(user_id)))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(

@@ -1,7 +1,7 @@
 import uuid
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,7 @@ class ConnectionManager:
         for connection in self.active_connections[room_id]:
             try:
                 await connection.send_json(message)
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
 
@@ -72,9 +72,7 @@ async def get_messages(
     )
 
     if before:
-        before_result = await db.execute(
-            select(ChatMessage.timestamp).where(ChatMessage.id == uuid.UUID(before))
-        )
+        before_result = await db.execute(select(ChatMessage.timestamp).where(ChatMessage.id == uuid.UUID(before)))
         before_ts = before_result.scalar_one_or_none()
         if before_ts is not None:
             query = query.where(ChatMessage.timestamp < before_ts)
@@ -132,7 +130,7 @@ async def websocket_endpoint(
         settings = get_settings()
         try:
             token_data = decode_access_token(token, settings)
-        except Exception:
+        except HTTPException:
             await websocket.close(code=1008)
             manager.disconnect(room_id, websocket)
             return
@@ -172,7 +170,5 @@ async def websocket_endpoint(
             )
     except WebSocketDisconnect:
         pass
-    except Exception:
+    except Exception:  # noqa: S110
         pass
-    finally:
-        manager.disconnect(room_id, websocket)

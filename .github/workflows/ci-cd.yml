@@ -31,6 +31,8 @@ jobs:
         run: ruff format --check .
       - name: Mypy strict
         run: mypy app/
+      - name: Bandit security lint
+        run: bandit -r app/ -ll -x app/routers/health.py
 
   test:
     needs: lint
@@ -59,17 +61,17 @@ jobs:
           cache: 'pip'
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
-      - name: Run pytest
-        run: pytest -v --tb=short
+      - name: Run pytest with coverage
+        run: pytest -v --tb=short --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=70
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_test
           SECRET_KEY: test-secret
-      - name: Upload pytest results
+      - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: pytest-results
-          path: .pytest_cache/
+          name: coverage
+          path: coverage.xml
 
   docker-build-push:
     needs: test
