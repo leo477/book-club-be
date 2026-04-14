@@ -183,6 +183,6 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         pass
     except Exception as exc:
-        logger.exception("Unexpected WebSocket error in room %s", _sanitize_for_log(room_id), exc_info=exc)
+        logger.exception("Unexpected WebSocket error in room %r", room_id, exc_info=exc)
     finally:
         manager.disconnect(room_id, websocket)
