@@ -1,6 +1,8 @@
+import uuid
 from collections.abc import AsyncGenerator
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -17,11 +19,34 @@ def get_settings_dep() -> Settings:
 
 
 async def get_current_user(
+    request: Request,
     db: AsyncSession = Depends(get_db_dep),
     settings: Settings = Depends(get_settings_dep),
-) -> None:
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Not authenticated",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+) -> object:
+    from app.models.user import User
+    from app.services.auth_service import decode_access_token
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Not authenticated", "code": "NOT_AUTHENTICATED"},
+        )
+
+    token = auth_header.split(" ", 1)[1]
+    payload = decode_access_token(token, settings)
+    user_id: str | None = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid token", "code": "INVALID_TOKEN"},
+        )
+
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "User not found", "code": "USER_NOT_FOUND"},
+        )
+    return user
