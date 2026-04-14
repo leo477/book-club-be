@@ -42,7 +42,7 @@ class ConnectionManager:
                 await connection.send_json(message)
             except WebSocketDisconnect:
                 self.disconnect(room_id, connection)
-                logger.debug("WebSocket disconnected during broadcast for room %s", room_id)
+                logger.debug("WebSocket disconnected during broadcast for room %s", _sanitize_for_log(room_id))
             except RuntimeError:
                 self.disconnect(room_id, connection)
                 logger.warning("Runtime error while broadcasting to room %s", _sanitize_for_log(room_id))
