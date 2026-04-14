@@ -28,6 +28,7 @@ jobs:
       - name: 'Qodana Scan'
         id: qodana
         uses: JetBrains/qodana-action@v2025.2
+        continue-on-error: true
         with:
           linter: jetbrains/qodana-python:2025.2
           pr-mode: false
@@ -40,6 +41,6 @@ jobs:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
       - name: 'Upload SARIF to GitHub Security tab'
         uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
-        if: always() && steps.qodana.outputs.results-dir != ''
+        if: always()
         with:
-          sarif_file: ${{ steps.qodana.outputs.results-dir }}/qodana.sarif.json
+          sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json

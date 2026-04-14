@@ -1,7 +1,11 @@
-name: PR Checks
+name: CI
 
 on:
   pull_request:
+    branches:
+      - main
+      - develop
+  push:
     branches:
       - main
       - develop
@@ -11,7 +15,7 @@ permissions:
   security-events: write
 
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -72,13 +76,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coverage-pr-${{ github.event.pull_request.number }}
+          name: coverage-${{ github.sha }}
           path: coverage.xml
       - name: Upload pytest results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: pytest-results-pr-${{ github.event.pull_request.number }}
+          name: pytest-results-${{ github.sha }}
           path: .pytest_cache/
   sonarcloud:
     name: SonarCloud
@@ -92,7 +96,7 @@ jobs:
       - name: Download coverage report
         uses: actions/download-artifact@v4
         with:
-          name: coverage-pr-${{ github.event.pull_request.number }}
+          name: coverage-${{ github.sha }}
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
         env:
@@ -136,7 +140,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: security-reports-pr-${{ github.event.pull_request.number }}
+          name: security-reports-${{ github.sha }}
           path: |
             pip-audit-report.json
             safety-report.json
