@@ -45,7 +45,7 @@ class ConnectionManager:
                 logger.debug("WebSocket disconnected during broadcast for room %s", room_id)
             except RuntimeError:
                 self.disconnect(room_id, connection)
-                logger.warning("Runtime error while broadcasting to room %s", room_id)
+                logger.warning("Runtime error while broadcasting to room %s", _sanitize_for_log(room_id))
 
 
 logger = logging.getLogger(__name__)
