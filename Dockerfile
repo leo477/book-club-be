@@ -1,19 +1,40 @@
-# ----------- Builder stage -----------
-FROM maven:3.9-eclipse-temurin-21 AS builder
-WORKDIR /app
-COPY pom.xml .
-RUN mvn dependency:go-offline -q
-COPY src/ src/
-RUN mvn package -DskipTests --no-transfer-progress && mv target/*.jar target/app.jar
+# Stage 1: builder
+FROM python:3.12-slim AS builder
 
-# ----------- Runtime stage -----------
-FROM eclipse-temurin:21-jre-alpine
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# Stage 2: runtime
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1001 appuser && useradd --uid 1001 --gid appuser --shell /bin/sh --create-home appuser
+
+COPY --from=builder /install /usr/local
+COPY app/ /app/app/
+COPY alembic/ /app/alembic/
+COPY alembic.ini /app/alembic.ini
+
 WORKDIR /app
-RUN addgroup -S appuser && adduser -S appuser -G appuser
-COPY --from=builder /app/target/app.jar /app/app.jar
-RUN chown appuser:appuser /app/app.jar
+
+RUN chown -R appuser:appuser /app
+
 USER appuser
+
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD wget -qO- http://localhost:8080/actuator/health || exit 1
-ENTRYPOINT ["java", "-jar", "app.jar"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
