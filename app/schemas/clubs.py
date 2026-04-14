@@ -95,9 +95,7 @@ class MemberResponse(BaseModel):
 
 
 async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
-    count_result = await db.execute(
-        select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club.id)
-    )
+    count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club.id))
     member_count = count_result.scalar() or 0
 
     members_result = await db.execute(
@@ -128,9 +126,7 @@ async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
         cancelledAt=club.cancelled_at.isoformat() if club.cancelled_at else None,
         tags=club.tags or [],
         meetingDurationMinutes=club.meeting_duration_minutes,
-        afterMeetingVenue=AfterMeetingVenueSchema(**club.after_meeting_venue)
-        if club.after_meeting_venue
-        else None,
+        afterMeetingVenue=AfterMeetingVenueSchema(**club.after_meeting_venue) if club.after_meeting_venue else None,
         meetingHistory=[],
         currentBook=None,
     )

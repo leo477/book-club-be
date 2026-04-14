@@ -26,16 +26,12 @@ async def get_meetings(
             detail={"error": "Club not found", "code": "CLUB_NOT_FOUND"},
         )
 
-    meetings_result = await db.execute(
-        select(Meeting).where(Meeting.club_id == club_id)
-    )
+    meetings_result = await db.execute(select(Meeting).where(Meeting.club_id == club_id))
     meetings_db = meetings_result.scalars().all()
 
     responses: list[MeetingResponse] = []
     for meeting in meetings_db:
-        attendees_result = await db.execute(
-            select(MeetingAttendee).where(MeetingAttendee.meeting_id == meeting.id)
-        )
+        attendees_result = await db.execute(select(MeetingAttendee).where(MeetingAttendee.meeting_id == meeting.id))
         attendees = attendees_result.scalars().all()
         responses.append(
             MeetingResponse(

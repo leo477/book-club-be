@@ -83,9 +83,7 @@ async def list_my_clubs(
 ) -> list[ClubResponse]:
     member_club_ids = select(ClubMember.club_id).where(ClubMember.user_id == current_user.id)
     result = await db.execute(
-        select(Club).where(
-            or_(Club.id.in_(member_club_ids), Club.organizer_id == current_user.id)
-        )
+        select(Club).where(or_(Club.id.in_(member_club_ids), Club.organizer_id == current_user.id))
     )
     clubs = result.scalars().all()
     return [await build_club_response(c, db) for c in clubs]
@@ -216,17 +214,13 @@ async def join_club(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
 
     ban_result = await db.execute(
-        select(ClubBan).where(
-            and_(ClubBan.club_id == cid, ClubBan.user_id == current_user.id)
-        )
+        select(ClubBan).where(and_(ClubBan.club_id == cid, ClubBan.user_id == current_user.id))
     )
     if ban_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are banned from this club")
 
     existing = await db.execute(
-        select(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == current_user.id)
-        )
+        select(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == current_user.id))
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already a member")
@@ -240,9 +234,7 @@ async def join_club(
     db.add(membership)
     await db.commit()
 
-    count_result = await db.execute(
-        select(func.count()).select_from(ClubMember).where(ClubMember.club_id == cid)
-    )
+    count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == cid))
     member_count = count_result.scalar() or 0
     return {"memberCount": member_count}
 
@@ -260,17 +252,11 @@ async def leave_club(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
 
     existing = await db.execute(
-        select(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == current_user.id)
-        )
+        select(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == current_user.id))
     )
     member = existing.scalar_one_or_none()
     if not member:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Not a member")
 
-    await db.execute(
-        delete(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == current_user.id)
-        )
-    )
+    await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == current_user.id)))
     await db.commit()

@@ -51,9 +51,7 @@ async def list_members(
 ) -> list[MemberResponse]:
     cid = uuid.UUID(club_id)
     result = await db.execute(
-        select(ClubMember, User)
-        .join(User, ClubMember.user_id == User.id)
-        .where(ClubMember.club_id == cid)
+        select(ClubMember, User).join(User, ClubMember.user_id == User.id).where(ClubMember.club_id == cid)
     )
     rows = result.all()
 
@@ -97,19 +95,11 @@ async def remove_member(
     uid = uuid.UUID(user_id)
     await _require_organizer(cid, current_user, db)
 
-    existing = await db.execute(
-        select(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == uid)
-        )
-    )
+    existing = await db.execute(select(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == uid)))
     if not existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
 
-    await db.execute(
-        delete(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == uid)
-        )
-    )
+    await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == uid)))
     await db.commit()
 
 
@@ -140,11 +130,7 @@ async def ban_member(
     )
     db.add(ban)
 
-    await db.execute(
-        delete(ClubMember).where(
-            and_(ClubMember.club_id == cid, ClubMember.user_id == uid)
-        )
-    )
+    await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == uid)))
     await db.commit()
 
     return BanResponse(

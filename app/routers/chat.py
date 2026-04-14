@@ -72,9 +72,7 @@ async def get_messages(
     )
 
     if before:
-        before_result = await db.execute(
-            select(ChatMessage.timestamp).where(ChatMessage.id == uuid.UUID(before))
-        )
+        before_result = await db.execute(select(ChatMessage.timestamp).where(ChatMessage.id == uuid.UUID(before)))
         before_ts = before_result.scalar_one_or_none()
         if before_ts is not None:
             query = query.where(ChatMessage.timestamp < before_ts)

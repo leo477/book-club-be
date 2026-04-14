@@ -16,9 +16,7 @@ class Club(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    organizer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
+    organizer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     is_public: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     city: Mapped[str] = mapped_column(String(100), nullable=False)
     theme: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -35,9 +33,7 @@ class Club(Base):
     tags: Mapped[list] = mapped_column(ARRAY(String), server_default=text("'{}'"))
     meeting_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     after_meeting_venue: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     organizer = relationship("User", foreign_keys=[organizer_id])
     members = relationship("ClubMember", back_populates="club")

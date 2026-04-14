@@ -117,9 +117,7 @@ async def get_questions(
 
     organizer = await is_club_organizer(quiz.club_id, current_user.id, db)
 
-    questions_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
-    )
+    questions_result = await db.execute(select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id))
     questions_db = questions_result.scalars().all()
 
     return [
@@ -243,17 +241,11 @@ async def submit_attempt(
             detail={"error": "Quiz is not active", "code": "QUIZ_NOT_ACTIVE"},
         )
 
-    questions_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
-    )
+    questions_result = await db.execute(select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id))
     questions_db = questions_result.scalars().all()
     total = len(questions_db)
 
-    score = sum(
-        1
-        for i, q in enumerate(questions_db)
-        if i < len(req.answers) and req.answers[i] == q.correct_index
-    )
+    score = sum(1 for i, q in enumerate(questions_db) if i < len(req.answers) and req.answers[i] == q.correct_index)
 
     attempt = QuizAttempt(
         id=uuid.uuid4(),
