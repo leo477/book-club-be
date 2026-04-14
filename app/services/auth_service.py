@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import bcrypt
 from fastapi import HTTPException, status
@@ -15,16 +16,16 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-def create_access_token(data: dict, settings: Settings) -> str:
-    payload = data.copy()
+def create_access_token(data: dict[str, Any], settings: Settings) -> str:
+    payload: dict[str, Any] = data.copy()
     expire = datetime.now(UTC) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     payload.update({"exp": expire})
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return str(jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM))
 
 
-def decode_access_token(token: str, settings: Settings) -> dict:
+def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        payload: dict = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload: dict[str, Any] = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload
     except JWTError as exc:
         raise HTTPException(

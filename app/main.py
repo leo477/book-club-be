@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from typing import cast
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
@@ -107,7 +108,7 @@ def create_app() -> FastAPI:
         bound_logger.info("Request received")
         response = await call_next(request)
         bound_logger.info("Request completed", status_code=response.status_code)
-        return response
+        return cast(JSONResponse, response)
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:

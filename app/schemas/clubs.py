@@ -90,7 +90,7 @@ class MemberResponse(BaseModel):
     displayName: str
     avatarUrl: str | None
     role: str
-    socials: dict | None
+    socials: dict[str, str] | None
     socialsPublic: bool
 
 

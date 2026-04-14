@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, delete, select
@@ -23,7 +24,7 @@ async def get_optional_user(
     settings: Settings = Depends(get_settings_dep),
 ) -> User | None:
     try:
-        return await get_current_user(request=request, db=db, settings=settings)
+        return cast(User | None, await get_current_user(request=request, db=db, settings=settings))
     except HTTPException:
         return None
 
@@ -58,7 +59,7 @@ async def list_members(
 
     members: list[MemberResponse] = []
     for membership, user in rows:
-        socials: dict | None = None
+        socials: dict[str, str] | None = None
         if user.socials_public:
             socials = {
                 k: v

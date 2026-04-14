@@ -1,4 +1,5 @@
 import uuid
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -125,7 +126,7 @@ async def get_questions(
             id=str(q.id),
             quizId=str(q.quiz_id),
             question=q.question,
-            options=q.options,
+            options=cast(list[str], q.options),
             correctIndex=q.correct_index if organizer else None,
         )
         for q in questions_db
@@ -172,8 +173,7 @@ async def add_question(
         id=str(question.id),
         quizId=str(question.quiz_id),
         question=question.question,
-        options=question.options,
-        correctIndex=question.correct_index,
+        options=cast(list[str], question.options),
     )
 
 
@@ -265,5 +265,5 @@ async def submit_attempt(
         userId=str(attempt.user_id),
         score=attempt.score,
         total=attempt.total,
-        answers=attempt.answers,
+        answers=cast(list[int], attempt.answers),
     )
