@@ -19,6 +19,7 @@ jobs:
       contents: write
       pull-requests: write
       checks: write
+      security-events: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,7 +33,13 @@ jobs:
           use-caches: true
           post-pr-comment: true
           use-annotations: true
-          upload-result: false
+          upload-result: true
           push-fixes: 'none'
+          args: --output-format,sarif
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+      - name: 'Upload SARIF to GitHub Security tab'
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json
