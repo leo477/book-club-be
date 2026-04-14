@@ -23,6 +23,7 @@ jobs:
           echo "Waiting for required checks on PR #${{ github.event.pull_request.number }}..."
           gh pr checks ${{ github.event.pull_request.number }} \
             --repo ${{ github.repository }} \
+            --required \
             --watch \
             --interval 30
 
