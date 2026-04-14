@@ -31,10 +31,12 @@ async def get_optional_user(
 ) -> User | None:
     try:
         return cast(User | None, await get_current_user(request=request, db=db, settings=settings))
+    # noinspection PyBroadException
     except HTTPException:
         return None
 
 
+# noinspection PyShadowingNames
 async def _require_organizer(club_id: uuid.UUID, user: User, db: AsyncSession) -> ClubMember:
     result = await db.execute(
         select(ClubMember).where(
@@ -146,7 +148,7 @@ async def pause_club(
     db: AsyncSession = Depends(get_db_dep),
 ) -> ClubResponse:
     cid = uuid.UUID(club_id)
-    await _require_organizer(cid, current_user, db)
+    _ = await _require_organizer(cid, current_user, db)
 
     result = await db.execute(select(Club).where(Club.id == cid))
     club = result.scalar_one_or_none()
@@ -166,7 +168,7 @@ async def cancel_club(
     db: AsyncSession = Depends(get_db_dep),
 ) -> ClubResponse:
     cid = uuid.UUID(club_id)
-    await _require_organizer(cid, current_user, db)
+    _ = await _require_organizer(cid, current_user, db)
 
     result = await db.execute(select(Club).where(Club.id == cid))
     club = result.scalar_one_or_none()
@@ -188,7 +190,7 @@ async def reschedule_club(
     db: AsyncSession = Depends(get_db_dep),
 ) -> ClubResponse:
     cid = uuid.UUID(club_id)
-    await _require_organizer(cid, current_user, db)
+    _ = await _require_organizer(cid, current_user, db)
 
     result = await db.execute(select(Club).where(Club.id == cid))
     club = result.scalar_one_or_none()
