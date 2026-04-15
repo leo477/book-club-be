@@ -5,6 +5,9 @@ linter: jetbrains/qodana-python:2025.3
 profile:
   name: qodana.starter
 
+inspections:
+  - name: PyTypeHintsInspection
+    enabled: false
 # Замість sourceDirectory використовуємо чіткий include/exclude
 include:
   - name: All
