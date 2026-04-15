@@ -172,7 +172,7 @@ async def websocket_endpoint(
                 },
             )
     except WebSocketDisconnect:
-        pass
+        pass  # Normal client disconnect; the finally block below handles cleanup
     except Exception as exc:
         logger.exception("Unexpected WebSocket error", exc_info=exc)
     finally:
