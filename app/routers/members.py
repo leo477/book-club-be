@@ -47,7 +47,7 @@ async def _require_organizer(club_id: uuid.UUID, user: User, db: AsyncSession) -
     return membership
 
 
-@router.get("/members", response_model=list[MemberResponse])
+@router.get("/members")
 async def list_members(
     club_id: str,
     _current_user: Annotated[User | None, Depends(get_optional_user)],
@@ -107,7 +107,7 @@ async def remove_member(
     await db.commit()
 
 
-@router.post("/members/{user_id}/ban", response_model=BanResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/members/{user_id}/ban", status_code=status.HTTP_201_CREATED)
 async def ban_member(
     club_id: str,
     user_id: str,
@@ -146,7 +146,7 @@ async def ban_member(
     )
 
 
-@router.get("/bans", response_model=list[BanResponse])
+@router.get("/bans")
 async def list_bans(
     club_id: str,
     current_user: Annotated[User, Depends(get_current_user)],

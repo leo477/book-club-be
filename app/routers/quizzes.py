@@ -19,6 +19,9 @@ from app.schemas.quizzes import (
     SubmitAttemptRequest,
 )
 
+QUIZ_NOT_FOUND = "Quiz not found"
+NOT_AN_ORGANIZER = "Not an organizer"
+
 router = APIRouter(prefix="/api/v1", tags=["quizzes"])
 
 
@@ -35,7 +38,6 @@ async def is_club_organizer(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSes
 
 @router.get(
     "/clubs/{club_id}/quizzes",
-    response_model=list[QuizResponse],
     status_code=status.HTTP_200_OK,
 )
 async def get_quizzes(
@@ -60,7 +62,6 @@ async def get_quizzes(
 
 @router.post(
     "/clubs/{club_id}/quizzes",
-    response_model=QuizResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_quiz(
@@ -72,7 +73,7 @@ async def create_quiz(
     if not await is_club_organizer(club_id, current_user.id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "Not an organizer", "code": "FORBIDDEN"},
+            detail={"error": NOT_AN_ORGANIZER, "code": "FORBIDDEN"},
         )
 
     quiz = Quiz(
@@ -99,7 +100,6 @@ async def create_quiz(
 
 @router.get(
     "/quizzes/{quiz_id}/questions",
-    response_model=list[QuizQuestionResponse],
     response_model_exclude_none=True,
     status_code=status.HTTP_200_OK,
 )
@@ -113,7 +113,7 @@ async def get_questions(
     if quiz is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Quiz not found", "code": "QUIZ_NOT_FOUND"},
+            detail={"error": QUIZ_NOT_FOUND, "code": "QUIZ_NOT_FOUND"},
         )
 
     organizer = await is_club_organizer(quiz.club_id, current_user.id, db)
@@ -135,7 +135,6 @@ async def get_questions(
 
 @router.post(
     "/quizzes/{quiz_id}/questions",
-    response_model=QuizQuestionResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def add_question(
@@ -149,13 +148,13 @@ async def add_question(
     if quiz is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Quiz not found", "code": "QUIZ_NOT_FOUND"},
+            detail={"error": QUIZ_NOT_FOUND, "code": "QUIZ_NOT_FOUND"},
         )
 
     if not await is_club_organizer(quiz.club_id, current_user.id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "Not an organizer", "code": "FORBIDDEN"},
+            detail={"error": NOT_AN_ORGANIZER, "code": "FORBIDDEN"},
         )
 
     question = QuizQuestion(
@@ -179,7 +178,6 @@ async def add_question(
 
 @router.patch(
     "/quizzes/{quiz_id}/active",
-    response_model=QuizResponse,
     status_code=status.HTTP_200_OK,
 )
 async def set_active(
@@ -193,13 +191,13 @@ async def set_active(
     if quiz is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Quiz not found", "code": "QUIZ_NOT_FOUND"},
+            detail={"error": QUIZ_NOT_FOUND, "code": "QUIZ_NOT_FOUND"},
         )
 
     if not await is_club_organizer(quiz.club_id, current_user.id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "Not an organizer", "code": "FORBIDDEN"},
+            detail={"error": NOT_AN_ORGANIZER, "code": "FORBIDDEN"},
         )
 
     quiz.is_active = req.isActive
@@ -218,7 +216,6 @@ async def set_active(
 
 @router.post(
     "/quizzes/{quiz_id}/attempts",
-    response_model=AttemptResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def submit_attempt(
@@ -232,7 +229,7 @@ async def submit_attempt(
     if quiz is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Quiz not found", "code": "QUIZ_NOT_FOUND"},
+            detail={"error": QUIZ_NOT_FOUND, "code": "QUIZ_NOT_FOUND"},
         )
 
     if not quiz.is_active:

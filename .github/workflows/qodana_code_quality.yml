@@ -25,13 +25,28 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+
+      - name: 'Set up Python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+            python -m pip install --upgrade pip
+            [ -f requirements.txt ] && pip install -r requirements.txt
+            [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt
+
       - name: 'Qodana Scan'
         id: qodana
-        uses: JetBrains/qodana-action@v2025.2
+        uses: JetBrains/qodana-action@89eb4357efd2b52e639f3216e63edaf33b82622b # v2025.3.2
+        continue-on-error: true
         with:
-          linter: jetbrains/qodana-python:2025.2
-          pr-mode: false
+          args: --image jetbrains/qodana-python:2025.3
+          pr-mode: ${{ github.event_name == 'pull_request' }}
           use-caches: true
+          cache-default-branch-only: false
           post-pr-comment: true
           use-annotations: true
           upload-result: true
@@ -40,6 +55,6 @@ jobs:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
       - name: 'Upload SARIF to GitHub Security tab'
         uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
-        if: always() && steps.qodana.outputs.results-dir != ''
+        if: always()
         with:
-          sarif_file: ${{ steps.qodana.outputs.results-dir }}/qodana.sarif.json
+          sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json

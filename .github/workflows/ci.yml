@@ -1,7 +1,11 @@
-name: PR Checks
+name: CI
 
 on:
   pull_request:
+    branches:
+      - main
+      - develop
+  push:
     branches:
       - main
       - develop
@@ -11,7 +15,7 @@ permissions:
   security-events: write
 
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -72,13 +76,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coverage-pr-${{ github.event.pull_request.number }}
+          name: coverage-${{ github.sha }}
           path: coverage.xml
       - name: Upload pytest results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: pytest-results-pr-${{ github.event.pull_request.number }}
+          name: pytest-results-${{ github.sha }}
           path: .pytest_cache/
   sonarcloud:
     name: SonarCloud
@@ -90,31 +94,78 @@ jobs:
         with:
           fetch-depth: 0 # full history for blame/annotations
       - name: Download coverage report
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: coverage-pr-${{ github.event.pull_request.number }}
+          name: coverage-${{ github.sha }}
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4 # v7.1.0
+        continue-on-error: true
         with:
           args: >
             -Dsonar.qualitygate.wait=true
-      - name: Export SonarCloud issues as SARIF
-        if: always()
-        run: |
-          curl -sf -u "${SONAR_TOKEN}:" \
-            "https://sonarcloud.io/api/issues/export_sarif?projectKey=leo477_book-club-be&organization=leo477" \
-            -o sonarcloud.sarif.json \
-          || echo '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"SonarCloud","rules":[]}},"results":[]}]}' > sonarcloud.sarif.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Wait for SonarCloud analysis to complete
+        if: github.event_name == 'push'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          TASK_ID=$(grep ceTaskId .scannerwork/report-task.txt | cut -d= -f2)
+          echo "Waiting for SonarCloud task: $TASK_ID"
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s -H "Authorization: Bearer $SONAR_TOKEN" \
+              "https://sonarcloud.io/api/ce/task?id=$TASK_ID" \
+              | python3 -c "import json,sys; print(json.load(sys.stdin)['task']['status'])")
+            echo "Attempt $i: $STATUS"
+            if [ "$STATUS" = "SUCCESS" ]; then exit 0; fi
+            if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CANCELLED" ]; then
+              echo "SonarCloud task failed: $STATUS"; exit 1
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for SonarCloud analysis"; exit 1
+      - name: Export SonarCloud issues as SARIF
+        if: github.event_name == 'push'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -s -u "${SONAR_TOKEN}:" \
+            "https://sonarcloud.io/api/issues/search?projectKeys=leo477_book-club-be&resolved=false&ps=500" \
+            -o sonar-issues.json
+          python3 - <<'EOF'
+          import json
+          with open('sonar-issues.json') as f:
+              data = json.load(f)
+          def to_level(sev):
+              return 'error' if sev in ('BLOCKER','CRITICAL') else 'warning' if sev == 'MAJOR' else 'note'
+          results = []
+          for issue in data.get('issues', []):
+              tr = issue.get('textRange', {})
+              results.append({
+                  'ruleId': issue['rule'],
+                  'message': {'text': issue['message']},
+                  'level': to_level(issue.get('severity', 'INFO')),
+                  'locations': [{'physicalLocation': {
+                      'artifactLocation': {'uri': issue['component'].split(':')[-1]},
+                      'region': {'startLine': tr.get('startLine', 1), 'endLine': tr.get('endLine', 1)}
+                  }}]
+              })
+          sarif = {
+              'version': '2.1.0',
+              '$schema': 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
+              'runs': [{'tool': {'driver': {'name': 'SonarCloud', 'informationUri': 'https://sonarcloud.io', 'rules': []}}, 'results': results}]
+          }
+          with open('sonar.sarif', 'w') as f:
+              json.dump(sarif, f, indent=2)
+          print(f"SARIF generated with {len(results)} issues")
+          EOF
       - name: Upload SonarCloud SARIF to Security tab
+        if: github.event_name == 'push'
         uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
-        if: always()
         with:
-          sarif_file: sonarcloud.sarif.json
+          sarif_file: sonar.sarif
           category: sonarcloud
 
   security-scan:
@@ -136,7 +187,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: security-reports-pr-${{ github.event.pull_request.number }}
+          name: security-reports-${{ github.sha }}
           path: |
             pip-audit-report.json
             safety-report.json

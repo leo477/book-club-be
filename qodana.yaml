@@ -1,13 +1,29 @@
-#-------------------------------------------------------------------------------#
-#               Qodana analysis is configured by qodana.yaml file               #
-#             https://www.jetbrains.com/help/qodana/qodana-yaml.html            #
-#-------------------------------------------------------------------------------#
-
 version: "1.0"
 
-linter: jetbrains/qodana-python:2025.2
+linter: jetbrains/qodana-python:2025.3
 
 profile:
   name: qodana.starter
 
-bootstrap: pip install -r requirements.txt -r requirements-dev.txt
+# Замість sourceDirectory використовуємо чіткий include/exclude
+include:
+  - name: All
+    paths:
+      - app/
+      - alembic/
+      - migrations/
+      - scripts/
+      - tests/
+
+exclude:
+  - name: All
+    paths:
+      - .venv/
+      - venv/
+      - .pytest_cache/
+      - __pycache__/
+      - .git/
+      - .github/
+      - "**/*.pyc"
+      - "**/versions/*.py" # Виключаємо файли самих міграцій, якщо їх багато (вони часто гальмують індексацію)
+  - name: PyTypeHintsInspection

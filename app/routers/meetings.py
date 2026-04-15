@@ -14,7 +14,7 @@ from app.schemas.quizzes import MeetingResponse
 router = APIRouter(prefix="/api/v1/clubs/{club_id}/meetings", tags=["meetings"])
 
 
-@router.get("", response_model=list[MeetingResponse], status_code=status.HTTP_200_OK)
+@router.get("", status_code=status.HTTP_200_OK)
 async def get_meetings(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],

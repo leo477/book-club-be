@@ -2,14 +2,12 @@ import asyncio
 import os
 from logging.config import fileConfig
 
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context  # type: ignore[attr-defined]
 from app.database import Base
-from app.models import (  # noqa: F401
-    ChatMessage,
-    ChatRoom,
-    Club,
+from app.models import (
     ClubBan,
     ClubMember,
     Meeting,
@@ -20,6 +18,13 @@ from app.models import (  # noqa: F401
     RandomizerSession,
     User,
 )
+
+# All models explicitly referenced to register them with Base.metadata for Alembic
+# autogenerate and to satisfy static analysis tools (CodeQL py/unused-import).
+__all__ = [
+    m.__name__
+    for m in (ClubBan, ClubMember, Meeting, MeetingAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)
+]
 
 config = context.config
 
@@ -52,7 +57,7 @@ async def run_async_migrations() -> None:
     await connectable.dispose()
 
 
-def do_run_migrations(connection: object) -> None:
+def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()
