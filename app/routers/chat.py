@@ -47,7 +47,6 @@ manager = ConnectionManager()
 
 @router.get(
     "/clubs/{club_id}/chat/rooms",
-    response_model=list[ChatRoomResponse],
     status_code=status.HTTP_200_OK,
 )
 async def get_chat_rooms(
@@ -62,7 +61,6 @@ async def get_chat_rooms(
 
 @router.get(
     "/chat/rooms/{room_id}/messages",
-    response_model=list[ChatMessageResponse],
     status_code=status.HTTP_200_OK,
 )
 async def get_messages(
@@ -103,7 +101,6 @@ async def get_messages(
 
 @router.post(
     "/chat/rooms/{room_id}/messages",
-    response_model=ChatMessageResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def send_message(
@@ -175,7 +172,7 @@ async def websocket_endpoint(
                 },
             )
     except WebSocketDisconnect:
-        pass
+        pass  # Normal client disconnect; the finally block below handles cleanup
     except Exception as exc:
         logger.exception("Unexpected WebSocket error", exc_info=exc)
     finally:

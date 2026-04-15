@@ -15,7 +15,7 @@ from app.services.auth_service import create_access_token, hash_password, verify
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
     req: RegisterRequest,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -45,7 +45,7 @@ async def register(
     return AuthResponse(user=UserProfileResponse.model_validate(user), accessToken=token)
 
 
-@router.post("/login", response_model=AuthResponse, status_code=status.HTTP_200_OK)
+@router.post("/login", status_code=status.HTTP_200_OK)
 async def login(
     req: LoginRequest,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -71,7 +71,7 @@ async def logout(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/me", response_model=UserProfileResponse, status_code=status.HTTP_200_OK)
+@router.get("/me", status_code=status.HTTP_200_OK)
 async def me(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserProfileResponse:

@@ -21,6 +21,8 @@ from app.schemas.clubs import (
     build_club_response,
 )
 
+CLUB_NOT_FOUND = "Club not found"
+
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
 
@@ -53,7 +55,7 @@ async def _require_organizer(club_id: uuid.UUID, user: User, db: AsyncSession) -
     return membership
 
 
-@router.get("", response_model=list[ClubResponse])
+@router.get("")
 async def list_clubs(
     current_user: Annotated[User | None, Depends(get_optional_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -79,7 +81,7 @@ async def list_clubs(
     return [await build_club_response(c, db) for c in clubs]
 
 
-@router.get("/my", response_model=list[ClubResponse])
+@router.get("/my")
 async def list_my_clubs(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -92,7 +94,7 @@ async def list_my_clubs(
     return [await build_club_response(c, db) for c in clubs]
 
 
-@router.get("/{club_id}", response_model=ClubResponse)
+@router.get("/{club_id}")
 async def get_club(
     club_id: str,
     _current_user: Annotated[User | None, Depends(get_optional_user)],
@@ -101,11 +103,11 @@ async def get_club(
     result = await db.execute(select(Club).where(Club.id == uuid.UUID(club_id)))
     club = result.scalar_one_or_none()
     if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
     return await build_club_response(club, db)
 
 
-@router.post("", response_model=ClubResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_club(
     body: CreateClubRequest,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -141,7 +143,7 @@ async def create_club(
     return await build_club_response(club, db)
 
 
-@router.patch("/{club_id}/pause", response_model=ClubResponse)
+@router.patch("/{club_id}/pause")
 async def pause_club(
     club_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -153,7 +155,7 @@ async def pause_club(
     result = await db.execute(select(Club).where(Club.id == cid))
     club = result.scalar_one_or_none()
     if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
 
     club.status = "paused"
     await db.commit()
@@ -161,7 +163,7 @@ async def pause_club(
     return await build_club_response(club, db)
 
 
-@router.patch("/{club_id}/cancel", response_model=ClubResponse)
+@router.patch("/{club_id}/cancel")
 async def cancel_club(
     club_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -173,7 +175,7 @@ async def cancel_club(
     result = await db.execute(select(Club).where(Club.id == cid))
     club = result.scalar_one_or_none()
     if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
 
     club.status = "cancelled"
     club.cancelled_at = datetime.now(tz=UTC)
@@ -182,7 +184,7 @@ async def cancel_club(
     return await build_club_response(club, db)
 
 
-@router.patch("/{club_id}/reschedule", response_model=ClubResponse)
+@router.patch("/{club_id}/reschedule")
 async def reschedule_club(
     club_id: str,
     body: RescheduleRequest,
@@ -195,7 +197,7 @@ async def reschedule_club(
     result = await db.execute(select(Club).where(Club.id == cid))
     club = result.scalar_one_or_none()
     if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
 
     club.next_meeting_date = datetime.fromisoformat(body.newDate)
     await db.commit()
@@ -214,7 +216,7 @@ async def join_club(
     result = await db.execute(select(Club).where(Club.id == cid))
     club = result.scalar_one_or_none()
     if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
 
     ban_result = await db.execute(
         select(ClubBan).where(and_(ClubBan.club_id == cid, ClubBan.user_id == current_user.id))
@@ -252,7 +254,7 @@ async def leave_club(
 
     result = await db.execute(select(Club).where(Club.id == cid))
     if not result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Club not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
 
     existing = await db.execute(
         select(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == current_user.id))
