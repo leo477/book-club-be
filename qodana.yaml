@@ -5,9 +5,9 @@ linter: jetbrains/qodana-python:2025.3
 profile:
   name: qodana.starter
 
-projectJDK: "21"
-python:
-  version: "3.12"
+project:
+  python:
+    version: "3.12"
 
 # Замість sourceDirectory використовуємо чіткий include/exclude
 include:
