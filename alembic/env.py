@@ -19,9 +19,9 @@ from app.models import (
     User,
 )
 
-# Explicitly referenced to ensure all models are registered with Base.metadata
-# for Alembic autogenerate to detect all tables correctly.
-_MODELS = (ClubBan, ClubMember, Meeting, MeetingAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)
+# All models explicitly referenced to register them with Base.metadata for Alembic
+# autogenerate and to satisfy static analysis tools (CodeQL py/unused-import).
+__all__ = [m.__name__ for m in (ClubBan, ClubMember, Meeting, MeetingAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)]
 
 config = context.config
 
