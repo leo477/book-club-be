@@ -21,7 +21,10 @@ from app.models import (
 
 # All models explicitly referenced to register them with Base.metadata for Alembic
 # autogenerate and to satisfy static analysis tools (CodeQL py/unused-import).
-__all__ = [m.__name__ for m in (ClubBan, ClubMember, Meeting, MeetingAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)]
+__all__ = [
+    m.__name__
+    for m in (ClubBan, ClubMember, Meeting, MeetingAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)
+]
 
 config = context.config
 
