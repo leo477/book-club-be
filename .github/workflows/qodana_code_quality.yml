@@ -30,6 +30,7 @@ jobs:
         uses: JetBrains/qodana-action@89eb4357efd2b52e639f3216e63edaf33b82622b # v2025.3.2
         continue-on-error: true
         with:
+          args: --image,jetbrains/qodana-python:2025.3
           pr-mode: ${{ github.event_name == 'pull_request' }}
           use-caches: true
           cache-default-branch-only: false
