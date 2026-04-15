@@ -2,12 +2,21 @@
 #               Qodana analysis is configured by qodana.yaml file               #
 #             https://www.jetbrains.com/help/qodana/qodana-yaml.html            #
 #-------------------------------------------------------------------------------#
-
 version: "1.0"
 
 linter: jetbrains/qodana-python:2025.3
 
 profile:
   name: qodana.starter
+
+# Цей блок вирішує вашу проблему з часом виконання та некоректним аналізом
+exclude:
+  - name: All
+    paths:
+      - .venv          # Ігноруємо встановлені бібліотеки
+      - venv           # Про всяк випадок, якщо назва папки інша
+      - .pytest_cache  # Ігноруємо кеш тестів
+      - __pycache__    # Ігноруємо скомпільовані файли Python
+      - .git           # Ігноруємо системні файли Git
 
 bootstrap: python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
