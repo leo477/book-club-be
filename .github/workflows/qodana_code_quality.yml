@@ -27,10 +27,10 @@ jobs:
           fetch-depth: 0
       - name: 'Qodana Scan'
         id: qodana
-        uses: JetBrains/qodana-action@v2025.2
+        uses: JetBrains/qodana-action@89eb4357efd2b52e639f3216e63edaf33b82622b # v2025.3.2
         continue-on-error: true
         with:
-          linter: jetbrains/qodana-python:2025.2
+          linter: jetbrains/qodana-python:2025.3
           pr-mode: false
           use-caches: true
           post-pr-comment: true

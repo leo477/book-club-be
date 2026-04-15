@@ -5,7 +5,7 @@
 
 version: "1.0"
 
-linter: jetbrains/qodana-python:2025.2
+linter: jetbrains/qodana-python:2025.3
 
 profile:
   name: qodana.starter
