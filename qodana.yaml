@@ -2,12 +2,10 @@ version: "1.0"
 
 linter: jetbrains/qodana-python:2025.3
 
-# Вказуємо основну директорію. Це пришвидшує вихід з dumb-mode
-sourceDirectory: app
-
 profile:
   name: qodana.starter
 
+# Замість sourceDirectory використовуємо чіткий include/exclude
 include:
   - name: All
     paths:
@@ -20,14 +18,13 @@ include:
 exclude:
   - name: All
     paths:
-      - .venv
-      - venv
-      - .pytest_cache
-      - __pycache__
-      - .git
-      - .github
+      - .venv/
+      - venv/
+      - .pytest_cache/
+      - __pycache__/
+      - .git/
+      - .github/
       - "**/*.pyc"
-      # Якщо у вас є папка з даними або логами всередині app, додайте її сюди:
-      # - app/data
+      - "**/versions/*.py" # Виключаємо файли самих міграцій, якщо їх багато (вони часто гальмують індексацію)
 
 bootstrap: python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
