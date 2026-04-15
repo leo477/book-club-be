@@ -9,6 +9,15 @@ linter: jetbrains/qodana-python:2025.3
 profile:
   name: qodana.starter
 
+include:
+  - name: All
+    paths:
+      - app/
+      - alembic/
+      - migrations/
+      - scripts/
+      - tests/
+
 # Цей блок вирішує вашу проблему з часом виконання та некоректним аналізом
 exclude:
   - name: All
