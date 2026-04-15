@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context  # type: ignore[attr-defined]
 from app.database import Base
-from app.models import (  # noqa: F401
+from app.models import (
     ClubBan,
     ClubMember,
     Meeting,
@@ -18,6 +18,10 @@ from app.models import (  # noqa: F401
     RandomizerSession,
     User,
 )
+
+# Explicitly referenced so all models are registered with Base.metadata
+# for Alembic autogenerate to detect all tables correctly.
+_MODELS = (ClubBan, ClubMember, Meeting, MeetingAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)
 
 config = context.config
 
