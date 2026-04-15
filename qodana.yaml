@@ -10,4 +10,4 @@ linter: jetbrains/qodana-python:2025.2
 profile:
   name: qodana.starter
 
-bootstrap: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+bootstrap: pip install -r requirements.txt -r requirements-dev.txt

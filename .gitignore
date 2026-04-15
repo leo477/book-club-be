@@ -50,6 +50,7 @@ dmypy.json
 
 # IDE
 .idea/
+!.idea/misc.xml
 *.iml
 *.iws
 .vscode/
