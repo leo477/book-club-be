@@ -25,6 +25,19 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+
+      - name: 'Set up Python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+            python -m pip install --upgrade pip
+            [ -f requirements.txt ] && pip install -r requirements.txt
+            [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt
+
       - name: 'Qodana Scan'
         id: qodana
         uses: JetBrains/qodana-action@89eb4357efd2b52e639f3216e63edaf33b82622b # v2025.3.2

@@ -26,5 +26,3 @@ exclude:
       - .github/
       - "**/*.pyc"
       - "**/versions/*.py" # Виключаємо файли самих міграцій, якщо їх багато (вони часто гальмують індексацію)
-
-bootstrap: python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
