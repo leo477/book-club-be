@@ -2,6 +2,7 @@ import asyncio
 import os
 from logging.config import fileConfig
 
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context  # type: ignore[attr-defined]
@@ -52,7 +53,7 @@ async def run_async_migrations() -> None:
     await connectable.dispose()
 
 
-def do_run_migrations(connection: object) -> None:
+def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()
