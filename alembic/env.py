@@ -19,7 +19,7 @@ from app.models import (
     User,
 )
 
-# Explicitly referenced so all models are registered with Base.metadata
+# Explicitly referenced to ensure all models are registered with Base.metadata
 # for Alembic autogenerate to detect all tables correctly.
 _MODELS = (ClubBan, ClubMember, Meeting, MeetingAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)
 
