@@ -34,7 +34,7 @@ def _build_response(session: RandomizerSession) -> RandomizerSessionResponse:
     )
 
 
-@router.get("/history", response_model=list[RandomizerSessionResponse], status_code=status.HTTP_200_OK)
+@router.get("/history", status_code=status.HTTP_200_OK)
 async def get_history(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -49,7 +49,7 @@ async def get_history(
     return [_build_response(s) for s in sessions]
 
 
-@router.post("/sessions", response_model=RandomizerSessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/sessions", status_code=status.HTTP_201_CREATED)
 async def create_session(
     club_id: uuid.UUID,
     body: CreateRandomizerSessionRequest,

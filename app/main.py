@@ -40,6 +40,34 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 # noinspection PyShadowingNames
+def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        tags=app.openapi_tags,
+    )
+    schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+    for _path, path_item in schema.get("paths", {}).items():
+        for method, operation in path_item.items():
+            if method in ("get", "post", "put", "patch", "delete"):
+                tags = operation.get("tags", [])
+                if "auth" not in tags and "health" not in tags:
+                    operation["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+# noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
 
@@ -63,30 +91,7 @@ def create_app() -> FastAPI:
     )
 
     def custom_openapi() -> dict:  # type: ignore[type-arg]
-        if app.openapi_schema:
-            return app.openapi_schema
-        schema = get_openapi(
-            title=app.title,
-            version=app.version,
-            description=app.description,
-            routes=app.routes,
-            tags=app.openapi_tags,
-        )
-        schema["components"]["securitySchemes"] = {
-            "BearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT",
-            }
-        }
-        for _path, path_item in schema.get("paths", {}).items():
-            for method, operation in path_item.items():
-                if method in ("get", "post", "put", "patch", "delete"):
-                    tags = operation.get("tags", [])
-                    if "auth" not in tags and "health" not in tags:
-                        operation["security"] = [{"BearerAuth": []}]
-        app.openapi_schema = schema
-        return app.openapi_schema
+        return _build_openapi_schema(app)
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
