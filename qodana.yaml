@@ -5,9 +5,6 @@ linter: jetbrains/qodana-python:2025.3
 profile:
   name: qodana.starter
 
-inspections:
-  - name: PyTypeHintsInspection
-    enabled: false
 # Замість sourceDirectory використовуємо чіткий include/exclude
 include:
   - name: All
@@ -29,3 +26,4 @@ exclude:
       - .github/
       - "**/*.pyc"
       - "**/versions/*.py" # Виключаємо файли самих міграцій, якщо їх багато (вони часто гальмують індексацію)
+  - name: PyTypeHintsInspection
