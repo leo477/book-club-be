@@ -12,8 +12,7 @@ profile:
 
 bootstrap: pip install -r requirements.txt -r requirements-dev.txt
 
-inspections:
+exclude:
   # PyTypeHintsInspection fires false-positives on valid Python 3.12 syntax (str | None, list[X]).
   # Type correctness is already enforced by mypy (strict mode) and ruff (UP rules).
-  - inspection: PyTypeHintsInspection
-    enabled: false
+  - name: PyTypeHintsInspection
