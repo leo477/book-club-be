@@ -80,3 +80,4 @@ logs/
 
 # Repomix
 repomix-output.md
+/node_modules/
