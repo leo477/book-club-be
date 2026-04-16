@@ -1,18 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
-
-
-class RegisterRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=8)
-    displayName: str = Field(min_length=1, max_length=100)
-    role: Literal["user", "organizer"] = "user"
-
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
+from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
 
 
 class UserProfileResponse(BaseModel):
