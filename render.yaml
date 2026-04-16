@@ -5,6 +5,7 @@ services:
     dockerfilePath: Dockerfile
     plan: free
     autoDeploy: true
+    preDeployCommand: alembic upgrade head
     healthCheckPath: /health
     envVars: []
     
