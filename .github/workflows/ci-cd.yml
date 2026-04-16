@@ -116,6 +116,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Trivy scan (table output for logs)
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # 0.30.0
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/book-club-be:${{ github.sha }}
+          format: table
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # 0.30.0
         with:

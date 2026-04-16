@@ -1,0 +1,9 @@
+# Trivy vulnerability suppressions
+# Format: CVE-YYYY-NNNNN [expiry YYYY-MM-DD] optional reason
+#
+# Only add entries here after verifying the CVE is either:
+#   - A false positive (not applicable to this codebase)
+#   - An accepted risk with a documented justification
+#
+# Example:
+# CVE-2023-XXXXX 2025-12-31 Not exploitable: no network path to affected code
