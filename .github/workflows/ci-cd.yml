@@ -142,6 +142,7 @@ jobs:
   deploy-render:
     needs: trivy-scan
     runs-on: ubuntu-latest
+    if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
     steps:
       - name: Trigger Render deploy
         run: curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
