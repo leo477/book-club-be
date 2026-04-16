@@ -1,8 +1,7 @@
-vulnerabilities:
-  - id: CVE-2026-28390
-    reason: >
-      Fix 3.0.19-1~deb12u2 is recorded in Trivy DB but not yet available
-      in Debian bookworm-security apt mirrors. The Dockerfile runs
-      apt-get upgrade -y (cache-busted per CI run via CACHEBUST build-arg)
-      and will automatically apply the fix once Debian releases the package.
-    expires: "2026-07-16T00:00:00Z"
+# CVE-2026-28390 - OpenSSL: NULL pointer dereference DoS in CMS (HIGH)
+# Fix 3.0.19-1~deb12u2 is recorded in Trivy DB but not yet available
+# in Debian bookworm-security apt mirrors. Dockerfile runs apt-get upgrade -y
+# (cache-busted per CI run via CACHEBUST build-arg) and will automatically
+# apply the fix once Debian releases the package.
+# Review by: 2026-07-16
+CVE-2026-28390
