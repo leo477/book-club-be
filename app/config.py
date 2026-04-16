@@ -28,7 +28,7 @@ class Settings(BaseSettings):
             or len(self.SECRET_KEY) < 32
         ):
             raise ValueError(
-                'SECRET_KEY must be set to a secure random string of at least 32 characters. '
+                "SECRET_KEY must be set to a secure random string of at least 32 characters. "
                 'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
             )
         return self

@@ -106,9 +106,7 @@ async def async_client(override_get_db):
 
 @pytest_asyncio.fixture
 async def register_user(async_client):
-    async def _register(
-        email="test@example.com", password="password123", displayName="Test User", role="user"
-    ):
+    async def _register(email="test@example.com", password="password123", displayName="Test User", role="user"):
         return await async_client.post(
             "/api/v1/auth/register",
             json={"email": email, "password": password, "displayName": displayName, "role": role},

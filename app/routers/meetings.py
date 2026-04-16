@@ -36,9 +36,7 @@ async def get_meetings(
 
     # Load all attendees for all meetings in a single query — eliminates N+1
     meeting_ids = [m.id for m in meetings_db]
-    attendees_result = await db.execute(
-        select(MeetingAttendee).where(MeetingAttendee.meeting_id.in_(meeting_ids))
-    )
+    attendees_result = await db.execute(select(MeetingAttendee).where(MeetingAttendee.meeting_id.in_(meeting_ids)))
     all_attendees = attendees_result.scalars().all()
 
     # Group attendees by meeting_id

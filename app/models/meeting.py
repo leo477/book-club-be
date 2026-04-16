@@ -27,5 +27,7 @@ class MeetingAttendee(Base):
     __tablename__ = "meeting_attendees"
     __table_args__ = (PrimaryKeyConstraint("meeting_id", "user_id"),)
 
-    meeting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("meetings.id"), nullable=False, index=True)  # noqa: E501
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.id"), nullable=False, index=True
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)

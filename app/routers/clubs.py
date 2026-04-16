@@ -230,5 +230,7 @@ async def leave_club(
     if not member:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Not a member")
 
-    await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id)))  # noqa: E501
+    await db.execute(
+        delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
+    )
     await db.commit()
