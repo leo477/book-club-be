@@ -23,6 +23,8 @@ FROM python:3.12-slim-bookworm
 ARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
+    openssl \
+    libssl3 \
     libpq5 \
     curl \
     && rm -rf /var/lib/apt/lists/*
