@@ -138,25 +138,3 @@ jobs:
         uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
         with:
           sarif_file: trivy-results.sarif
-
-  deploy-render:
-    needs: trivy-scan
-    runs-on: ubuntu-latest
-    if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
-    steps:
-      - name: Trigger Render deploy
-        run: curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
-      - name: Wait for deploy to be healthy
-        run: |
-          echo "Waiting for Render deploy to complete..."
-          for i in $(seq 1 24); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.RENDER_APP_URL }}/health")
-            if [ "$STATUS" = "200" ]; then
-              echo "App is healthy (HTTP 200)"
-              exit 0
-            fi
-            echo "Attempt $i/24 — HTTP $STATUS, retrying in 10s..."
-            sleep 10
-          done
-          echo "Deploy health check timed out after 4 minutes"
-          exit 1

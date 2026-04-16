@@ -27,3 +27,6 @@ exclude:
       - "**/*.pyc"
       - "**/versions/*.py" # Виключаємо файли самих міграцій, якщо їх багато (вони часто гальмують індексацію)
   - name: PyTypeHintsInspection
+  - name: PyMissingConstructor
+    paths:
+      - app/models/
