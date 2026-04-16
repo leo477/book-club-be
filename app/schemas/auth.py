@@ -1,6 +1,4 @@
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class UserProfileResponse(BaseModel):

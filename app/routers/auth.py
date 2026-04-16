@@ -22,7 +22,7 @@ async def register(
     settings: Annotated[Settings, Depends(get_settings_dep)],
     email: Annotated[EmailStr, Body()],
     password: Annotated[str, Body(min_length=8)],
-    displayName: Annotated[str, Body(min_length=1, max_length=100)],
+    displayName: Annotated[str, Body(min_length=1, max_length=100)],  # noqa: N803
     role: Annotated[Literal["user", "organizer"], Body()] = "user",
 ) -> AuthResponse:
     result = await db.execute(select(User).where(User.email == email))
