@@ -6,7 +6,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from starlette.testclient import TestClient
 
 from app.database import Base, get_db
 from app.dependencies import get_db_dep
@@ -67,6 +66,14 @@ async def test_engine():
     await engine.dispose()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def clean_db(test_engine):
+    yield
+    async with test_engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(table.delete())
+
+
 @pytest_asyncio.fixture
 async def override_get_db(test_engine):
     TestSessionLocal = async_sessionmaker(
@@ -92,12 +99,6 @@ async def override_get_db(test_engine):
     app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def client(override_get_db):
-    with TestClient(app, follow_redirects=True) as c:
-        yield c
-
-
 @pytest_asyncio.fixture
 async def async_client(override_get_db):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", follow_redirects=True) as ac:
@@ -117,7 +118,16 @@ async def register_user(async_client):
 
 @pytest_asyncio.fixture
 async def auth_headers(async_client):
-    async def _get_headers(email="test@example.com", password="password123"):
+    async def _get_headers(
+        email="test@example.com",
+        password="password123",
+        displayName="Test User",
+        role="user",
+    ):
+        await async_client.post(
+            "/api/v1/auth/register",
+            json={"email": email, "password": password, "displayName": displayName, "role": role},
+        )
         resp = await async_client.post("/api/v1/auth/login", json={"email": email, "password": password})
         token = resp.json()["accessToken"]
         return {"Authorization": f"Bearer {token}"}
