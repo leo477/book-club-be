@@ -12,8 +12,7 @@ RUN apt-get update && apt-get upgrade -y && \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# Оновлюємо pip перед інсталяцією
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: runtime
@@ -28,6 +27,8 @@ RUN apt-get update && apt-get upgrade -y && \
     libpq5 \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 RUN groupadd --gid 1001 appuser && \
     useradd --uid 1001 --gid appuser --shell /bin/sh --create-home appuser
