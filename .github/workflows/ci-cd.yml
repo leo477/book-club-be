@@ -19,21 +19,20 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          enable-cache: true
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: uv sync
       - name: Ruff check
-        run: ruff check .
+        run: uv run ruff check .
       - name: Ruff format check
-        run: ruff format --check .
+        run: uv run ruff format --check .
       - name: Mypy strict
-        run: mypy app/
+        run: uv run mypy app/
       - name: Bandit security lint
-        run: bandit -r app/ -ll -x app/routers/health.py
+        run: uv run bandit -r app/ -ll -x app/routers/health.py
 
   test:
     needs: lint
@@ -55,15 +54,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          enable-cache: true
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: uv sync
       - name: Run pytest with coverage
-        run: pytest -v --tb=short --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=70
+        run: uv run pytest -v --tb=short --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=70
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_test
           SECRET_KEY: test-secret

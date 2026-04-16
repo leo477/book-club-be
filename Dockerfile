@@ -1,9 +1,10 @@
 # Stage 1: builder
 FROM python:3.12-slim-bookworm AS builder
 
+COPY --from=ghcr.io/astral-sh/uv:0.6 /uv /bin/uv
+
 WORKDIR /build
 
-# Додаємо apt-get upgrade для виправлення вразливостей системних ліб
 ARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
@@ -11,14 +12,15 @@ RUN apt-get update && apt-get upgrade -y && \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --prefix=/install -r requirements.txt
+COPY pyproject.toml uv.lock .python-version ./
+
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Stage 2: runtime
 FROM python:3.12-slim-bookworm
 
-# 1. Оновлюємо систему для виправлення відомих CVE у базовому образі
 ARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
@@ -28,23 +30,20 @@ RUN apt-get update && apt-get upgrade -y && \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-
 RUN groupadd --gid 1001 appuser && \
     useradd --uid 1001 --gid appuser --shell /bin/sh --create-home appuser
 
-# Копіюємо залежності
-COPY --from=builder /install /usr/local
+COPY --from=builder /build/.venv /app/.venv
 COPY app/ /app/app/
 COPY alembic/ /app/alembic/
 COPY alembic.ini /app/alembic.ini
 
+ENV PATH="/app/.venv/bin:$PATH"
+
 WORKDIR /app
 
-# Змінюємо власника файлів
 RUN chown -R appuser:appuser /app
 
-# Додатковий захист: робимо деякі системні папки лише для читання, де це можливо
 USER appuser
 
 EXPOSE 8080
