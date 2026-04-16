@@ -103,6 +103,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            CACHEBUST=${{ github.run_id }}
 
   trivy-scan:
     needs: docker-build-push

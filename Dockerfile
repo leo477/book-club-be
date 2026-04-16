@@ -4,6 +4,7 @@ FROM python:3.12-slim-bookworm AS builder
 WORKDIR /build
 
 # Додаємо apt-get upgrade для виправлення вразливостей системних ліб
+ARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     gcc \
@@ -19,6 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 FROM python:3.12-slim-bookworm
 
 # 1. Оновлюємо систему для виправлення відомих CVE у базовому образі
+ARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     libpq5 \
