@@ -2,8 +2,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import bcrypt
+import jwt
 from fastapi import HTTPException, status
-from jose import JWTError, jwt
+from jwt.exceptions import PyJWTError
 
 from app.config import Settings
 
@@ -27,7 +28,7 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
         payload: dict[str, Any] = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload
-    except JWTError as exc:
+    except PyJWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid or expired token", "code": "INVALID_TOKEN"},
