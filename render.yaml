@@ -3,7 +3,7 @@ services:
     name: book-club-be
     env: docker
     dockerfilePath: Dockerfile
-    plan: standard
+    plan: free
     autoDeploy: true
     healthCheckPath: /health
     envVars: []
