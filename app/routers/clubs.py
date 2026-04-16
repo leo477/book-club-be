@@ -31,8 +31,8 @@ async def list_clubs(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     search: str | None = None,
     city: str | None = None,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[ClubResponse]:
     stmt = select(Club)
 
