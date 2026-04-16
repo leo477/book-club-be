@@ -77,3 +77,7 @@ logs/
 
 # Docker
 .dockerignore
+
+# Repomix
+repomix-output.md
+/node_modules/
