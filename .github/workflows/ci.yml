@@ -71,7 +71,7 @@ jobs:
         run: pytest -v --tb=short --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=70
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_test
-          SECRET_KEY: test-secret
+          SECRET_KEY: test-secret-key-for-ci-pipeline-32chars
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
