@@ -39,8 +39,8 @@ async def get_history(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[RandomizerSessionResponse]:
     result = await db.execute(
         select(RandomizerSession)
