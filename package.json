@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "build-ctx": "npx repomix --no-files",
+    "prepare": "husky install"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,py,html}": [
+      "npm run build-ctx",
+      "git add repomix-output.md"
+    ]
+  },
+  "dependencies": {
+    "repomix": "^1.13.1"
+  }
+}
