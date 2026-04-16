@@ -124,7 +124,6 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           severity: CRITICAL,HIGH
-          trivyignores: .trivyignore
       - name: Upload Trivy scan SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3

@@ -126,27 +126,28 @@ async def send_message(
 async def websocket_endpoint(
     websocket: WebSocket,
     room_id: str,
+    token: str,  # query parameter: ws://...?token=<jwt>
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
+    # Authenticate BEFORE accepting the connection so unauthenticated
+    # clients are rejected during the handshake phase.
+    settings = get_settings()
+    try:
+        token_data = decode_access_token(token, settings)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+
+    user_id = token_data.get("sub")
+    user_result = await db.execute(select(User).where(User.id == uuid.UUID(str(user_id))))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        await websocket.close(code=1008)
+        return
+
+    # Only accept the connection after successful authentication.
     await manager.connect(room_id, websocket)
     try:
-        auth_data = await websocket.receive_json()
-        token = auth_data.get("token", "")
-        settings = get_settings()
-        try:
-            token_data = decode_access_token(token, settings)
-        except HTTPException:
-            await websocket.close(code=1008)
-            return
-
-        user_id = token_data.get("sub")
-
-        user_result = await db.execute(select(User).where(User.id == uuid.UUID(str(user_id))))
-        user = user_result.scalar_one_or_none()
-        if not user:
-            await websocket.close(code=1008)
-            return
-
         while True:
             data = await websocket.receive_json()
             text = data.get("text", "")

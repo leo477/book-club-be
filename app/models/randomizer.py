@@ -14,8 +14,10 @@ class RandomizerSession(Base):
     __tablename__ = "randomizer_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    club_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clubs.id"), nullable=False)
-    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    club_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clubs.id"), nullable=False, index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
     purpose: Mapped[str] = mapped_column(String(200), nullable=False)
     candidates: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

@@ -3,25 +3,9 @@ import uuid
 import pytest
 
 
-# Helpers
-async def register_user(
-    async_client, email="test@example.com", password="password123", displayName="Test User", role="user"
-):
-    return await async_client.post(
-        "/api/v1/auth/register",
-        json={"email": email, "password": password, "displayName": displayName, "role": role},
-    )
-
-
-async def get_auth_headers(async_client, email="test@example.com", password="password123"):
-    resp = await async_client.post("/api/v1/auth/login", json={"email": email, "password": password})
-    token = resp.json()["accessToken"]
-    return {"Authorization": f"Bearer {token}"}
-
-
-async def create_organizer_with_club(async_client, email, club_name):
-    await register_user(async_client, email=email, role="user")
-    headers = await get_auth_headers(async_client, email=email)
+async def create_organizer_with_club(async_client, register_user, auth_headers, email, club_name):
+    await register_user(email=email, role="user")
+    headers = await auth_headers(email=email)
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     club_resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": club_name, "description": "Desc", "city": "Kyiv"}
@@ -30,8 +14,10 @@ async def create_organizer_with_club(async_client, email, club_name):
 
 
 @pytest.mark.asyncio
-async def test_list_members_organizer_only(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg1@example.com", club_name="MClub1")
+async def test_list_members_organizer_only(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg1@example.com", club_name="MClub1"
+    )
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)
     assert resp.status_code == 200
     members = resp.json()
@@ -41,10 +27,12 @@ async def test_list_members_organizer_only(async_client):
 
 
 @pytest.mark.asyncio
-async def test_list_members_with_joined_user(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg2@example.com", club_name="MClub2")
-    await register_user(async_client, email="muser1@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser1@example.com")
+async def test_list_members_with_joined_user(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg2@example.com", club_name="MClub2"
+    )
+    await register_user(email="muser1@example.com")
+    user_headers = await auth_headers(email="muser1@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)
@@ -56,10 +44,12 @@ async def test_list_members_with_joined_user(async_client):
 
 
 @pytest.mark.asyncio
-async def test_list_members_with_socials_public(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg3@example.com", club_name="MClub3")
-    await register_user(async_client, email="muser2@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser2@example.com")
+async def test_list_members_with_socials_public(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg3@example.com", club_name="MClub3"
+    )
+    await register_user(email="muser2@example.com")
+    user_headers = await auth_headers(email="muser2@example.com")
     await async_client.patch("/api/v1/users/me/socials", headers=user_headers, json={"telegram": "@tguser"})
     await async_client.patch("/api/v1/users/me/socials-visibility", headers=user_headers, json={"socialsPublic": True})
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
@@ -74,10 +64,12 @@ async def test_list_members_with_socials_public(async_client):
 
 
 @pytest.mark.asyncio
-async def test_remove_member_success(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg4@example.com", club_name="MClub4")
-    await register_user(async_client, email="muser3@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser3@example.com")
+async def test_remove_member_success(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg4@example.com", club_name="MClub4"
+    )
+    await register_user(email="muser3@example.com")
+    user_headers = await auth_headers(email="muser3@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     members_resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)
@@ -90,10 +82,12 @@ async def test_remove_member_success(async_client):
 
 
 @pytest.mark.asyncio
-async def test_remove_member_not_organizer(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg5@example.com", club_name="MClub5")
-    await register_user(async_client, email="muser4@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser4@example.com")
+async def test_remove_member_not_organizer(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg5@example.com", club_name="MClub5"
+    )
+    await register_user(email="muser4@example.com")
+    user_headers = await auth_headers(email="muser4@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     fake_user_id = str(uuid.uuid4())
@@ -102,18 +96,22 @@ async def test_remove_member_not_organizer(async_client):
 
 
 @pytest.mark.asyncio
-async def test_remove_member_not_found(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg6@example.com", club_name="MClub6")
+async def test_remove_member_not_found(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg6@example.com", club_name="MClub6"
+    )
     fake_user_id = str(uuid.uuid4())
     resp = await async_client.delete(f"/api/v1/clubs/{club_id}/members/{fake_user_id}", headers=headers)
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_ban_member_success(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg7@example.com", club_name="MClub7")
-    await register_user(async_client, email="muser5@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser5@example.com")
+async def test_ban_member_success(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg7@example.com", club_name="MClub7"
+    )
+    await register_user(email="muser5@example.com")
+    user_headers = await auth_headers(email="muser5@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     members_resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)
@@ -133,10 +131,12 @@ async def test_ban_member_success(async_client):
 
 
 @pytest.mark.asyncio
-async def test_ban_member_not_organizer(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg8@example.com", club_name="MClub8")
-    await register_user(async_client, email="muser6@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser6@example.com")
+async def test_ban_member_not_organizer(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg8@example.com", club_name="MClub8"
+    )
+    await register_user(email="muser6@example.com")
+    user_headers = await auth_headers(email="muser6@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     fake_user_id = str(uuid.uuid4())
@@ -149,8 +149,10 @@ async def test_ban_member_not_organizer(async_client):
 
 
 @pytest.mark.asyncio
-async def test_ban_member_user_not_found(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg9@example.com", club_name="MClub9")
+async def test_ban_member_user_not_found(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg9@example.com", club_name="MClub9"
+    )
     fake_user_id = str(uuid.uuid4())
     resp = await async_client.post(
         f"/api/v1/clubs/{club_id}/members/{fake_user_id}/ban",
@@ -161,10 +163,12 @@ async def test_ban_member_user_not_found(async_client):
 
 
 @pytest.mark.asyncio
-async def test_ban_member_permanent(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg10@example.com", club_name="MClub10")
-    await register_user(async_client, email="muser7@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser7@example.com")
+async def test_ban_member_permanent(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg10@example.com", club_name="MClub10"
+    )
+    await register_user(email="muser7@example.com")
+    user_headers = await auth_headers(email="muser7@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     members_resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)
@@ -182,18 +186,22 @@ async def test_ban_member_permanent(async_client):
 
 
 @pytest.mark.asyncio
-async def test_list_bans_empty(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg11@example.com", club_name="MClub11")
+async def test_list_bans_empty(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg11@example.com", club_name="MClub11"
+    )
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/bans", headers=headers)
     assert resp.status_code == 200
     assert resp.json() == []
 
 
 @pytest.mark.asyncio
-async def test_list_bans_with_bans(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg12@example.com", club_name="MClub12")
-    await register_user(async_client, email="muser8@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser8@example.com")
+async def test_list_bans_with_bans(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg12@example.com", club_name="MClub12"
+    )
+    await register_user(email="muser8@example.com")
+    user_headers = await auth_headers(email="muser8@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     members_resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)
@@ -215,10 +223,12 @@ async def test_list_bans_with_bans(async_client):
 
 
 @pytest.mark.asyncio
-async def test_list_bans_not_organizer(async_client):
-    headers, club_id = await create_organizer_with_club(async_client, email="morg13@example.com", club_name="MClub13")
-    await register_user(async_client, email="muser9@example.com")
-    user_headers = await get_auth_headers(async_client, email="muser9@example.com")
+async def test_list_bans_not_organizer(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg13@example.com", club_name="MClub13"
+    )
+    await register_user(email="muser9@example.com")
+    user_headers = await auth_headers(email="muser9@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/bans", headers=user_headers)

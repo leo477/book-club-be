@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,11 +39,15 @@ async def get_history(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
 ) -> list[RandomizerSessionResponse]:
     result = await db.execute(
         select(RandomizerSession)
         .where(RandomizerSession.club_id == club_id)
         .order_by(RandomizerSession.created_at.desc())
+        .offset(skip)
+        .limit(limit)
     )
     sessions = result.scalars().all()
     return [_build_response(s) for s in sessions]

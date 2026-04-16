@@ -12,6 +12,7 @@ from app.config import Settings, get_settings
 from app.database import get_db
 
 if TYPE_CHECKING:
+    from app.models.club_member import ClubMember
     from app.models.user import User
 
 
@@ -56,3 +57,38 @@ async def get_current_user(
             detail={"error": "User not found", "code": "USER_NOT_FOUND"},
         )
     return user
+
+
+async def require_club_organizer(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> ClubMember:
+    from sqlalchemy import and_, select
+
+    from app.models.club_member import ClubMember as ClubMemberModel
+
+    result = await db.execute(
+        select(ClubMemberModel).where(
+            and_(
+                ClubMemberModel.club_id == club_id,
+                ClubMemberModel.user_id == current_user.id,
+                ClubMemberModel.role == "organizer",
+            )
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+    return membership
+
+
+async def get_optional_user(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -> User | None:
+    try:
+        return await get_current_user(request=request, db=db, settings=settings)
+    except HTTPException:
+        return None
