@@ -138,3 +138,10 @@ jobs:
         uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
         with:
           sarif_file: trivy-results.sarif
+
+  deploy-render:
+    needs: trivy-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        run: curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
