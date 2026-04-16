@@ -1,25 +1,10 @@
 import pytest
 
 
-# Helper functions
-async def register_user(
-    async_client, email="test@example.com", password="password123", displayName="Test User", role="user"
-):
-    return await async_client.post(
-        "/api/v1/auth/register", json={"email": email, "password": password, "displayName": displayName, "role": role}
-    )
-
-
-async def get_auth_headers(async_client, email="test@example.com", password="password123"):
-    resp = await async_client.post("/api/v1/auth/login", json={"email": email, "password": password})
-    token = resp.json()["accessToken"]
-    return {"Authorization": f"Bearer {token}"}
-
-
 @pytest.mark.asyncio
-async def test_get_stats_empty(async_client):
-    await register_user(async_client, email="stats_fresh@example.com")
-    headers = await get_auth_headers(async_client, email="stats_fresh@example.com")
+async def test_get_stats_empty(async_client, register_user, auth_headers):
+    await register_user(email="stats_fresh@example.com")
+    headers = await auth_headers(email="stats_fresh@example.com")
     resp = await async_client.get("/api/v1/users/me/stats", headers=headers)
     assert resp.status_code == 200
     data = resp.json()
@@ -27,36 +12,36 @@ async def test_get_stats_empty(async_client):
 
 
 @pytest.mark.asyncio
-async def test_update_display_name(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_update_display_name(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     resp = await async_client.patch("/api/v1/users/me", headers=headers, json={"displayName": "New Name"})
     assert resp.status_code == 200
     assert resp.json()["displayName"] == "New Name"
 
 
 @pytest.mark.asyncio
-async def test_update_role_to_organizer(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_update_role_to_organizer(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     resp = await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     assert resp.status_code == 200
     assert resp.json()["role"] == "organizer"
 
 
 @pytest.mark.asyncio
-async def test_update_socials(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_update_socials(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     resp = await async_client.patch("/api/v1/users/me/socials", headers=headers, json={"telegram": "@user"})
     assert resp.status_code == 200
     assert resp.json()["socials"]["telegram"] == "@user"
 
 
 @pytest.mark.asyncio
-async def test_update_socials_visibility(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_update_socials_visibility(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     resp = await async_client.patch(
         "/api/v1/users/me/socials-visibility", headers=headers, json={"socialsPublic": False}
     )

@@ -1,3 +1,4 @@
+from app.models.base import TimestampMixin
 from app.models.chat import ChatMessage, ChatRoom
 from app.models.club import Club
 from app.models.club_ban import ClubBan
@@ -19,5 +20,6 @@ __all__ = [
     "QuizAttempt",
     "QuizQuestion",
     "RandomizerSession",
+    "TimestampMixin",
     "User",
 ]

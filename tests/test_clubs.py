@@ -1,21 +1,6 @@
 import pytest
 
 
-# Helper functions
-async def register_user(
-    async_client, email="test@example.com", password="password123", displayName="Test User", role="user"
-):
-    return await async_client.post(
-        "/api/v1/auth/register", json={"email": email, "password": password, "displayName": displayName, "role": role}
-    )
-
-
-async def get_auth_headers(async_client, email="test@example.com", password="password123"):
-    resp = await async_client.post("/api/v1/auth/login", json={"email": email, "password": password})
-    token = resp.json()["accessToken"]
-    return {"Authorization": f"Bearer {token}"}
-
-
 @pytest.mark.asyncio
 async def test_list_clubs_empty(async_client):
     resp = await async_client.get("/api/v1/clubs")
@@ -24,9 +9,9 @@ async def test_list_clubs_empty(async_client):
 
 
 @pytest.mark.asyncio
-async def test_create_club_as_organizer(async_client):
-    await register_user(async_client, email="organizer_club@example.com")
-    headers = await get_auth_headers(async_client, email="organizer_club@example.com")
+async def test_create_club_as_organizer(async_client, register_user, auth_headers):
+    await register_user(email="organizer_club@example.com")
+    headers = await auth_headers(email="organizer_club@example.com")
     # Promote to organizer
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     resp = await async_client.post(
@@ -42,9 +27,9 @@ async def test_create_club_as_organizer(async_client):
 
 
 @pytest.mark.asyncio
-async def test_create_club_as_non_organizer(async_client):
-    await register_user(async_client, email="nonorg_club@example.com")
-    headers = await get_auth_headers(async_client, email="nonorg_club@example.com")
+async def test_create_club_as_non_organizer(async_client, register_user, auth_headers):
+    await register_user(email="nonorg_club@example.com")
+    headers = await auth_headers(email="nonorg_club@example.com")
     resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": "Book Club", "description": "A club", "city": "Kyiv"}
     )
@@ -52,9 +37,9 @@ async def test_create_club_as_non_organizer(async_client):
 
 
 @pytest.mark.asyncio
-async def test_get_club_by_id(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_get_club_by_id(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": "Test Club", "description": "Desc", "city": "Kyiv"}
@@ -72,59 +57,59 @@ async def test_get_club_not_found(async_client):
 
 
 @pytest.mark.asyncio
-async def test_join_club(async_client):
+async def test_join_club(async_client, register_user, auth_headers):
     # Organizer creates club
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+    await register_user()
+    headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     club_resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": "Join Club", "description": "Desc", "city": "Kyiv"}
     )
     club_id = club_resp.json()["id"]
     # Second user joins
-    await register_user(async_client, email="user2@example.com")
-    headers2 = await get_auth_headers(async_client, email="user2@example.com")
+    await register_user(email="user2@example.com")
+    headers2 = await auth_headers(email="user2@example.com")
     join_resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
     assert join_resp.status_code == 200
     assert "memberCount" in join_resp.json()
 
 
 @pytest.mark.asyncio
-async def test_join_club_already_member(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_join_club_already_member(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     club_resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": "JoinTwice", "description": "Desc", "city": "Kyiv"}
     )
     club_id = club_resp.json()["id"]
-    await register_user(async_client, email="user2@example.com")
-    headers2 = await get_auth_headers(async_client, email="user2@example.com")
+    await register_user(email="user2@example.com")
+    headers2 = await auth_headers(email="user2@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
     resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
     assert resp.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_leave_club(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_leave_club(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     club_resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": "Leave Club", "description": "Desc", "city": "Kyiv"}
     )
     club_id = club_resp.json()["id"]
-    await register_user(async_client, email="user2@example.com")
-    headers2 = await get_auth_headers(async_client, email="user2@example.com")
+    await register_user(email="user2@example.com")
+    headers2 = await auth_headers(email="user2@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
     resp = await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=headers2)
     assert resp.status_code == 204
 
 
 @pytest.mark.asyncio
-async def test_pause_club(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_pause_club(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     club_resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": "Pause Club", "description": "Desc", "city": "Kyiv"}
@@ -136,9 +121,9 @@ async def test_pause_club(async_client):
 
 
 @pytest.mark.asyncio
-async def test_cancel_club(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_cancel_club(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     club_resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": "Cancel Club", "description": "Desc", "city": "Kyiv"}
@@ -150,9 +135,9 @@ async def test_cancel_club(async_client):
 
 
 @pytest.mark.asyncio
-async def test_my_clubs(async_client):
-    await register_user(async_client)
-    headers = await get_auth_headers(async_client)
+async def test_my_clubs(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     club_resp = await async_client.post(
         "/api/v1/clubs", headers=headers, json={"name": "My Club", "description": "Desc", "city": "Kyiv"}

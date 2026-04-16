@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,8 +44,10 @@ async def get_quizzes(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
 ) -> list[QuizResponse]:
-    result = await db.execute(select(Quiz).where(Quiz.club_id == club_id))
+    result = await db.execute(select(Quiz).where(Quiz.club_id == club_id).offset(skip).limit(limit))
     quizzes = result.scalars().all()
     return [
         QuizResponse(

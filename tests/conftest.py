@@ -102,3 +102,26 @@ def client(override_get_db):
 async def async_client(override_get_db):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", follow_redirects=True) as ac:
         yield ac
+
+
+@pytest_asyncio.fixture
+async def register_user(async_client):
+    async def _register(
+        email="test@example.com", password="password123", displayName="Test User", role="user"
+    ):
+        return await async_client.post(
+            "/api/v1/auth/register",
+            json={"email": email, "password": password, "displayName": displayName, "role": role},
+        )
+
+    return _register
+
+
+@pytest_asyncio.fixture
+async def auth_headers(async_client):
+    async def _get_headers(email="test@example.com", password="password123"):
+        resp = await async_client.post("/api/v1/auth/login", json={"email": email, "password": password})
+        token = resp.json()["accessToken"]
+        return {"Authorization": f"Bearer {token}"}
+
+    return _get_headers

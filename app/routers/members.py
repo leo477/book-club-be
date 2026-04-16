@@ -4,47 +4,17 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings
-from app.dependencies import get_current_user, get_db_dep, get_settings_dep
+from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
 from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.user import User
 from app.schemas.clubs import BanRequest, BanResponse, MemberResponse
 
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
-
-
-async def get_optional_user(
-    request: Request,
-    db: Annotated[AsyncSession, Depends(get_db_dep)],
-    settings: Annotated[Settings, Depends(get_settings_dep)],
-) -> User | None:
-    try:
-        return await get_current_user(request=request, db=db, settings=settings)
-    # noinspection PyBroadException
-    except HTTPException:
-        return None
-
-
-# noinspection PyShadowingNames
-async def _require_organizer(club_id: uuid.UUID, user: User, db: AsyncSession) -> ClubMember:
-    result = await db.execute(
-        select(ClubMember).where(
-            and_(
-                ClubMember.club_id == club_id,
-                ClubMember.user_id == user.id,
-                ClubMember.role == "organizer",
-            )
-        )
-    )
-    membership = result.scalar_one_or_none()
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
-    return membership
 
 
 @router.get("/members")
@@ -97,7 +67,7 @@ async def remove_member(
 ) -> None:
     cid = uuid.UUID(club_id)
     uid = uuid.UUID(user_id)
-    _ = await _require_organizer(cid, current_user, db)
+    _ = await require_club_organizer(cid, current_user, db)
 
     existing = await db.execute(select(ClubMember).where(and_(ClubMember.club_id == cid, ClubMember.user_id == uid)))
     if not existing.scalar_one_or_none():
@@ -117,7 +87,7 @@ async def ban_member(
 ) -> BanResponse:
     cid = uuid.UUID(club_id)
     uid = uuid.UUID(user_id)
-    _ = await _require_organizer(cid, current_user, db)
+    _ = await require_club_organizer(cid, current_user, db)
 
     user_result = await db.execute(select(User).where(User.id == uid))
     if not user_result.scalar_one_or_none():
@@ -153,7 +123,7 @@ async def list_bans(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> list[BanResponse]:
     cid = uuid.UUID(club_id)
-    _ = await _require_organizer(cid, current_user, db)
+    _ = await require_club_organizer(cid, current_user, db)
 
     result = await db.execute(select(ClubBan).where(ClubBan.club_id == cid))
     bans = result.scalars().all()
