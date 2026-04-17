@@ -12,7 +12,7 @@ async def test_health_returns_ok(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_sync(client) -> None:
+async def test_health_sync(async_client) -> None:
     response = async_client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
