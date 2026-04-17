@@ -30,11 +30,7 @@ async def list_members(
 
     members: list[MemberResponse] = []
     for membership, user in rows:
-        socials = (
-            {k: v for k, v in build_socials(user).items() if v is not None}
-            if user.socials_public
-            else None
-        )
+        socials = {k: v for k, v in build_socials(user).items() if v is not None} if user.socials_public else None
         members.append(
             MemberResponse(
                 userId=str(user.id),
