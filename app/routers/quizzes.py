@@ -5,8 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db_dep
-from app.models.club_member import ClubMember
+from app.dependencies import get_current_user, get_db_dep, is_club_organizer, require_club_organizer
 from app.models.quiz import Quiz, QuizAttempt, QuizQuestion
 from app.models.user import User
 from app.schemas.quizzes import (
@@ -20,20 +19,19 @@ from app.schemas.quizzes import (
 )
 
 QUIZ_NOT_FOUND = "Quiz not found"
-NOT_AN_ORGANIZER = "Not an organizer"
 
 router = APIRouter(prefix="/api/v1", tags=["quizzes"])
 
 
-async def is_club_organizer(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
-    result = await db.execute(
-        select(ClubMember).where(
-            ClubMember.club_id == club_id,
-            ClubMember.user_id == user_id,
-            ClubMember.role == "organizer",
-        )
+def _quiz_response(q: Quiz) -> QuizResponse:
+    return QuizResponse(
+        id=str(q.id),
+        clubId=str(q.club_id),
+        createdBy=str(q.created_by),
+        title=q.title,
+        description=q.description,
+        isActive=q.is_active,
     )
-    return result.scalar_one_or_none() is not None
 
 
 @router.get(
@@ -48,18 +46,7 @@ async def get_quizzes(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[QuizResponse]:
     result = await db.execute(select(Quiz).where(Quiz.club_id == club_id).offset(skip).limit(limit))
-    quizzes = result.scalars().all()
-    return [
-        QuizResponse(
-            id=str(q.id),
-            clubId=str(q.club_id),
-            createdBy=str(q.created_by),
-            title=q.title,
-            description=q.description,
-            isActive=q.is_active,
-        )
-        for q in quizzes
-    ]
+    return [_quiz_response(q) for q in result.scalars().all()]
 
 
 @router.post(
@@ -72,11 +59,7 @@ async def create_quiz(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> QuizResponse:
-    if not await is_club_organizer(club_id, current_user.id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": NOT_AN_ORGANIZER, "code": "FORBIDDEN"},
-        )
+    await require_club_organizer(club_id, current_user, db)
 
     quiz = Quiz(
         id=uuid.uuid4(),
@@ -89,15 +72,7 @@ async def create_quiz(
     db.add(quiz)
     await db.flush()
     await db.refresh(quiz)
-
-    return QuizResponse(
-        id=str(quiz.id),
-        clubId=str(quiz.club_id),
-        createdBy=str(quiz.created_by),
-        title=quiz.title,
-        description=quiz.description,
-        isActive=quiz.is_active,
-    )
+    return _quiz_response(quiz)
 
 
 @router.get(
@@ -153,11 +128,7 @@ async def add_question(
             detail={"error": QUIZ_NOT_FOUND, "code": "QUIZ_NOT_FOUND"},
         )
 
-    if not await is_club_organizer(quiz.club_id, current_user.id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": NOT_AN_ORGANIZER, "code": "FORBIDDEN"},
-        )
+    await require_club_organizer(quiz.club_id, current_user, db)
 
     question = QuizQuestion(
         id=uuid.uuid4(),
@@ -196,24 +167,12 @@ async def set_active(
             detail={"error": QUIZ_NOT_FOUND, "code": "QUIZ_NOT_FOUND"},
         )
 
-    if not await is_club_organizer(quiz.club_id, current_user.id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": NOT_AN_ORGANIZER, "code": "FORBIDDEN"},
-        )
+    await require_club_organizer(quiz.club_id, current_user, db)
 
     quiz.is_active = req.isActive
     await db.flush()
     await db.refresh(quiz)
-
-    return QuizResponse(
-        id=str(quiz.id),
-        clubId=str(quiz.club_id),
-        createdBy=str(quiz.created_by),
-        title=quiz.title,
-        description=quiz.description,
-        isActive=quiz.is_active,
-    )
+    return _quiz_response(quiz)
 
 
 @router.post(

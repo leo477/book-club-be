@@ -21,7 +21,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 # Stage 2: runtime
 FROM python:3.12-slim-bookworm
 
-ARG CACHEBUST=1
+сщARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     openssl \

@@ -6,7 +6,7 @@ import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
@@ -97,9 +97,35 @@ def create_app() -> FastAPI:
             {"name": "chat", "description": "Club chat rooms and messages"},
             {"name": "health", "description": "Health check"},
         ],
-        swagger_ui_parameters={"persistAuthorization": True},
+        docs_url=None,
+        redoc_url=None,
         lifespan=lifespan,
     )
+
+    @app.get("/docs", include_in_schema=False)
+    async def scalar_docs() -> HTMLResponse:
+        return HTMLResponse(
+            """<!doctype html>
+<html>
+  <head>
+    <title>Book Club API</title>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  </head>
+  <body>
+    <script
+      id="api-reference"
+      data-url="/openapi.json"
+      data-configuration='{
+        "theme": "purple",
+        "defaultHttpClient": {"targetKey": "python", "clientKey": "requests"},
+        "hideModels": true
+      }'
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+  </body>
+</html>"""
+        )
 
     def custom_openapi() -> dict:  # type: ignore[type-arg]
         return _build_openapi_schema(app)

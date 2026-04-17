@@ -1,4 +1,17 @@
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, model_validator
+
+
+def build_socials(user: Any) -> dict[str, str | None]:
+    return {
+        "telegram": user.telegram,
+        "instagram": user.instagram,
+        "twitter": user.twitter,
+        "linkedin": user.linkedin,
+        "github": user.github,
+        "goodreads": user.goodreads,
+    }
 
 
 class UserProfileResponse(BaseModel):
@@ -16,24 +29,17 @@ class UserProfileResponse(BaseModel):
     # noinspection PyMethodDecoratorAdapted
     @model_validator(mode="before")
     @classmethod
-    def build_from_orm(cls, v: object) -> object:
+    def build_from_orm(cls, v: Any) -> Any:
         if hasattr(v, "display_name"):
             return {
-                "id": str(v.id),  # type: ignore[attr-defined]
-                "email": v.email,  # type: ignore[attr-defined]
+                "id": str(v.id),
+                "email": v.email,
                 "displayName": v.display_name,
-                "role": v.role,  # type: ignore[attr-defined]
-                "avatarUrl": v.avatar_url,  # type: ignore[attr-defined]
-                "createdAt": v.created_at.isoformat() if v.created_at else "",  # type: ignore[attr-defined]
-                "socialsPublic": v.socials_public,  # type: ignore[attr-defined]
-                "socials": {
-                    "telegram": v.telegram,  # type: ignore[attr-defined]
-                    "instagram": v.instagram,  # type: ignore[attr-defined]
-                    "twitter": v.twitter,  # type: ignore[attr-defined]
-                    "linkedin": v.linkedin,  # type: ignore[attr-defined]
-                    "github": v.github,  # type: ignore[attr-defined]
-                    "goodreads": v.goodreads,  # type: ignore[attr-defined]
-                },
+                "role": v.role,
+                "avatarUrl": v.avatar_url,
+                "createdAt": v.created_at.isoformat() if v.created_at else "",
+                "socialsPublic": v.socials_public,
+                "socials": build_socials(v),
             }
         return v
 

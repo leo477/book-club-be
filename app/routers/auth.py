@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
@@ -39,7 +38,6 @@ async def register(
         display_name=displayName,
         role=role,
         socials_public=False,
-        created_at=datetime.now(UTC),
     )
     db.add(user)
     await db.flush()
