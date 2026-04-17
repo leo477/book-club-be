@@ -1,0 +1,21 @@
+{
+  "output": {
+    "filePath": "repomix-output.md",
+    "style": "markdown",
+    "removeComments": true
+  },
+  "ignore": {
+    "customPatterns": [
+      "node_modules/**",
+      "venv/**",
+      ".git/**",
+      "dist/**",
+      "**/__pycache__/**",
+      "**/*.pyc",
+      "**/*.spec.ts",
+      "**/assets/**",
+      "package-lock.json",
+      "poetry.lock"
+    ]
+  }
+}

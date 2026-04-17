@@ -81,3 +81,9 @@ logs/
 # Repomix
 repomix-output.md
 /node_modules/
+
+# Node (dev tooling only)
+package-lock.json
+
+# Claude Code (local tool config)
+.claudignore

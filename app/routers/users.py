@@ -1,12 +1,9 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep
-from app.models.club_member import ClubMember
-from app.models.quiz import QuizAttempt
 from app.models.user import User
 from app.schemas.auth import UserProfileResponse
 from app.schemas.users import (
@@ -16,6 +13,7 @@ from app.schemas.users import (
     UpdateSocialsVisibilityRequest,
     UserStatsResponse,
 )
+from app.services.club_service import get_user_stats
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -25,33 +23,7 @@ async def get_my_stats(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> UserStatsResponse:
-    clubs_result = await db.execute(
-        select(func.count()).select_from(ClubMember).where(ClubMember.user_id == current_user.id)
-    )
-    clubs_joined = clubs_result.scalar() or 0
-
-    quizzes_result = await db.execute(
-        select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == current_user.id)
-    )
-    quizzes_taken = quizzes_result.scalar() or 0
-
-    wins_result = await db.execute(
-        select(func.count())
-        .select_from(QuizAttempt)
-        .where(
-            QuizAttempt.user_id == current_user.id,
-            QuizAttempt.score == QuizAttempt.total,
-        )
-    )
-    quiz_wins = wins_result.scalar() or 0
-
-    return UserStatsResponse(
-        clubsJoined=clubs_joined,
-        quizzesTaken=quizzes_taken,
-        quizWins=quiz_wins,
-        likesReceived=0,
-        booksRead=0,
-    )
+    return await get_user_stats(current_user.id, db)
 
 
 @router.patch("/me")

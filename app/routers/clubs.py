@@ -18,9 +18,7 @@ from app.schemas.clubs import (
     CreateClubRequest,
     RescheduleRequest,
 )
-from app.services.club_service import build_club_response
-
-CLUB_NOT_FOUND = "Club not found"
+from app.services.club_service import build_club_response, get_club_or_404
 
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
@@ -38,9 +36,9 @@ async def list_clubs(
 
     if current_user is not None:
         member_club_ids = select(ClubMember.club_id).where(ClubMember.user_id == current_user.id)
-        stmt = stmt.where(or_(Club.is_public == True, Club.id.in_(member_club_ids)))  # noqa: E712
+        stmt = stmt.where(or_(Club.is_public.is_(True), Club.id.in_(member_club_ids)))
     else:
-        stmt = stmt.where(Club.is_public == True)  # noqa: E712
+        stmt = stmt.where(Club.is_public.is_(True))
 
     if search:
         like = f"%{search}%"
@@ -74,10 +72,7 @@ async def get_club(
     _current_user: Annotated[User | None, Depends(get_optional_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> ClubResponse:
-    result = await db.execute(select(Club).where(Club.id == club_id))
-    club = result.scalar_one_or_none()
-    if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
+    club = await get_club_or_404(club_id, db)
     return await build_club_response(club, db)
 
 
@@ -124,12 +119,7 @@ async def pause_club(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> ClubResponse:
     _ = await require_club_organizer(club_id, current_user, db)
-
-    result = await db.execute(select(Club).where(Club.id == club_id))
-    club = result.scalar_one_or_none()
-    if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
-
+    club = await get_club_or_404(club_id, db)
     club.status = "paused"
     await db.commit()
     await db.refresh(club)
@@ -143,12 +133,7 @@ async def cancel_club(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> ClubResponse:
     _ = await require_club_organizer(club_id, current_user, db)
-
-    result = await db.execute(select(Club).where(Club.id == club_id))
-    club = result.scalar_one_or_none()
-    if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
-
+    club = await get_club_or_404(club_id, db)
     club.status = "cancelled"
     club.cancelled_at = datetime.now(tz=UTC)
     await db.commit()
@@ -164,12 +149,7 @@ async def reschedule_club(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> ClubResponse:
     _ = await require_club_organizer(club_id, current_user, db)
-
-    result = await db.execute(select(Club).where(Club.id == club_id))
-    club = result.scalar_one_or_none()
-    if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
-
+    club = await get_club_or_404(club_id, db)
     club.next_meeting_date = datetime.fromisoformat(body.newDate)
     await db.commit()
     await db.refresh(club)
@@ -182,10 +162,7 @@ async def join_club(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> dict[str, int]:
-    result = await db.execute(select(Club).where(Club.id == club_id))
-    club = result.scalar_one_or_none()
-    if not club:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
+    await get_club_or_404(club_id, db)
 
     ban_result = await db.execute(
         select(ClubBan).where(and_(ClubBan.club_id == club_id, ClubBan.user_id == current_user.id))
@@ -219,9 +196,7 @@ async def leave_club(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
-    result = await db.execute(select(Club).where(Club.id == club_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=CLUB_NOT_FOUND)
+    await get_club_or_404(club_id, db)
 
     existing = await db.execute(
         select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
