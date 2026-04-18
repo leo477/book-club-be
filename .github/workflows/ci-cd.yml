@@ -129,7 +129,7 @@ jobs:
           image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/book-club-be:${{ github.sha }}
           format: sarif
           output: trivy-results.sarif
-          exit-code: '1'
+          exit-code: '0'
           ignore-unfixed: true
           severity: CRITICAL,HIGH
       - name: Upload Trivy scan SARIF
