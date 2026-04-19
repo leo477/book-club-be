@@ -2,6 +2,7 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,7 @@ async def register(
     client = await get_supabase_client(settings)
     auth_response = await supabase_sign_up(client, str(email), password, displayName, role)
 
-    if auth_response.user is None or auth_response.session is None:
+    if auth_response.user is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "Auth service error", "code": "AUTH_SERVICE_ERROR"},
@@ -53,6 +54,12 @@ async def register(
     db.add(user)
     await db.flush()
     await db.refresh(user)
+
+    if auth_response.session is None:
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content={"message": "Check your email to confirm registration", "code": "EMAIL_CONFIRMATION_REQUIRED"},
+        )
 
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
