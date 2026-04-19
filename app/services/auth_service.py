@@ -30,6 +30,12 @@ async def supabase_sign_up(
             }
         )
     except AuthApiError as exc:
+        msg = str(exc).lower()
+        if "already registered" in msg or "already been registered" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error": "Email already exists", "code": "EMAIL_EXISTS"},
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": str(exc), "code": "SUPABASE_AUTH_ERROR"},

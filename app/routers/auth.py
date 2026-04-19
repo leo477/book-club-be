@@ -2,6 +2,7 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,7 @@ async def register(
     client = await get_supabase_client(settings)
     auth_response = await supabase_sign_up(client, str(email), password, displayName, role)
 
-    if auth_response.user is None or auth_response.session is None:
+    if auth_response.user is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "Auth service error", "code": "AUTH_SERVICE_ERROR"},
@@ -53,6 +54,12 @@ async def register(
     db.add(user)
     await db.flush()
     await db.refresh(user)
+
+    if auth_response.session is None:
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content={"message": "Check your email to confirm registration", "code": "EMAIL_CONFIRMATION_REQUIRED"},
+        )
 
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
@@ -82,10 +89,20 @@ async def login(
     result = await db.execute(select(User).where(User.supabase_user_id == supabase_user_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"},
+        sb_user = auth_response.user
+        display_name = (sb_user.user_metadata or {}).get("display_name", sb_user.email or "")
+        role = (sb_user.user_metadata or {}).get("role", "user")
+        user = User(
+            id=uuid.uuid4(),
+            supabase_user_id=supabase_user_id,
+            email=str(email),
+            display_name=str(display_name),
+            role=str(role),
+            socials_public=False,
         )
+        db.add(user)
+        await db.flush()
+        await db.refresh(user)
 
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
