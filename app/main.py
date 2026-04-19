@@ -81,6 +81,7 @@ def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
 # noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
+    logger.info("CORS allowed origins", origins=settings.ALLOWED_ORIGINS)
 
     app = FastAPI(
         title="Book Club API",
