@@ -3,7 +3,7 @@ FROM python:3.12-slim-bookworm AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.6 /uv /bin/uv
 
-WORKDIR /build
+WORKDIR /app
 
 ARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \
@@ -33,7 +33,7 @@ RUN apt-get update && apt-get upgrade -y && \
 RUN groupadd --gid 1001 appuser && \
     useradd --uid 1001 --gid appuser --shell /bin/sh --create-home appuser
 
-COPY --from=builder /build/.venv /app/.venv
+COPY --from=builder /app/.venv /app/.venv
 COPY app/ /app/app/
 COPY alembic/ /app/alembic/
 COPY alembic.ini /app/alembic.ini
@@ -51,4 +51,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-CMD ["/bin/sh", "-c", "/app/.venv/bin/python -m alembic upgrade head && /app/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8080"]
+CMD ["/bin/sh", "-c", "/app/.venv/bin/alembic upgrade head && /app/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8080"]
