@@ -49,7 +49,7 @@ async def get_current_user(
             detail={"error": "Invalid token", "code": "INVALID_TOKEN"},
         )
 
-    result = await db.execute(select(UserModel).where(UserModel.id == uuid.UUID(user_id)))
+    result = await db.execute(select(UserModel).where(UserModel.supabase_user_id == uuid.UUID(user_id)))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(

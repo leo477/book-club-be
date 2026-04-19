@@ -16,21 +16,20 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     ENV: str = "development"
 
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
     @model_validator(mode="after")
-    def validate_secret_key(self) -> "Settings":
-        if self.ENV == "test":
-            return self
-        if (
-            not self.SECRET_KEY
-            or self.SECRET_KEY == "change-me-in-production"  # noqa: S105
-            or len(self.SECRET_KEY) < 32
-        ):
-            raise ValueError(
-                "SECRET_KEY must be set to a secure random string of at least 32 characters. "
-                'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
-            )
+    def validate_settings(self) -> "Settings":
+        if self.ENV == "production":
+            if not self.SUPABASE_URL or not self.SUPABASE_ANON_KEY or not self.SUPABASE_JWT_SECRET:
+                raise ValueError(
+                    "SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_JWT_SECRET must be set. "
+                    "Find these in your Supabase project Settings > API."
+                )
         return self
 
 

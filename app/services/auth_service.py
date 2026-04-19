@@ -1,32 +1,59 @@
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import bcrypt
 import jwt
 from fastapi import HTTPException, status
 from jwt.exceptions import PyJWTError
+from supabase import AsyncClient, acreate_client
+from supabase_auth.errors import AuthApiError
+from supabase_auth.types import AuthResponse
 
 from app.config import Settings
 
 
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+async def get_supabase_client(settings: Settings) -> AsyncClient:
+    return await acreate_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
 
 
-def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+async def supabase_sign_up(
+    client: AsyncClient,
+    email: str,
+    password: str,
+    display_name: str,
+    role: str,
+) -> AuthResponse:
+    try:
+        return await client.auth.sign_up(
+            {
+                "email": email,
+                "password": password,
+                "options": {"data": {"display_name": display_name, "role": role}},
+            }
+        )
+    except AuthApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": str(exc), "code": "SUPABASE_AUTH_ERROR"},
+        ) from exc
 
 
-def create_access_token(data: dict[str, Any], settings: Settings) -> str:
-    payload: dict[str, Any] = data.copy()
-    expire = datetime.now(UTC) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload.update({"exp": expire})
-    return str(jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM))
+async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> AuthResponse:
+    try:
+        return await client.auth.sign_in_with_password({"email": email, "password": password})
+    except AuthApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"},
+        ) from exc
 
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        payload: dict[str, Any] = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload: dict[str, Any] = jwt.decode(
+            token,
+            settings.SUPABASE_JWT_SECRET,
+            algorithms=[settings.ALGORITHM],
+            options={"verify_aud": False},
+        )
         return payload
     except PyJWTError as exc:
         raise HTTPException(
