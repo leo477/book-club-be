@@ -16,7 +16,7 @@ from app.services.auth_service import get_supabase_client, supabase_sign_in, sup
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=None)
 async def register(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
@@ -24,7 +24,7 @@ async def register(
     password: Annotated[str, Body(min_length=8)],
     displayName: Annotated[str, Body(min_length=1, max_length=100)],  # noqa: N803
     role: Annotated[Literal["user", "organizer"], Body()] = "user",
-) -> AuthResponse:
+) -> AuthResponse | JSONResponse:
     result = await db.execute(select(User).where(User.email == email))
     if result.scalar_one_or_none() is not None:
         raise HTTPException(
