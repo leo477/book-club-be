@@ -47,6 +47,7 @@ class UserProfileResponse(BaseModel):
 class AuthResponse(BaseModel):
     user: UserProfileResponse
     accessToken: str
+    refreshToken: str
 
 
 class TokenData(BaseModel):

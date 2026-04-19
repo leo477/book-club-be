@@ -30,6 +30,7 @@ dependencies = [
     "urllib3>=2.2.2",
     "aiohttp>=3.10.2",
     "Jinja2>=3.1.4",
+    "supabase>=2.0",
 ]
 
 [dependency-groups]
@@ -57,7 +58,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "ANN", "N803", "S107", "E501", "N806", "RUF059"]
+"tests/*" = ["S101", "ANN", "N803", "S107", "S105", "E501", "N806", "RUF059"]
 "app/schemas/*" = ["N815", "ANN401"]
 
 [tool.mypy]

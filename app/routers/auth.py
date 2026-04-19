@@ -10,7 +10,7 @@ from app.config import Settings
 from app.dependencies import get_current_user, get_db_dep, get_settings_dep
 from app.models.user import User
 from app.schemas.auth import AuthResponse, UserProfileResponse
-from app.services.auth_service import create_access_token, hash_password, verify_password
+from app.services.auth_service import get_supabase_client, supabase_sign_in, supabase_sign_up
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -31,10 +31,21 @@ async def register(
             detail={"error": "Email already exists", "code": "EMAIL_EXISTS"},
         )
 
+    client = await get_supabase_client(settings)
+    auth_response = await supabase_sign_up(client, str(email), password, displayName, role)
+
+    if auth_response.user is None or auth_response.session is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "Auth service error", "code": "AUTH_SERVICE_ERROR"},
+        )
+
+    supabase_user_id: uuid.UUID = uuid.UUID(str(auth_response.user.id))
+
     user = User(
         id=uuid.uuid4(),
-        email=email,
-        password_hash=hash_password(password),
+        supabase_user_id=supabase_user_id,
+        email=str(email),
         display_name=displayName,
         role=role,
         socials_public=False,
@@ -43,8 +54,11 @@ async def register(
     await db.flush()
     await db.refresh(user)
 
-    token = create_access_token({"sub": str(user.id)}, settings)
-    return AuthResponse(user=UserProfileResponse.model_validate(user), accessToken=token)
+    return AuthResponse(
+        user=UserProfileResponse.model_validate(user),
+        accessToken=auth_response.session.access_token,
+        refreshToken=auth_response.session.refresh_token,
+    )
 
 
 @router.post("/login", status_code=status.HTTP_200_OK)
@@ -54,17 +68,30 @@ async def login(
     email: Annotated[EmailStr, Body()],
     password: Annotated[str, Body(min_length=1)],
 ) -> AuthResponse:
-    result = await db.execute(select(User).where(User.email == email))
-    user = result.scalar_one_or_none()
+    client = await get_supabase_client(settings)
+    auth_response = await supabase_sign_in(client, str(email), password)
 
-    if user is None or not verify_password(password, user.password_hash):
+    if auth_response.user is None or auth_response.session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"},
         )
 
-    token = create_access_token({"sub": str(user.id)}, settings)
-    return AuthResponse(user=UserProfileResponse.model_validate(user), accessToken=token)
+    supabase_user_id: uuid.UUID = uuid.UUID(str(auth_response.user.id))
+
+    result = await db.execute(select(User).where(User.supabase_user_id == supabase_user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"},
+        )
+
+    return AuthResponse(
+        user=UserProfileResponse.model_validate(user),
+        accessToken=auth_response.session.access_token,
+        refreshToken=auth_response.session.refresh_token,
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

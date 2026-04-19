@@ -6,7 +6,7 @@ async def test_register_success(async_client, register_user):
     resp = await register_user()
     assert resp.status_code == 201
     data = resp.json()
-    assert "user" in data and "accessToken" in data
+    assert "user" in data and "accessToken" in data and "refreshToken" in data
     assert data["user"]["email"] == "test@example.com"
     assert "id" in data["user"]
 
