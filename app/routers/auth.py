@@ -82,10 +82,20 @@ async def login(
     result = await db.execute(select(User).where(User.supabase_user_id == supabase_user_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"},
+        sb_user = auth_response.user
+        display_name = (sb_user.user_metadata or {}).get("display_name", sb_user.email or "")
+        role = (sb_user.user_metadata or {}).get("role", "user")
+        user = User(
+            id=uuid.uuid4(),
+            supabase_user_id=supabase_user_id,
+            email=str(email),
+            display_name=str(display_name),
+            role=str(role),
+            socials_public=False,
         )
+        db.add(user)
+        await db.flush()
+        await db.refresh(user)
 
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
