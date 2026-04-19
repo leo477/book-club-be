@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
@@ -24,7 +24,7 @@ async def register(
     password: Annotated[str, Body(min_length=8)],
     displayName: Annotated[str, Body(min_length=1, max_length=100)],  # noqa: N803
     role: Annotated[Literal["user", "organizer"], Body()] = "user",
-) -> AuthResponse:
+) -> Union[AuthResponse, JSONResponse]:
     result = await db.execute(select(User).where(User.email == email))
     if result.scalar_one_or_none() is not None:
         raise HTTPException(
