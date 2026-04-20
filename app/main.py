@@ -133,7 +133,7 @@ def create_app() -> FastAPI:
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
-    vercel_preview_pattern = r"https://book-club-[a-z0-9]+-dmytros-projects-ad22eb22\.vercel\.app"
+    vercel_preview_pattern = r"https://book-club-[a-z0-9-]+-dmytros-projects-ad22eb22\.vercel\.app"
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
