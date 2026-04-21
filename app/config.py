@@ -27,12 +27,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_settings(self) -> "Settings":
-        if self.ENV == "production":
-            if not self.SUPABASE_URL or not self.SUPABASE_ANON_KEY or not self.SUPABASE_JWT_SECRET:
-                raise ValueError(
-                    "SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_JWT_SECRET must be set. "
-                    "Find these in your Supabase project Settings > API."
-                )
+        if not self.SUPABASE_URL or not self.SUPABASE_ANON_KEY or not self.SUPABASE_JWT_SECRET:
+            raise ValueError(
+                "SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_JWT_SECRET must be set. "
+                "Find these in your Supabase project Settings > API."
+            )
         return self
 
 
