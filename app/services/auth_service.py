@@ -58,14 +58,12 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        header = jwt.get_unverified_header(token)
-        alg = header.get("alg", "RS256")
         jwks_client = PyJWKClient(f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json")
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         payload: dict[str, Any] = jwt.decode(
             token,
             signing_key.key,
-            algorithms=[alg],
+            algorithms=["RS256"],
             options={"verify_aud": False},
         )
         return payload
