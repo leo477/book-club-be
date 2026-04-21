@@ -10,7 +10,10 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    ALLOWED_ORIGINS: list[str] = ["http://localhost:4200"]
+    ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:4200",
+        "https://book-club-fe-zaharr3-8415-dmytros-projects-ad22eb22.vercel.app",
+    ]
     REDIS_URL: str = "redis://localhost:6379"
     SENTRY_DSN: str = ""
     LOG_LEVEL: str = "INFO"
