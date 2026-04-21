@@ -2,6 +2,7 @@ from typing import Any
 
 import jwt
 from fastapi import HTTPException, status
+from jwt import PyJWKClient
 from jwt.exceptions import PyJWTError
 from supabase import AsyncClient, acreate_client
 from supabase_auth.errors import AuthApiError
@@ -54,10 +55,12 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
+        jwks_client = PyJWKClient(f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json")
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
         payload: dict[str, Any] = jwt.decode(
             token,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=[settings.ALGORITHM],
+            signing_key.key,
+            algorithms=["RS256"],
             options={"verify_aud": False},
         )
         return payload
