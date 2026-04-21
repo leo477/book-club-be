@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -59,6 +60,7 @@ class CreateClubRequest(BaseModel):
     tags: list[str] = []
     meetingDurationMinutes: int | None = None
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
+    nextMeetingDate: datetime | None = None
 
 
 class RescheduleRequest(BaseModel):
