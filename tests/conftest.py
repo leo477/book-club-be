@@ -95,12 +95,23 @@ class _FakeSupabaseAuth:
         return resp
 
 
+def _fake_decode_access_token(token: str, settings: Settings) -> dict:
+    from fastapi import HTTPException, status
+
+    try:
+        return pyjwt.decode(token, TEST_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+    except pyjwt.exceptions.PyJWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired token", "code": "INVALID_TOKEN"},
+        ) from exc
+
+
 def _make_test_settings() -> Settings:
     return Settings.model_construct(
         ENV="test",
         DATABASE_URL=TEST_DATABASE_URL,
         SECRET_KEY="",
-        ALGORITHM="HS256",
         ACCESS_TOKEN_EXPIRE_MINUTES=30,
         REFRESH_TOKEN_EXPIRE_DAYS=7,
         ALLOWED_ORIGINS=["http://localhost:4200"],
@@ -109,7 +120,6 @@ def _make_test_settings() -> Settings:
         LOG_LEVEL="INFO",
         SUPABASE_URL="https://test.supabase.co",
         SUPABASE_ANON_KEY="test-anon-key",
-        SUPABASE_JWT_SECRET=TEST_JWT_SECRET,
     )
 
 
@@ -168,7 +178,8 @@ async def override_get_db(test_engine):
     app.dependency_overrides[get_db_dep] = _override_get_db
     app.dependency_overrides[get_settings_dep] = lambda: test_settings
 
-    with patch("app.routers.auth.get_supabase_client", new=AsyncMock(return_value=fake_client)):
+    with patch("app.routers.auth.get_supabase_client", new=AsyncMock(return_value=fake_client)), \
+         patch("app.services.auth_service.decode_access_token", side_effect=_fake_decode_access_token):
         yield
 
     app.dependency_overrides.clear()
