@@ -178,8 +178,10 @@ async def override_get_db(test_engine):
     app.dependency_overrides[get_db_dep] = _override_get_db
     app.dependency_overrides[get_settings_dep] = lambda: test_settings
 
-    with patch("app.routers.auth.get_supabase_client", new=AsyncMock(return_value=fake_client)), \
-         patch("app.services.auth_service.decode_access_token", side_effect=_fake_decode_access_token):
+    with (
+        patch("app.routers.auth.get_supabase_client", new=AsyncMock(return_value=fake_client)),
+        patch("app.services.auth_service.decode_access_token", side_effect=_fake_decode_access_token),
+    ):
         yield
 
     app.dependency_overrides.clear()
