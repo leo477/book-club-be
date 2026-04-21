@@ -1,6 +1,7 @@
 from typing import Any
 
 import jwt
+import structlog
 from fastapi import HTTPException, status
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWTError
@@ -9,6 +10,8 @@ from supabase_auth.errors import AuthApiError
 from supabase_auth.types import AuthResponse
 
 from app.config import Settings
+
+logger = structlog.get_logger()
 
 
 async def get_supabase_client(settings: Settings) -> AsyncClient:
@@ -65,6 +68,7 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
         )
         return payload
     except PyJWTError as exc:
+        logger.warning("JWT decode failed", error=str(exc), exc_type=type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid or expired token", "code": "INVALID_TOKEN"},
