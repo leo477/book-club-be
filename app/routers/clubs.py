@@ -94,6 +94,7 @@ async def create_club(
         tags=body.tags,
         meeting_duration_minutes=body.meetingDurationMinutes,
         after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
+        next_meeting_date=body.nextMeetingDate,
         organizer_id=current_user.id,
         status="active",
     )
