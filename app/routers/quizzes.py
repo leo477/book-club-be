@@ -71,6 +71,7 @@ async def create_quiz(
     )
     db.add(quiz)
     await db.flush()
+    await db.commit()
     await db.refresh(quiz)
     return _quiz_response(quiz)
 
@@ -139,6 +140,7 @@ async def add_question(
     )
     db.add(question)
     await db.flush()
+    await db.commit()
     await db.refresh(question)
 
     return QuizQuestionResponse(
@@ -171,6 +173,7 @@ async def set_active(
 
     quiz.is_active = req.isActive
     await db.flush()
+    await db.commit()
     await db.refresh(quiz)
     return _quiz_response(quiz)
 
@@ -215,6 +218,7 @@ async def submit_attempt(
     )
     db.add(attempt)
     await db.flush()
+    await db.commit()
     await db.refresh(attempt)
 
     return AttemptResponse(

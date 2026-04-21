@@ -53,6 +53,7 @@ async def register(
     )
     db.add(user)
     await db.flush()
+    await db.commit()
     await db.refresh(user)
 
     if auth_response.session is None:
@@ -102,6 +103,7 @@ async def login(
         )
         db.add(user)
         await db.flush()
+        await db.commit()
         await db.refresh(user)
 
     return AuthResponse(
