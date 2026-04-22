@@ -74,7 +74,7 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
             payload = jwt.decode(
                 token,
                 signing_key.key,
-                algorithms=["RS256"],
+                algorithms=[signing_key.algorithm_name],
                 options={"verify_aud": False},
             )
         return payload
