@@ -35,8 +35,7 @@ class Settings(BaseSettings):
                 )
             if not self.SUPABASE_JWT_SECRET:
                 raise ValueError(
-                    "SUPABASE_JWT_SECRET must be set. "
-                    "Find it in your Supabase project Settings > API > JWT Secret."
+                    "SUPABASE_JWT_SECRET must be set. Find it in your Supabase project Settings > API > JWT Secret."
                 )
         return self
 

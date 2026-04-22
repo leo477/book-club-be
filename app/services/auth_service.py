@@ -71,9 +71,7 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
             )
         else:
             jwks_url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
-            jwks_client = _jwks_clients.setdefault(
-                settings.SUPABASE_URL, PyJWKClient(jwks_url)
-            )
+            jwks_client = _jwks_clients.setdefault(settings.SUPABASE_URL, PyJWKClient(jwks_url))
             signing_key = jwks_client.get_signing_key_from_jwt(token)
             payload = jwt.decode(
                 token,
