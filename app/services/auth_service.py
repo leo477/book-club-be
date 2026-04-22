@@ -60,9 +60,7 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        header = jwt.get_unverified_header(token)
-        alg = header.get("alg", "")
-        if alg == "HS256":
+        if settings.SUPABASE_JWT_SECRET:
             payload: dict[str, Any] = jwt.decode(
                 token,
                 settings.SUPABASE_JWT_SECRET,
