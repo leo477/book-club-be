@@ -13,6 +13,8 @@ from app.config import Settings
 
 logger = structlog.get_logger()
 
+_jwks_clients: dict[str, PyJWKClient] = {}
+
 
 async def get_supabase_client(settings: Settings) -> AsyncClient:
     return await acreate_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
@@ -58,7 +60,8 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        jwks_client = PyJWKClient(f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json")
+        jwks_url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+        jwks_client = _jwks_clients.setdefault(settings.SUPABASE_URL, PyJWKClient(jwks_url))
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         payload: dict[str, Any] = jwt.decode(
             token,

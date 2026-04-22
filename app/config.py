@@ -14,6 +14,7 @@ class Settings(BaseSettings):
         "https://book-club-fe-zaharr3-8415-dmytros-projects-ad22eb22.vercel.app",
     ]
     REDIS_URL: str = "redis://localhost:6379"
+    PHOTON_URL: str = "https://photon.komoot.io"
     SENTRY_DSN: str = ""
     LOG_LEVEL: str = "INFO"
     ENV: str = "development"
