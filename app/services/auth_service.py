@@ -60,15 +60,23 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        jwks_url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
-        jwks_client = _jwks_clients.setdefault(settings.SUPABASE_URL, PyJWKClient(jwks_url))
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-        payload: dict[str, Any] = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            options={"verify_aud": False},
-        )
+        if settings.SUPABASE_JWT_SECRET:
+            payload: dict[str, Any] = jwt.decode(
+                token,
+                settings.SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                options={"verify_aud": False},
+            )
+        else:
+            jwks_url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+            jwks_client = _jwks_clients.setdefault(settings.SUPABASE_URL, PyJWKClient(jwks_url))
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+            payload = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                options={"verify_aud": False},
+            )
         return payload
     except PyJWTError as exc:
         logger.warning("JWT decode failed", error=str(exc), exc_type=type(exc).__name__)

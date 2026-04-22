@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
@@ -31,6 +32,10 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "SUPABASE_URL and SUPABASE_ANON_KEY must be set. "
                     "Find these in your Supabase project Settings > API."
+                )
+            if not self.SUPABASE_JWT_SECRET:
+                raise ValueError(
+                    "SUPABASE_JWT_SECRET must be set. Find it in your Supabase project Settings > API > JWT Secret."
                 )
         return self
 
