@@ -60,7 +60,8 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        jwks_client = _jwks_clients.setdefault(settings.SUPABASE_URL, PyJWKClient(f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"))
+        jwks_url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+        jwks_client = _jwks_clients.setdefault(settings.SUPABASE_URL, PyJWKClient(jwks_url))
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         payload: dict[str, Any] = jwt.decode(
             token,
