@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -10,10 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.database import get_db
-
-if TYPE_CHECKING:
-    from app.models.club_member import ClubMember
-    from app.models.user import User
+from app.models.club_member import ClubMember
+from app.models.user import User
 
 
 async def get_db_dep() -> AsyncGenerator[AsyncSession, None]:
