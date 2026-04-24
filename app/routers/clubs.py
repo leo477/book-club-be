@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,12 +12,10 @@ from app.models.club import Club
 from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.user import User
-from app.schemas.clubs import (
-    ClubResponse,
-    CreateClubRequest,
-    RescheduleRequest,
-)
+from app.schemas.clubs import ClubResponse, CreateClubRequest
+from app.schemas.events import CreateEventRequest, EventResponse
 from app.services.club_service import build_club_response, get_club_or_404
+from app.services.event_service import build_event_response
 
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
@@ -28,7 +25,6 @@ async def list_clubs(
     current_user: Annotated[User | None, Depends(get_optional_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     search: str | None = None,
-    city: str | None = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[ClubResponse]:
@@ -43,8 +39,6 @@ async def list_clubs(
     if search:
         like = f"%{search}%"
         stmt = stmt.where(or_(Club.name.ilike(like), Club.description.ilike(like)))
-    if city:
-        stmt = stmt.where(Club.city.ilike(f"%{city}%"))
 
     stmt = stmt.offset(skip).limit(limit)
 
@@ -89,14 +83,9 @@ async def create_club(
         id=uuid.uuid4(),
         name=body.name,
         description=body.description,
+        cover_url=body.coverUrl,
         is_public=body.isPublic,
-        city=body.city,
-        tags=body.tags,
-        meeting_duration_minutes=body.meetingDurationMinutes,
-        after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
-        next_meeting_date=body.nextMeetingDate,
         organizer_id=current_user.id,
-        status="active",
     )
     db.add(club)
     await db.flush()
@@ -108,50 +97,6 @@ async def create_club(
         role="organizer",
     )
     db.add(membership)
-    await db.commit()
-    await db.refresh(club)
-    return await build_club_response(club, db)
-
-
-@router.patch("/{club_id}/pause")
-async def pause_club(
-    club_id: uuid.UUID,
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_dep)],
-) -> ClubResponse:
-    _ = await require_club_organizer(club_id, current_user, db)
-    club = await get_club_or_404(club_id, db)
-    club.status = "paused"
-    await db.commit()
-    await db.refresh(club)
-    return await build_club_response(club, db)
-
-
-@router.patch("/{club_id}/cancel")
-async def cancel_club(
-    club_id: uuid.UUID,
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_dep)],
-) -> ClubResponse:
-    _ = await require_club_organizer(club_id, current_user, db)
-    club = await get_club_or_404(club_id, db)
-    club.status = "cancelled"
-    club.cancelled_at = datetime.now(tz=UTC)
-    await db.commit()
-    await db.refresh(club)
-    return await build_club_response(club, db)
-
-
-@router.patch("/{club_id}/reschedule")
-async def reschedule_club(
-    club_id: uuid.UUID,
-    body: RescheduleRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_dep)],
-) -> ClubResponse:
-    _ = await require_club_organizer(club_id, current_user, db)
-    club = await get_club_or_404(club_id, db)
-    club.next_meeting_date = datetime.fromisoformat(body.newDate)
     await db.commit()
     await db.refresh(club)
     return await build_club_response(club, db)
@@ -210,3 +155,66 @@ async def leave_club(
         delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
     )
     await db.commit()
+
+
+@router.get("/{club_id}/events")
+async def list_club_events(
+    club_id: uuid.UUID,
+    current_user: Annotated[User | None, Depends(get_optional_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    upcoming_only: bool = False,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[EventResponse]:
+    from datetime import UTC, datetime
+
+    from app.models.event import Event
+
+    club = await get_club_or_404(club_id, db)
+    stmt = select(Event).where(Event.club_id == club_id)
+
+    if upcoming_only:
+        stmt = stmt.where(Event.date >= datetime.now(tz=UTC))
+
+    stmt = stmt.order_by(Event.date.asc()).offset(skip).limit(limit)
+    result = await db.execute(stmt)
+    events = result.scalars().all()
+
+    current_user_id = current_user.id if current_user else None
+    return [
+        await build_event_response(e, db, current_user_id, club_name=club.name, organizer_id=club.organizer_id)
+        for e in events
+    ]
+
+
+@router.post("/{club_id}/events", status_code=status.HTTP_201_CREATED)
+async def create_event(
+    club_id: uuid.UUID,
+    body: CreateEventRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> EventResponse:
+    _ = await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
+
+    from app.models.event import Event
+
+    event = Event(
+        id=uuid.uuid4(),
+        club_id=club_id,
+        title=body.title,
+        description=body.description,
+        date=body.date,
+        city=body.city,
+        address=body.address,
+        theme=body.theme,
+        tags=body.tags,
+        duration_minutes=body.durationMinutes,
+        after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
+        cover_url=body.coverUrl,
+        status="scheduled",
+    )
+    db.add(event)
+    await db.commit()
+    await db.refresh(event)
+    return await build_event_response(event, db, current_user.id, club_name=club.name, organizer_id=club.organizer_id)

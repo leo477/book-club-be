@@ -13,7 +13,7 @@ async def test_get_meetings_empty(async_client, register_user, auth_headers):
     )
     club_id = club_resp.json()["id"]
 
-    resp = await async_client.get(f"/api/v1/clubs/{club_id}/meetings", headers=headers)
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/events", headers=headers)
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -23,7 +23,7 @@ async def test_get_meetings_club_not_found(async_client, register_user, auth_hea
     await register_user(email="meet_user1@example.com")
     headers = await auth_headers(email="meet_user1@example.com")
     fake_club_id = str(uuid.uuid4())
-    resp = await async_client.get(f"/api/v1/clubs/{fake_club_id}/meetings", headers=headers)
+    resp = await async_client.get(f"/api/v1/clubs/{fake_club_id}/events", headers=headers)
     assert resp.status_code == 404
 
 
@@ -37,5 +37,6 @@ async def test_get_meetings_unauthenticated(async_client, register_user, auth_he
     )
     club_id = club_resp.json()["id"]
 
-    resp = await async_client.get(f"/api/v1/clubs/{club_id}/meetings")
-    assert resp.status_code == 401
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/events")
+    assert resp.status_code == 200
+    assert resp.json() == []

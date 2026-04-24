@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -10,10 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.database import get_db
-
-if TYPE_CHECKING:
-    from app.models.club_member import ClubMember
-    from app.models.user import User
+from app.models.club_member import ClubMember
+from app.models.user import User
 
 
 async def get_db_dep() -> AsyncGenerator[AsyncSession, None]:
@@ -81,6 +79,21 @@ async def require_club_organizer(
     if not membership:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
     return membership
+
+
+async def require_event_club_organizer(
+    event_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> ClubMember:
+    from app.models.event import Event as EventModel
+
+    result = await db.execute(select(EventModel).where(EventModel.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    return await require_club_organizer(event.club_id, current_user, db)
 
 
 async def is_club_organizer(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:

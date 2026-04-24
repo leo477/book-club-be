@@ -15,8 +15,8 @@ from app.config import get_settings
 from app.routers import clubs, health, members
 from app.routers.auth import router as auth_router
 from app.routers.chat import router as chat_router
+from app.routers.events import router as events_router
 from app.routers.geocode import router as geocode_router
-from app.routers.meetings import router as meetings_router
 from app.routers.quizzes import router as quizzes_router
 from app.routers.randomizer import router as randomizer_router
 from app.routers.users import router as users_router
@@ -93,7 +93,7 @@ def create_app() -> FastAPI:
             {"name": "users", "description": "User profile management and stats"},
             {"name": "clubs", "description": "Book clubs — create, join, manage"},
             {"name": "members", "description": "Club membership and bans"},
-            {"name": "meetings", "description": "Club meeting history"},
+            {"name": "events", "description": "Club events — schedule, attend, manage"},
             {"name": "quizzes", "description": "Book quizzes — create, answer, score"},
             {"name": "randomizer", "description": "Random member picker sessions"},
             {"name": "chat", "description": "Club chat rooms and messages"},
@@ -176,7 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(users_router)
     app.include_router(clubs.router)
     app.include_router(members.router)
-    app.include_router(meetings_router)
+    app.include_router(events_router)
     app.include_router(quizzes_router)
     app.include_router(randomizer_router)
     app.include_router(chat_router)

@@ -10,7 +10,7 @@ from app.models.club import Club
 from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
 from app.models.user import User
-from app.schemas.clubs import AfterMeetingVenueSchema, ClubResponse
+from app.schemas.clubs import ClubResponse
 from app.schemas.users import UserStatsResponse
 
 
@@ -61,19 +61,6 @@ async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
         organizerId=str(club.organizer_id),
         isPublic=club.is_public,
         memberCount=member_count,
-        createdAt=club.created_at.isoformat() if club.created_at else "",
-        city=club.city,
-        nextMeetingDate=club.next_meeting_date.isoformat() if club.next_meeting_date else None,
-        address=club.address,
-        lat=club.lat,
-        lng=club.lng,
-        theme=club.theme,
         memberPreviews=previews,
-        status=club.status,
-        cancelledAt=club.cancelled_at.isoformat() if club.cancelled_at else None,
-        tags=club.tags or [],
-        meetingDurationMinutes=club.meeting_duration_minutes,
-        afterMeetingVenue=AfterMeetingVenueSchema(**club.after_meeting_venue) if club.after_meeting_venue else None,
-        meetingHistory=[],
-        currentBook=None,
+        createdAt=club.created_at.isoformat() if club.created_at else "",
     )

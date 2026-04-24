@@ -22,7 +22,6 @@ async def test_create_club_as_organizer(async_client, register_user, auth_header
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "SciFi Club"
-    assert data["status"] == "active"
     assert "id" in data
 
 
@@ -104,34 +103,6 @@ async def test_leave_club(async_client, register_user, auth_headers):
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
     resp = await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=headers2)
     assert resp.status_code == 204
-
-
-@pytest.mark.asyncio
-async def test_pause_club(async_client, register_user, auth_headers):
-    await register_user()
-    headers = await auth_headers()
-    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
-    club_resp = await async_client.post(
-        "/api/v1/clubs", headers=headers, json={"name": "Pause Club", "description": "Desc", "city": "Kyiv"}
-    )
-    club_id = club_resp.json()["id"]
-    resp = await async_client.patch(f"/api/v1/clubs/{club_id}/pause", headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "paused"
-
-
-@pytest.mark.asyncio
-async def test_cancel_club(async_client, register_user, auth_headers):
-    await register_user()
-    headers = await auth_headers()
-    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
-    club_resp = await async_client.post(
-        "/api/v1/clubs", headers=headers, json={"name": "Cancel Club", "description": "Desc", "city": "Kyiv"}
-    )
-    club_id = club_resp.json()["id"]
-    resp = await async_client.patch(f"/api/v1/clubs/{club_id}/cancel", headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
