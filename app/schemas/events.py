@@ -27,6 +27,7 @@ class EventResponse(BaseModel):
     lng: float | None
     status: str
     cancelledAt: str | None
+    coverUrl: str | None = None
     theme: str | None
     tags: list[str] = []
     durationMinutes: int | None
@@ -41,6 +42,7 @@ class CreateEventRequest(BaseModel):
     date: datetime
     city: str
     address: str | None = None
+    coverUrl: str | None = None
     theme: str | None = None
     tags: list[str] = []
     durationMinutes: int | None = None
