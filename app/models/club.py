@@ -1,9 +1,8 @@
 import uuid
 from datetime import datetime
-from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, text
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -21,22 +20,8 @@ class Club(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
     is_public: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    city: Mapped[str] = mapped_column(String(100), nullable=False)
-    theme: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    next_meeting_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    address: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
-    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
-    status: Mapped[str] = mapped_column(
-        Enum("active", "paused", "cancelled", name="club_status_enum"),
-        default="active",
-        nullable=False,
-    )
-    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    tags: Mapped[list[str]] = mapped_column(ARRAY(String), server_default=text("'{}'"))
-    meeting_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    after_meeting_venue: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     organizer = relationship("User", foreign_keys=[organizer_id])
     members = relationship("ClubMember", back_populates="club")
+    events = relationship("Event", back_populates="club", order_by="Event.date")

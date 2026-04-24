@@ -83,6 +83,21 @@ async def require_club_organizer(
     return membership
 
 
+async def require_event_club_organizer(
+    event_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> ClubMember:
+    from app.models.event import Event as EventModel
+
+    result = await db.execute(select(EventModel).where(EventModel.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    return await require_club_organizer(event.club_id, current_user, db)
+
+
 async def is_club_organizer(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
     from sqlalchemy import and_, select
 
