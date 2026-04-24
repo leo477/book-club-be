@@ -10,8 +10,8 @@ from app.database import Base
 from app.models import (
     ClubBan,
     ClubMember,
-    Meeting,
-    MeetingAttendee,
+    Event,
+    EventAttendee,
     Quiz,
     QuizAttempt,
     QuizQuestion,
@@ -23,7 +23,7 @@ from app.models import (
 # autogenerate and to satisfy static analysis tools (CodeQL py/unused-import).
 __all__ = [
     m.__name__
-    for m in (ClubBan, ClubMember, Meeting, MeetingAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)
+    for m in (ClubBan, ClubMember, Event, EventAttendee, Quiz, QuizAttempt, QuizQuestion, RandomizerSession, User)
 ]
 
 config = context.config
