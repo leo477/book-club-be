@@ -96,9 +96,7 @@ async def attend_event(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot attend a cancelled event")
 
     existing = await db.execute(
-        select(EventAttendee).where(
-            and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id)
-        )
+        select(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id))
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already attending")
@@ -122,9 +120,7 @@ async def cancel_attendance(
 ) -> None:
     await get_event_or_404(event_id, db)
     await db.execute(
-        delete(EventAttendee).where(
-            and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id)
-        )
+        delete(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id))
     )
     await db.commit()
 

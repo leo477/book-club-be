@@ -24,10 +24,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # 1. Create event_status enum
-    op.execute(
-        "CREATE TYPE event_status_enum AS ENUM "
-        "('scheduled', 'active', 'held', 'cancelled', 'rescheduled')"
-    )
+    op.execute("CREATE TYPE event_status_enum AS ENUM ('scheduled', 'active', 'held', 'cancelled', 'rescheduled')")
 
     # 2. Create events table
     op.create_table(
@@ -44,7 +41,11 @@ def upgrade() -> None:
         sa.Column(
             "status",
             sa.Enum(
-                "scheduled", "active", "held", "cancelled", "rescheduled",
+                "scheduled",
+                "active",
+                "held",
+                "cancelled",
+                "rescheduled",
                 name="event_status_enum",
                 create_type=False,
             ),
