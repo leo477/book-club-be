@@ -43,7 +43,7 @@ def upgrade() -> None:
         sa.Column("lng", sa.Float(), nullable=True),
         sa.Column(
             "status",
-            sa.Enum(
+            postgresql.ENUM(
                 "scheduled",
                 "active",
                 "held",
@@ -136,7 +136,7 @@ def downgrade() -> None:
         "clubs",
         sa.Column(
             "status",
-            sa.Enum("active", "paused", "cancelled", name="club_status_enum", create_type=False),
+            postgresql.ENUM("active", "paused", "cancelled", name="club_status_enum", create_type=False),
             nullable=True,
         ),
     )
@@ -161,7 +161,7 @@ def downgrade() -> None:
         sa.Column("date", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "status",
-            sa.Enum("held", "cancelled", "rescheduled", name="meeting_status_enum", create_type=False),
+            postgresql.ENUM("held", "cancelled", "rescheduled", name="meeting_status_enum", create_type=False),
             nullable=False,
         ),
         sa.Column("notes", sa.Text(), nullable=True),
