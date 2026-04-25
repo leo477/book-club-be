@@ -25,8 +25,15 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     # 1. Create event_status enum
     op.execute(
-        "CREATE TYPE IF NOT EXISTS event_status_enum AS ENUM "
-        "('scheduled', 'active', 'held', 'cancelled', 'rescheduled')"
+        """
+        DO $$ BEGIN
+            CREATE TYPE event_status_enum AS ENUM (
+                'scheduled', 'active', 'held', 'cancelled', 'rescheduled'
+            );
+        EXCEPTION
+            WHEN duplicate_object THEN null;
+        END $$;
+        """
     )
 
     # 2. Create events table
