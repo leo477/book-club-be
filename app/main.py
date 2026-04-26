@@ -13,6 +13,7 @@ from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 from app.config import get_settings
 from app.routers import clubs, health, members
+from app.routers.upload import router as upload_router
 from app.routers.auth import router as auth_router
 from app.routers.chat import router as chat_router
 from app.routers.events import router as events_router
@@ -181,6 +182,7 @@ def create_app() -> FastAPI:
     app.include_router(randomizer_router)
     app.include_router(chat_router)
     app.include_router(geocode_router)
+    app.include_router(upload_router)
 
     return app
 

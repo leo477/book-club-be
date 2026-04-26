@@ -29,6 +29,7 @@ class Event(Base):
     )
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    book_title: Mapped[str | None] = mapped_column(String(300), nullable=True)
     theme: Mapped[str | None] = mapped_column(String(100), nullable=True)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), server_default=text("'{}'"))
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)

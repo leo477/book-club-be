@@ -212,6 +212,7 @@ async def create_event(
         duration_minutes=body.durationMinutes,
         after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
         cover_url=body.coverUrl,
+        book_title=body.bookTitle,
         status="scheduled",
     )
     db.add(event)

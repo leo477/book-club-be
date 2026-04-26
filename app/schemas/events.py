@@ -28,6 +28,7 @@ class EventResponse(BaseModel):
     status: str
     cancelledAt: str | None
     coverUrl: str | None = None
+    bookTitle: str | None = None
     theme: str | None
     tags: list[str] = []
     durationMinutes: int | None
@@ -43,6 +44,7 @@ class CreateEventRequest(BaseModel):
     city: str
     address: str | None = None
     coverUrl: str | None = None
+    bookTitle: str | None = None
     theme: str | None = None
     tags: list[str] = []
     durationMinutes: int | None = None
