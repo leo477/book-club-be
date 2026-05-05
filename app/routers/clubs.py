@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -12,7 +13,7 @@ from app.models.club import Club
 from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.user import User
-from app.schemas.clubs import ClubResponse, CreateClubRequest
+from app.schemas.clubs import ClubResponse, CreateClubRequest, RescheduleMeetingRequest, UpdateClubRequest
 from app.schemas.events import CreateEventRequest, EventResponse
 from app.services.club_service import build_club_response, get_club_or_404
 from app.services.event_service import build_event_response
@@ -86,6 +87,11 @@ async def create_club(
         cover_url=body.coverUrl,
         is_public=body.isPublic,
         organizer_id=current_user.id,
+        city=body.city,
+        tags=body.tags or [],
+        meeting_duration_minutes=body.meetingDurationMinutes,
+        after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
+        status="active",
     )
     db.add(club)
     await db.flush()
@@ -97,6 +103,72 @@ async def create_club(
         role="organizer",
     )
     db.add(membership)
+    await db.commit()
+    await db.refresh(club)
+    return await build_club_response(club, db)
+
+
+@router.patch("/{club_id}")
+async def update_club(
+    club_id: uuid.UUID,
+    body: UpdateClubRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> ClubResponse:
+    await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
+
+    club.name = body.name
+    club.description = body.description
+    club.is_public = body.isPublic
+    club.city = body.city
+    club.cover_url = body.coverUrl
+
+    await db.commit()
+    await db.refresh(club)
+    return await build_club_response(club, db)
+
+
+@router.patch("/{club_id}/pause")
+async def pause_club(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> ClubResponse:
+    await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
+    club.status = "paused"
+    await db.commit()
+    await db.refresh(club)
+    return await build_club_response(club, db)
+
+
+@router.patch("/{club_id}/cancel")
+async def cancel_club(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> ClubResponse:
+    await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
+    club.status = "cancelled"
+    club.cancelled_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(club)
+    return await build_club_response(club, db)
+
+
+@router.patch("/{club_id}/reschedule")
+async def reschedule_club(
+    club_id: uuid.UUID,
+    body: RescheduleMeetingRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> ClubResponse:
+    await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
+    club.next_meeting_date = datetime.fromisoformat(body.newDate)
+    club.status = "active"
     await db.commit()
     await db.refresh(club)
     return await build_club_response(club, db)
@@ -166,8 +238,6 @@ async def list_club_events(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[EventResponse]:
-    from datetime import UTC, datetime
-
     from app.models.event import Event
 
     club = await get_club_or_404(club_id, db)
@@ -212,6 +282,7 @@ async def create_event(
         duration_minutes=body.durationMinutes,
         after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
         cover_url=body.coverUrl,
+        book_title=body.bookTitle,
         status="scheduled",
     )
     db.add(event)

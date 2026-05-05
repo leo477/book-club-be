@@ -65,6 +65,7 @@ async def build_event_response(
         status=event.status,
         cancelledAt=event.cancelled_at.isoformat() if event.cancelled_at else None,
         coverUrl=event.cover_url,
+        bookTitle=event.book_title,
         theme=event.theme,
         tags=event.tags or [],
         durationMinutes=event.duration_minutes,

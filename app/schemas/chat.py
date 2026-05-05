@@ -16,3 +16,12 @@ class ChatMessageResponse(BaseModel):
 
 class SendMessageRequest(BaseModel):
     text: str
+
+
+class CreateChatRoomRequest(BaseModel):
+    name: str
+
+
+class BanFromRoomRequest(BaseModel):
+    user_id: str
+    duration_seconds: int
