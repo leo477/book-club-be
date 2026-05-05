@@ -1,6 +1,7 @@
 import logging
 import uuid
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -8,10 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.dependencies import get_current_user, get_db_dep
-from app.models.chat import ChatMessage, ChatRoom
+from app.dependencies import get_current_user, get_db_dep, is_club_organizer, require_club_organizer
+from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
 from app.models.user import User
-from app.schemas.chat import ChatMessageResponse, ChatRoomResponse, SendMessageRequest
+from app.schemas.chat import (
+    BanFromRoomRequest,
+    ChatMessageResponse,
+    ChatRoomResponse,
+    CreateChatRoomRequest,
+    SendMessageRequest,
+)
 from app.services.auth_service import decode_access_token
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
@@ -45,10 +52,7 @@ logger = logging.getLogger(__name__)
 manager = ConnectionManager()
 
 
-@router.get(
-    "/clubs/{club_id}/chat/rooms",
-    status_code=status.HTTP_200_OK,
-)
+@router.get("/clubs/{club_id}/chat/rooms", status_code=status.HTTP_200_OK)
 async def get_chat_rooms(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -59,10 +63,23 @@ async def get_chat_rooms(
     return [ChatRoomResponse(id=str(r.id), name=r.name) for r in rooms]
 
 
-@router.get(
-    "/chat/rooms/{room_id}/messages",
-    status_code=status.HTTP_200_OK,
-)
+@router.post("/clubs/{club_id}/chat/rooms", status_code=status.HTTP_201_CREATED)
+async def create_chat_room(
+    club_id: uuid.UUID,
+    body: CreateChatRoomRequest,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ChatRoomResponse:
+    await require_club_organizer(club_id, current_user, db)
+
+    room = ChatRoom(id=uuid.uuid4(), club_id=club_id, name=body.name)
+    db.add(room)
+    await db.commit()
+    await db.refresh(room)
+    return ChatRoomResponse(id=str(room.id), name=room.name)
+
+
+@router.get("/chat/rooms/{room_id}/messages", status_code=status.HTTP_200_OK)
 async def get_messages(
     room_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -99,10 +116,7 @@ async def get_messages(
     return messages
 
 
-@router.post(
-    "/chat/rooms/{room_id}/messages",
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/chat/rooms/{room_id}/messages", status_code=status.HTTP_201_CREATED)
 async def send_message(
     room_id: uuid.UUID,
     body: SendMessageRequest,
@@ -122,6 +136,68 @@ async def send_message(
     )
 
 
+@router.delete("/chat/rooms/{room_id}/messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_message(
+    room_id: uuid.UUID,
+    message_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    msg_result = await db.execute(
+        select(ChatMessage).where(ChatMessage.id == message_id, ChatMessage.room_id == room_id)
+    )
+    msg = msg_result.scalar_one_or_none()
+    if msg is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Message not found", "code": "MESSAGE_NOT_FOUND"},
+        )
+
+    if msg.sender_id != current_user.id:
+        room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
+        room = room_result.scalar_one_or_none()
+        if room is None or not await is_club_organizer(room.club_id, current_user.id, db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "Not authorized to delete this message", "code": "FORBIDDEN"},
+            )
+
+    await db.delete(msg)
+    await db.commit()
+
+
+@router.post("/chat/rooms/{room_id}/ban", status_code=status.HTTP_204_NO_CONTENT)
+async def ban_from_room(
+    room_id: uuid.UUID,
+    body: BanFromRoomRequest,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
+    room = room_result.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Room not found", "code": "ROOM_NOT_FOUND"},
+        )
+
+    await require_club_organizer(room.club_id, current_user, db)
+
+    banned_until = None
+    if body.duration_seconds > 0:
+        banned_until = datetime.now(UTC) + timedelta(seconds=body.duration_seconds)
+
+    ban = ChatRoomBan(
+        id=uuid.uuid4(),
+        room_id=room_id,
+        user_id=uuid.UUID(body.user_id),
+        banned_by=current_user.id,
+        banned_until=banned_until,
+    )
+    db.add(ban)
+    await db.commit()
+
+
 @router.websocket("/chat/rooms/{room_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -129,8 +205,6 @@ async def websocket_endpoint(
     token: str,  # query parameter: ws://...?token=<jwt>
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
-    # Authenticate BEFORE accepting the connection so unauthenticated
-    # clients are rejected during the handshake phase.
     settings = get_settings()
     try:
         token_data = decode_access_token(token, settings)
@@ -145,7 +219,6 @@ async def websocket_endpoint(
         await websocket.close(code=1008)
         return
 
-    # Only accept the connection after successful authentication.
     await manager.connect(room_id, websocket)
     try:
         while True:

@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -20,6 +21,18 @@ class Club(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
     is_public: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
+    city: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    next_meeting_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    theme: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    current_book: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(String), server_default=text("'{}'"), nullable=False)
+    meeting_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    after_meeting_venue: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     organizer = relationship("User", foreign_keys=[organizer_id])

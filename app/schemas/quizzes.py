@@ -16,9 +16,15 @@ class QuizResponse(BaseModel):
     title: str
     description: str | None
     isActive: bool
+    status: str = "draft"
 
 
 class CreateQuizRequest(BaseModel):
+    title: str
+    description: str | None = None
+
+
+class UpdateQuizRequest(BaseModel):
     title: str
     description: str | None = None
 
@@ -29,12 +35,23 @@ class QuizQuestionResponse(BaseModel):
     question: str
     options: list[str]
     correctIndex: int | None = None  # only included for organizers
+    position: int = 0
 
 
 class AddQuestionRequest(BaseModel):
     question: str
-    options: list[str]  # exactly 4 options
+    options: list[str]
     correctIndex: int
+
+
+class UpdateQuestionRequest(BaseModel):
+    question: str | None = None
+    options: list[str] | None = None
+    correctIndex: int | None = None
+
+
+class ReorderQuestionsRequest(BaseModel):
+    order: list[str]  # ordered question UUIDs
 
 
 class SetActiveRequest(BaseModel):
@@ -52,3 +69,31 @@ class AttemptResponse(BaseModel):
     score: int
     total: int
     answers: list[int]
+
+
+class CreateSessionRequest(BaseModel):
+    eventId: str
+
+
+class QuizSessionResponse(BaseModel):
+    id: str
+    quizId: str
+    eventId: str | None
+    startedBy: str
+    startedAt: str
+    closedAt: str | None
+    participantCount: int
+
+
+class LeaderboardEntry(BaseModel):
+    rank: int
+    userId: str
+    displayName: str
+    avatarUrl: str | None
+    score: int
+    totalQuestions: int
+    hasAttempted: bool
+
+
+class LeaderboardResponse(BaseModel):
+    entries: list[LeaderboardEntry]
