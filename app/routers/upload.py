@@ -12,8 +12,8 @@ router = APIRouter(prefix="/api/v1/upload", tags=["upload"])
 
 @router.post("/cover")
 async def upload_cover(
-    file: UploadFile = File(...),
-    _current_user: Annotated[User, Depends(get_current_user)] = None,
+    file: Annotated[UploadFile, File(...)],
+    _current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, str]:
     settings = get_settings()
     if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
