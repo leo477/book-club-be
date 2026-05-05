@@ -13,13 +13,13 @@ from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 from app.config import get_settings
 from app.routers import clubs, health, members
-from app.routers.upload import router as upload_router
 from app.routers.auth import router as auth_router
 from app.routers.chat import router as chat_router
 from app.routers.events import router as events_router
 from app.routers.geocode import router as geocode_router
 from app.routers.quizzes import router as quizzes_router
 from app.routers.randomizer import router as randomizer_router
+from app.routers.upload import router as upload_router
 from app.routers.users import router as users_router
 
 logger = structlog.get_logger(__name__)
