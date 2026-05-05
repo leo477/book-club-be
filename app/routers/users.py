@@ -18,6 +18,13 @@ from app.services.club_service import get_user_stats
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 
+@router.get("/me")
+async def get_me(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> UserProfileResponse:
+    return UserProfileResponse.model_validate(current_user)
+
+
 @router.get("/me/stats")
 async def get_my_stats(
     current_user: Annotated[User, Depends(get_current_user)],
