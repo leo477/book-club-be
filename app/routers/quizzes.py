@@ -397,9 +397,7 @@ async def get_active_session(
             detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
         )
 
-    count_result = await db.execute(
-        select(func.count()).select_from(QuizAttempt).where(QuizAttempt.quiz_id == quiz_id)
-    )
+    count_result = await db.execute(select(func.count()).select_from(QuizAttempt).where(QuizAttempt.quiz_id == quiz_id))
     participant_count = count_result.scalar() or 0
 
     return _session_response(session, participant_count)
