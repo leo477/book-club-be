@@ -16,6 +16,11 @@ async def health_check() -> dict[str, str]:
     return {"status": "ok", "env": settings.ENV}
 
 
+@router.head("/health")
+async def health_check_head() -> None:
+    pass
+
+
 @router.get("/ready")
 async def readiness_check() -> dict[str, str]:
     try:
