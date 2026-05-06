@@ -87,3 +87,4 @@ package-lock.json
 
 # Claude Code (local tool config)
 .claudignore
+/.claude/
