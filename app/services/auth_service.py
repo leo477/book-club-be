@@ -48,6 +48,16 @@ async def supabase_sign_up(
         ) from exc
 
 
+async def supabase_refresh(client: AsyncClient, refresh_token: str) -> AuthResponse:
+    try:
+        return await client.auth.refresh_session(refresh_token)
+    except AuthApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired refresh token", "code": "INVALID_REFRESH_TOKEN"},
+        ) from exc
+
+
 async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> AuthResponse:
     try:
         return await client.auth.sign_in_with_password({"email": email, "password": password})
