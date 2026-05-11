@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -36,6 +36,8 @@ class QuizQuestion(Base):
 
 class QuizAttempt(Base):
     __tablename__ = "quiz_attempts"
+    # MN-14: each user may only have one attempt per quiz
+    __table_args__ = (UniqueConstraint("quiz_id", "user_id", name="uq_quiz_attempts_quiz_user"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     quiz_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("quizzes.id"), nullable=False, index=True)

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -11,6 +11,8 @@ from app.database import Base
 
 class ClubBan(Base):
     __tablename__ = "club_bans"
+    # MN-13 & MN-15: prevent duplicate ban rows for the same (club, user) pair
+    __table_args__ = (UniqueConstraint("club_id", "user_id", name="uq_club_bans_club_user"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     club_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clubs.id"), nullable=False, index=True)

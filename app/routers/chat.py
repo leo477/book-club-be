@@ -84,22 +84,41 @@ async def get_messages(
     room_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
-    before: str | None = None,
+    before_id: str | None = None,
     limit: int = 50,
 ) -> list[ChatMessageResponse]:
+    # MN-5: verify room exists
+    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
+    if room_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Room not found", "code": "ROOM_NOT_FOUND"},
+        )
+
     query = (
         select(ChatMessage, User.display_name)
         .join(User, ChatMessage.sender_id == User.id)
         .where(ChatMessage.room_id == room_id)
     )
 
-    if before:
-        before_result = await db.execute(select(ChatMessage.timestamp).where(ChatMessage.id == uuid.UUID(before)))
+    # MN-6: ID-based cursor pagination — no timestamp collision issues
+    if before_id:
+        try:
+            cursor_uuid = uuid.UUID(before_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"error": "Invalid cursor", "code": "INVALID_CURSOR"},
+            ) from exc
+        before_result = await db.execute(select(ChatMessage.timestamp).where(ChatMessage.id == cursor_uuid))
         before_ts = before_result.scalar_one_or_none()
         if before_ts is not None:
-            query = query.where(ChatMessage.timestamp < before_ts)
+            query = query.where(
+                (ChatMessage.timestamp < before_ts)
+                | ((ChatMessage.timestamp == before_ts) & (ChatMessage.id < cursor_uuid))
+            )
 
-    query = query.order_by(ChatMessage.timestamp.desc()).limit(limit)
+    query = query.order_by(ChatMessage.timestamp.desc(), ChatMessage.id.desc()).limit(limit)
     rows = (await db.execute(query)).all()
 
     messages = [
@@ -123,6 +142,30 @@ async def send_message(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatMessageResponse:
+    # MN-5: verify room exists
+    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
+    room = room_result.scalar_one_or_none()
+    if room is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "Room not found", "code": "ROOM_NOT_FOUND"},
+        )
+
+    # MN-4: check if user is banned from this room
+    now = datetime.now(UTC)
+    ban_result = await db.execute(
+        select(ChatRoomBan).where(
+            ChatRoomBan.room_id == room_id,
+            ChatRoomBan.user_id == current_user.id,
+            (ChatRoomBan.banned_until.is_(None)) | (ChatRoomBan.banned_until > now),
+        )
+    )
+    if ban_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "You are banned from this room", "code": "ROOM_BANNED"},
+        )
+
     msg = ChatMessage(room_id=room_id, sender_id=current_user.id, text=body.text)
     db.add(msg)
     await db.commit()
@@ -225,6 +268,21 @@ async def websocket_endpoint(
             data = await websocket.receive_json()
             text = data.get("text", "")
             if not text:
+                continue
+
+            # MN-4: check if user is banned from this room before inserting
+            now = datetime.now(UTC)
+            ban_result = await db.execute(
+                select(ChatRoomBan).where(
+                    ChatRoomBan.room_id == uuid.UUID(room_id),
+                    ChatRoomBan.user_id == user.id,
+                    (ChatRoomBan.banned_until.is_(None)) | (ChatRoomBan.banned_until > now),
+                )
+            )
+            if ban_result.scalar_one_or_none() is not None:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"code": "ROOM_BANNED", "message": "You are banned from this room"}}
+                )
                 continue
 
             msg = ChatMessage(room_id=uuid.UUID(room_id), sender_id=user.id, text=text)

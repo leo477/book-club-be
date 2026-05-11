@@ -38,8 +38,10 @@ async def list_clubs(
         stmt = stmt.where(Club.is_public.is_(True))
 
     if search:
-        like = f"%{search}%"
-        stmt = stmt.where(or_(Club.name.ilike(like), Club.description.ilike(like)))
+        # MN-10: escape LIKE metacharacters to prevent injection via % and _
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
+        stmt = stmt.where(or_(Club.name.ilike(like, escape="\\"), Club.description.ilike(like, escape="\\")))
 
     stmt = stmt.offset(skip).limit(limit)
 

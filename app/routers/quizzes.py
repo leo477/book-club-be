@@ -358,15 +358,10 @@ async def create_session(
     quiz = await _get_quiz_or_404(quiz_id, db)
     await require_club_organizer(quiz.club_id, current_user, db)
 
-    try:
-        event_id = uuid.UUID(req.eventId)
-    except ValueError:
-        event_id = None
-
     session = QuizSession(
         id=uuid.uuid4(),
         quiz_id=quiz_id,
-        event_id=event_id,
+        event_id=req.eventId,
         started_by=current_user.id,
     )
     db.add(session)
