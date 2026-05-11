@@ -45,7 +45,7 @@ async def photon_autocomplete(q: str, lang: str, limit: int, settings: Settings)
             except _RETRIABLE as exc:
                 logger.warning("Photon geocoding attempt failed", attempt=attempt + 1, error=str(exc))
                 if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
 
     if data is None:
         logger.error("Photon geocoding failed after all retries", q=q, lang=lang)
