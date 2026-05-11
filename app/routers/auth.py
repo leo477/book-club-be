@@ -64,7 +64,7 @@ async def register(
     settings: Annotated[Settings, Depends(get_settings_dep)],
     email: Annotated[EmailStr, Body()],
     password: Annotated[str, Body(min_length=8)],
-    displayName: Annotated[str, Body(min_length=1, max_length=100)],  # noqa: N803
+    display_name: Annotated[str, Body(alias="displayName", min_length=1, max_length=100)],
     role: Annotated[Literal["user", "organizer"], Body()] = "user",
 ) -> AuthResponse | JSONResponse:
     result = await db.execute(select(User).where(User.email == email))
@@ -74,12 +74,12 @@ async def register(
             detail={"error": "Email already exists", "code": "EMAIL_EXISTS"},
         )
 
-    if _EMAIL_RE.fullmatch(displayName.strip()):
+    if _EMAIL_RE.fullmatch(display_name.strip()):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "Display name cannot be an email address", "code": "INVALID_DISPLAY_NAME"},
         )
-    safe_name = displayName
+    safe_name = display_name
     client = await get_supabase_client(settings)
     auth_response = await supabase_sign_up(client, str(email), password, safe_name, role)
 

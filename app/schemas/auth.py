@@ -26,8 +26,7 @@ class UserProfileResponse(BaseModel):
     socialsPublic: bool
     socials: dict[str, str | None]
 
-    # noinspection PyMethodDecoratorAdapted
-    @model_validator(mode="before")
+    @model_validator(mode="before")  # NOSONAR
     @classmethod
     def build_from_orm(cls, v: Any) -> Any:
         if hasattr(v, "display_name"):
