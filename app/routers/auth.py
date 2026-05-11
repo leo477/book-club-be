@@ -1,5 +1,4 @@
 import random
-import re
 import string
 import uuid
 from typing import Annotated, Literal
@@ -18,8 +17,12 @@ from app.services.auth_service import get_supabase_client, supabase_refresh, sup
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
-_EMAIL_RE = re.compile(r"[^@]+@[^@]+\.[^@]+")
 _REFRESH_COOKIE = "refresh_token"
+
+
+def _looks_like_email(text: str) -> bool:
+    local, sep, domain = text.partition("@")
+    return bool(sep and local and "." in domain)
 
 
 def _random_display_name() -> str:
@@ -28,7 +31,7 @@ def _random_display_name() -> str:
 
 
 def _sanitize_display_name(display_name: str) -> str:
-    if not display_name or _EMAIL_RE.fullmatch(display_name.strip()):
+    if not display_name or _looks_like_email(display_name.strip()):
         return _random_display_name()
     return display_name
 
@@ -74,7 +77,7 @@ async def register(
             detail={"error": "Email already exists", "code": "EMAIL_EXISTS"},
         )
 
-    if _EMAIL_RE.fullmatch(display_name.strip()):
+    if _looks_like_email(display_name.strip()):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "Display name cannot be an email address", "code": "INVALID_DISPLAY_NAME"},
