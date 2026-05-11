@@ -68,7 +68,7 @@ async def _get_quiz_or_404(quiz_id: uuid.UUID, db: AsyncSession) -> Quiz:
     return quiz
 
 
-@router.get("/clubs/{club_id}/quizzes", status_code=status.HTTP_200_OK)
+@router.get("/clubs/{club_id}/quizzes", response_model=list[QuizResponse], status_code=status.HTTP_200_OK)
 async def get_quizzes(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -80,7 +80,7 @@ async def get_quizzes(
     return [_quiz_response(q) for q in result.scalars().all()]
 
 
-@router.post("/clubs/{club_id}/quizzes", status_code=status.HTTP_201_CREATED)
+@router.post("/clubs/{club_id}/quizzes", response_model=QuizResponse, status_code=status.HTTP_201_CREATED)
 async def create_quiz(
     club_id: uuid.UUID,
     req: CreateQuizRequest,
@@ -104,7 +104,7 @@ async def create_quiz(
     return _quiz_response(quiz)
 
 
-@router.get("/quizzes/{quiz_id}", status_code=status.HTTP_200_OK)
+@router.get("/quizzes/{quiz_id}", response_model=QuizResponse, status_code=status.HTTP_200_OK)
 async def get_quiz(
     quiz_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -114,7 +114,7 @@ async def get_quiz(
     return _quiz_response(quiz)
 
 
-@router.patch("/quizzes/{quiz_id}", status_code=status.HTTP_200_OK)
+@router.patch("/quizzes/{quiz_id}", response_model=QuizResponse, status_code=status.HTTP_200_OK)
 async def update_quiz(
     quiz_id: uuid.UUID,
     req: UpdateQuizRequest,
@@ -131,7 +131,12 @@ async def update_quiz(
     return _quiz_response(quiz)
 
 
-@router.get("/quizzes/{quiz_id}/questions", response_model_exclude_none=True, status_code=status.HTTP_200_OK)
+@router.get(
+    "/quizzes/{quiz_id}/questions",
+    response_model=list[QuizQuestionResponse],
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+)
 async def get_questions(
     quiz_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -158,7 +163,7 @@ async def get_questions(
     ]
 
 
-@router.post("/quizzes/{quiz_id}/questions", status_code=status.HTTP_201_CREATED)
+@router.post("/quizzes/{quiz_id}/questions", response_model=QuizQuestionResponse, status_code=status.HTTP_201_CREATED)
 async def add_question(
     quiz_id: uuid.UUID,
     req: AddQuestionRequest,
@@ -196,7 +201,11 @@ async def add_question(
     )
 
 
-@router.patch("/quizzes/{quiz_id}/questions/{question_id}", status_code=status.HTTP_200_OK)
+@router.patch(
+    "/quizzes/{quiz_id}/questions/{question_id}",
+    response_model=QuizQuestionResponse,
+    status_code=status.HTTP_200_OK,
+)
 async def update_question(
     quiz_id: uuid.UUID,
     question_id: uuid.UUID,
@@ -288,7 +297,7 @@ async def reorder_questions(
     await db.commit()
 
 
-@router.patch("/quizzes/{quiz_id}/active", status_code=status.HTTP_200_OK)
+@router.patch("/quizzes/{quiz_id}/active", response_model=QuizResponse, status_code=status.HTTP_200_OK)
 async def set_active(
     quiz_id: uuid.UUID,
     req: SetActiveRequest,
@@ -305,7 +314,7 @@ async def set_active(
     return _quiz_response(quiz)
 
 
-@router.post("/quizzes/{quiz_id}/attempts", status_code=status.HTTP_201_CREATED)
+@router.post("/quizzes/{quiz_id}/attempts", response_model=AttemptResponse, status_code=status.HTTP_201_CREATED)
 async def submit_attempt(
     quiz_id: uuid.UUID,
     req: SubmitAttemptRequest,
@@ -351,7 +360,7 @@ async def submit_attempt(
     )
 
 
-@router.post("/quizzes/{quiz_id}/sessions", status_code=status.HTTP_201_CREATED)
+@router.post("/quizzes/{quiz_id}/sessions", response_model=QuizSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     quiz_id: uuid.UUID,
     req: CreateSessionRequest,
@@ -379,7 +388,7 @@ async def create_session(
     return _session_response(session, participant_count=0)
 
 
-@router.get("/quizzes/{quiz_id}/sessions/active", status_code=status.HTTP_200_OK)
+@router.get("/quizzes/{quiz_id}/sessions/active", response_model=QuizSessionResponse, status_code=status.HTTP_200_OK)
 async def get_active_session(
     quiz_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -411,7 +420,11 @@ async def get_active_session(
     return _session_response(session, participant_count)
 
 
-@router.get("/quizzes/{quiz_id}/sessions/{session_id}/leaderboard", status_code=status.HTTP_200_OK)
+@router.get(
+    "/quizzes/{quiz_id}/sessions/{session_id}/leaderboard",
+    response_model=LeaderboardResponse,
+    status_code=status.HTTP_200_OK,
+)
 async def get_leaderboard(
     quiz_id: uuid.UUID,
     session_id: uuid.UUID,

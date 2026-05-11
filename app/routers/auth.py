@@ -122,7 +122,7 @@ async def register(
     )
 
 
-@router.post("/login", status_code=status.HTTP_200_OK)
+@router.post("/login", response_model=AuthResponse, status_code=status.HTTP_200_OK)
 async def login(
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -203,7 +203,7 @@ async def logout(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/me", status_code=status.HTTP_200_OK)
+@router.get("/me", response_model=UserProfileResponse, status_code=status.HTTP_200_OK)
 async def me(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserProfileResponse:

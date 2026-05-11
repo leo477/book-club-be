@@ -14,7 +14,7 @@ from supabase_auth.errors import AuthApiError
 
 from app.config import Settings
 from app.database import Base, get_db
-from app.dependencies import get_db_dep, get_settings_dep
+from app.dependencies import get_db_dep, get_redis, get_settings_dep
 from app.main import app
 
 # SQLite doesn't support PostgreSQL-specific types; map them to JSON for testing
@@ -180,9 +180,19 @@ async def override_get_db(test_engine):
 
     test_settings = _make_test_settings()
 
+    # Provide a fake Redis that is always a no-op (safe for all tests)
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.set = AsyncMock()
+    mock_redis.aclose = AsyncMock()
+
+    async def _override_get_redis():
+        return mock_redis
+
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_db_dep] = _override_get_db
     app.dependency_overrides[get_settings_dep] = lambda: test_settings
+    app.dependency_overrides[get_redis] = _override_get_redis
 
     with (
         patch("app.routers.auth.get_supabase_client", new=AsyncMock(return_value=fake_client)),

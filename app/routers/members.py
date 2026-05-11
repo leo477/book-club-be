@@ -18,7 +18,7 @@ from app.schemas.clubs import BanRequest, BanResponse, MemberResponse
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
 
-@router.get("/members")
+@router.get("/members", response_model=list[MemberResponse])
 async def list_members(
     club_id: uuid.UUID,
     _current_user: Annotated[User | None, Depends(get_optional_user)],
@@ -64,7 +64,7 @@ async def remove_member(
     await db.commit()
 
 
-@router.post("/members/{user_id}/ban", status_code=status.HTTP_201_CREATED)
+@router.post("/members/{user_id}/ban", response_model=BanResponse, status_code=status.HTTP_201_CREATED)
 async def ban_member(
     club_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -111,7 +111,7 @@ async def ban_member(
     )
 
 
-@router.get("/bans")
+@router.get("/bans", response_model=list[BanResponse])
 async def list_bans(
     club_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],

@@ -4,12 +4,14 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
+import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.database import get_db
+from app.exceptions import AppError
 from app.models.club_member import ClubMember
 from app.models.user import User
 
@@ -33,27 +35,18 @@ async def get_current_user(
 
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Not authenticated", "code": "NOT_AUTHENTICATED"},
-        )
+        raise AppError(status.HTTP_401_UNAUTHORIZED, "Not authenticated", "NOT_AUTHENTICATED")
 
     token = auth_header.split(" ", 1)[1]
     payload = decode_access_token(token, settings)
     user_id: str | None = payload.get("sub")
     if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Invalid token", "code": "INVALID_TOKEN"},
-        )
+        raise AppError(status.HTTP_401_UNAUTHORIZED, "Invalid token", "INVALID_TOKEN")
 
     result = await db.execute(select(UserModel).where(UserModel.supabase_user_id == uuid.UUID(user_id)))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "User not found", "code": "USER_NOT_FOUND"},
-        )
+        raise AppError(status.HTTP_401_UNAUTHORIZED, "User not found", "USER_NOT_FOUND")
     return user
 
 
@@ -77,7 +70,7 @@ async def require_club_organizer(
     )
     membership = result.scalar_one_or_none()
     if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+        raise AppError(status.HTTP_403_FORBIDDEN, "Not authorized", "FORBIDDEN")
     return membership
 
 
@@ -91,7 +84,7 @@ async def require_event_club_organizer(
     result = await db.execute(select(EventModel).where(EventModel.id == event_id))
     event = result.scalar_one_or_none()
     if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
     return await require_club_organizer(event.club_id, current_user, db)
 
@@ -122,3 +115,9 @@ async def get_optional_user(
         return await get_current_user(request=request, db=db, settings=settings)
     except HTTPException:
         return None
+
+
+async def get_redis(request: Request) -> aioredis.Redis:  # type: ignore[type-arg]
+    """Return a Redis client backed by the shared connection pool from app state."""
+    pool = request.app.state.redis_pool
+    return aioredis.Redis(connection_pool=pool)
