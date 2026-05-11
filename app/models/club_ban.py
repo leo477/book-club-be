@@ -18,3 +18,5 @@ class ClubBan(Base):
     banned_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     banned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     duration: Mapped[str] = mapped_column(String(20), nullable=False)
+    # M-7: nullable — NULL means permanent ban
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

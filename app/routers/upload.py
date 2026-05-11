@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from typing import Annotated
 
@@ -21,10 +22,16 @@ async def upload_cover(
 
     from supabase import create_client
 
-    supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
     ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg"
     path = f"covers/{uuid.uuid4()}.{ext}"
     contents = await file.read()
-    supabase.storage.from_("covers").upload(path, contents, {"content-type": file.content_type or "image/jpeg"})
-    url: str = supabase.storage.from_("covers").get_public_url(path)
+    content_type = file.content_type or "image/jpeg"
+
+    # M-6: the sync Supabase client blocks the event loop; offload to a thread
+    def _do_upload() -> str:
+        supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+        supabase.storage.from_("covers").upload(path, contents, {"content-type": content_type})
+        return supabase.storage.from_("covers").get_public_url(path)
+
+    url: str = await asyncio.to_thread(_do_upload)
     return {"url": url}

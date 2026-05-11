@@ -271,14 +271,17 @@ async def reorder_questions(
     quiz = await _get_quiz_or_404(quiz_id, db)
     await require_club_organizer(quiz.club_id, current_user, db)
 
-    for position, question_id_str in enumerate(req.order):
-        q_result = await db.execute(
-            select(QuizQuestion).where(
-                QuizQuestion.id == uuid.UUID(question_id_str),
-                QuizQuestion.quiz_id == quiz_id,
-            )
+    # M-2: load all questions in a single query instead of N per-item SELECTs
+    ordered_ids = [uuid.UUID(qid) for qid in req.order]
+    q_result = await db.execute(
+        select(QuizQuestion).where(
+            QuizQuestion.quiz_id == quiz_id,
+            QuizQuestion.id.in_(ordered_ids),
         )
-        question = q_result.scalar_one_or_none()
+    )
+    questions_map = {q.id: q for q in q_result.scalars().all()}
+    for position, qid in enumerate(ordered_ids):
+        question = questions_map.get(qid)
         if question is not None:
             question.position = position
 
@@ -397,7 +400,12 @@ async def get_active_session(
             detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
         )
 
-    count_result = await db.execute(select(func.count()).select_from(QuizAttempt).where(QuizAttempt.quiz_id == quiz_id))
+    # M-3: scope participant count to this session only (attempts after session started)
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(QuizAttempt)
+        .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.created_at >= session.started_at)
+    )
     participant_count = count_result.scalar() or 0
 
     return _session_response(session, participant_count)
@@ -415,7 +423,9 @@ async def get_leaderboard(
     session_result = await db.execute(
         select(QuizSession).where(QuizSession.id == session_id, QuizSession.quiz_id == quiz_id)
     )
-    if session_result.scalar_one_or_none() is None:
+    # M-4: retain session object to use started_at for scoping attempts
+    session_obj = session_result.scalar_one_or_none()
+    if session_obj is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
@@ -429,7 +439,7 @@ async def get_leaderboard(
     attempts_result = await db.execute(
         select(QuizAttempt, User.display_name, User.avatar_url)
         .join(User, QuizAttempt.user_id == User.id)
-        .where(QuizAttempt.quiz_id == quiz_id)
+        .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.created_at >= session_obj.started_at)
         .order_by(QuizAttempt.score.desc(), QuizAttempt.created_at.asc())
     )
     rows = attempts_result.all()

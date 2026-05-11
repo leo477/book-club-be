@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
@@ -15,8 +16,8 @@ from app.models.club_member import ClubMember
 from app.models.user import User
 from app.schemas.clubs import ClubResponse, CreateClubRequest, RescheduleMeetingRequest, UpdateClubRequest
 from app.schemas.events import CreateEventRequest, EventResponse
-from app.services.club_service import build_club_response, get_club_or_404
-from app.services.event_service import build_event_response
+from app.services.club_service import build_club_response, build_club_responses_bulk, get_club_or_404
+from app.services.event_service import build_event_response, build_event_responses_bulk
 
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
@@ -45,7 +46,7 @@ async def list_clubs(
 
     result = await db.execute(stmt)
     clubs = result.scalars().all()
-    return [await build_club_response(c, db) for c in clubs]
+    return await build_club_responses_bulk(list(clubs), db)
 
 
 @router.get("/my")
@@ -58,7 +59,7 @@ async def list_my_clubs(
         select(Club).where(or_(Club.id.in_(member_club_ids), Club.organizer_id == current_user.id))
     )
     clubs = result.scalars().all()
-    return [await build_club_response(c, db) for c in clubs]
+    return await build_club_responses_bulk(list(clubs), db)
 
 
 @router.get("/{club_id}")
@@ -118,11 +119,17 @@ async def update_club(
     await require_club_organizer(club_id, current_user, db)
     club = await get_club_or_404(club_id, db)
 
-    club.name = body.name
-    club.description = body.description
-    club.is_public = body.isPublic
-    club.city = body.city
-    club.cover_url = body.coverUrl
+    # M-8: true PATCH — only update fields actually provided in the request body
+    field_map = {
+        "name": "name",
+        "description": "description",
+        "isPublic": "is_public",
+        "city": "city",
+        "coverUrl": "cover_url",
+    }
+    for schema_field, model_attr in field_map.items():
+        if schema_field in body.model_fields_set:
+            setattr(club, model_attr, getattr(body, schema_field))
 
     await db.commit()
     await db.refresh(club)
@@ -182,11 +189,16 @@ async def join_club(
 ) -> dict[str, int]:
     await get_club_or_404(club_id, db)
 
+    # M-7: check for active ban (respects expires_at; NULL = permanent)
     ban_result = await db.execute(
         select(ClubBan).where(and_(ClubBan.club_id == club_id, ClubBan.user_id == current_user.id))
     )
-    if ban_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are banned from this club")
+    ban = ban_result.scalar_one_or_none()
+    if ban is not None:
+        now_utc = datetime.now(UTC)
+        ban_active = ban.expires_at is None or ban.expires_at > now_utc
+        if ban_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are banned from this club")
 
     existing = await db.execute(
         select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
@@ -201,7 +213,12 @@ async def join_club(
         role="member",
     )
     db.add(membership)
-    await db.commit()
+    # M-5: guard against TOCTOU race — a concurrent join between the SELECT and INSERT
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already a member") from exc
 
     count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
     member_count = count_result.scalar() or 0
@@ -251,10 +268,9 @@ async def list_club_events(
     events = result.scalars().all()
 
     current_user_id = current_user.id if current_user else None
-    return [
-        await build_event_response(e, db, current_user_id, club_name=club.name, organizer_id=club.organizer_id)
-        for e in events
-    ]
+    return await build_event_responses_bulk(
+        list(events), db, current_user_id, club_name=club.name, organizer_id=club.organizer_id
+    )
 
 
 @router.post("/{club_id}/events", status_code=status.HTTP_201_CREATED)

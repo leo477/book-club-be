@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_event_club_organizer
@@ -13,7 +14,7 @@ from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.schemas.events import EventResponse, RescheduleEventRequest
-from app.services.event_service import build_event_response, get_event_or_404
+from app.services.event_service import build_event_response, build_event_responses_bulk, get_event_or_404
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
@@ -44,7 +45,7 @@ async def list_events(
     events = result.scalars().all()
 
     current_user_id = current_user.id if current_user else None
-    return [await build_event_response(e, db, current_user_id) for e in events]
+    return await build_event_responses_bulk(list(events), db, current_user_id)
 
 
 @router.get("/my")
@@ -71,7 +72,7 @@ async def list_my_events(
     )
     result = await db.execute(stmt)
     events = result.scalars().all()
-    return [await build_event_response(e, db, current_user.id) for e in events]
+    return await build_event_responses_bulk(list(events), db, current_user.id)
 
 
 @router.get("/{event_id}")
@@ -102,7 +103,12 @@ async def attend_event(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already attending")
 
     db.add(EventAttendee(event_id=event_id, user_id=current_user.id))
-    await db.commit()
+    # M-5: guard against TOCTOU race — concurrent attend between SELECT and INSERT
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already attending") from exc
 
     from sqlalchemy import func
 
