@@ -1,4 +1,4 @@
-import random
+import secrets
 import string
 import uuid
 from typing import Annotated, Literal
@@ -15,9 +15,11 @@ from app.models.user import User
 from app.schemas.auth import AuthResponse, RefreshResponse, UserProfileResponse
 from app.services.auth_service import get_supabase_client, supabase_refresh, supabase_sign_in, supabase_sign_up
 
-router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+_AUTH_PREFIX = "/api/v1/auth"
+router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 
 _REFRESH_COOKIE = "refresh_token"
+_DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
 
 
 def _looks_like_email(text: str) -> bool:
@@ -26,7 +28,7 @@ def _looks_like_email(text: str) -> bool:
 
 
 def _random_display_name() -> str:
-    suffix = "".join(random.choices(string.ascii_letters + string.digits, k=6))  # noqa: S311
+    suffix = "".join(secrets.choice(_DISPLAY_NAME_ALPHABET) for _ in range(6))
     return f"Reader_{suffix}"
 
 
@@ -45,7 +47,7 @@ def _set_refresh_cookie(response: Response, refresh_token: str, settings: Settin
         secure=secure,
         samesite="lax",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-        path="/api/v1/auth",
+        path=_AUTH_PREFIX,
     )
 
 
@@ -56,7 +58,7 @@ def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
         httponly=True,
         secure=secure,
         samesite="lax",
-        path="/api/v1/auth",
+        path=_AUTH_PREFIX,
     )
 
 
