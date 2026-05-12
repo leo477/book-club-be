@@ -30,7 +30,7 @@ class ChatRepository:
 
     async def get_message_timestamp(self, message_id: uuid.UUID) -> datetime | None:
         result = await self.db.execute(select(ChatMessage.timestamp).where(ChatMessage.id == message_id))
-        return result.scalar_one_or_none()  # type: ignore[return-value]
+        return result.scalar_one_or_none()
 
     async def list_messages(
         self,
@@ -47,4 +47,4 @@ class ChatRepository:
             query = query.where(ChatMessage.timestamp < before_ts)
         query = query.order_by(ChatMessage.timestamp.desc()).limit(limit)
         result = await self.db.execute(query)
-        return list(result.all())
+        return list(result.tuples().all())

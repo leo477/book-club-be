@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/geocode", tags=["geocode"])
 @router.get("/autocomplete", response_model=list[GeocodeSuggestion])
 async def autocomplete(
     settings: Annotated[Settings, Depends(get_settings_dep)],
-    redis: Annotated[aioredis.Redis, Depends(get_redis)],  # type: ignore[type-arg]
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
     q: Annotated[str, Query(min_length=2, max_length=200)],
     lang: str = "uk",
     limit: Annotated[int, Query(ge=1, le=10)] = 5,

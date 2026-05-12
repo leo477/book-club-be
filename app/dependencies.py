@@ -117,7 +117,7 @@ async def get_optional_user(
         return None
 
 
-async def get_redis(request: Request) -> aioredis.Redis:  # type: ignore[type-arg]
+async def get_redis(request: Request) -> aioredis.Redis:
     """Return a Redis client backed by the shared connection pool from app state."""
     pool = request.app.state.redis_pool
     return aioredis.Redis(connection_pool=pool)

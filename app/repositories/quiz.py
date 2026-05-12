@@ -67,4 +67,4 @@ class QuizRepository:
             .where(QuizAttempt.quiz_id == quiz_id)
             .order_by(QuizAttempt.score.desc(), QuizAttempt.created_at.asc())
         )
-        return list(result.all())
+        return list(result.tuples().all())
