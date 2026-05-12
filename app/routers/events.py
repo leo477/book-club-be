@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_event_club_organizer
@@ -13,12 +14,12 @@ from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.schemas.events import EventResponse, RescheduleEventRequest
-from app.services.event_service import build_event_response, get_event_or_404
+from app.services.event_service import build_event_response, build_event_responses_bulk, get_event_or_404
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
 
-@router.get("")
+@router.get("", response_model=list[EventResponse])
 async def list_events(
     current_user: Annotated[User | None, Depends(get_optional_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -44,10 +45,10 @@ async def list_events(
     events = result.scalars().all()
 
     current_user_id = current_user.id if current_user else None
-    return [await build_event_response(e, db, current_user_id) for e in events]
+    return await build_event_responses_bulk(list(events), db, current_user_id)
 
 
-@router.get("/my")
+@router.get("/my", response_model=list[EventResponse])
 async def list_my_events(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -71,10 +72,10 @@ async def list_my_events(
     )
     result = await db.execute(stmt)
     events = result.scalars().all()
-    return [await build_event_response(e, db, current_user.id) for e in events]
+    return await build_event_responses_bulk(list(events), db, current_user.id)
 
 
-@router.get("/{event_id}")
+@router.get("/{event_id}", response_model=EventResponse)
 async def get_event(
     event_id: uuid.UUID,
     current_user: Annotated[User | None, Depends(get_optional_user)],
@@ -85,7 +86,7 @@ async def get_event(
     return await build_event_response(event, db, current_user_id)
 
 
-@router.post("/{event_id}/attend", status_code=status.HTTP_201_CREATED)
+@router.post("/{event_id}/attend", status_code=status.HTTP_201_CREATED, response_model=dict[str, int])
 async def attend_event(
     event_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -102,7 +103,12 @@ async def attend_event(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already attending")
 
     db.add(EventAttendee(event_id=event_id, user_id=current_user.id))
-    await db.commit()
+    # M-5: guard against TOCTOU race — concurrent attend between SELECT and INSERT
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already attending") from exc
 
     from sqlalchemy import func
 
@@ -125,7 +131,7 @@ async def cancel_attendance(
     await db.commit()
 
 
-@router.patch("/{event_id}/reschedule")
+@router.patch("/{event_id}/reschedule", response_model=EventResponse)
 async def reschedule_event(
     event_id: uuid.UUID,
     body: RescheduleEventRequest,
@@ -145,7 +151,7 @@ async def reschedule_event(
     return await build_event_response(event, db, current_user.id)
 
 
-@router.patch("/{event_id}/cancel")
+@router.patch("/{event_id}/cancel", response_model=EventResponse)
 async def cancel_event(
     event_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -11,7 +13,7 @@ class ChatMessageResponse(BaseModel):
     senderId: str
     senderName: str
     text: str
-    timestamp: str  # ISO
+    timestamp: datetime | str
 
 
 class SendMessageRequest(BaseModel):

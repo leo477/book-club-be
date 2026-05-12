@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 import json
+from typing import TYPE_CHECKING
 
 import aiohttp
 import structlog
-from fastapi import HTTPException, status
+
+if TYPE_CHECKING:
+    import redis.asyncio as aioredis
 
 from app.config import Settings
 from app.schemas.geocode import GeocodeSuggestion
@@ -10,22 +15,30 @@ from app.schemas.geocode import GeocodeSuggestion
 logger = structlog.get_logger(__name__)
 
 
-async def photon_autocomplete(q: str, lang: str, limit: int, settings: Settings) -> list[GeocodeSuggestion]:
+async def photon_autocomplete(
+    q: str,
+    lang: str,
+    limit: int,
+    settings: Settings,
+    redis: aioredis.Redis | None = None,
+) -> list[GeocodeSuggestion]:
+    """Geocode via Photon/OSM with optional Redis cache.
+
+    Pass a ``redis`` client (from ``get_redis`` dependency) to enable caching.
+    The caller is responsible for managing the Redis connection lifecycle.
+    """
+    from fastapi import HTTPException, status
+
     cache_key = f"geocode:{q.strip().lower()}:{lang}:{limit}"
 
-    try:
-        import redis.asyncio as aioredis
-
-        redis = aioredis.from_url(settings.REDIS_URL)
+    if redis is not None:
         try:
             cached = await redis.get(cache_key)
             if cached:
                 data = json.loads(cached)
                 return [GeocodeSuggestion(**item) for item in data]
-        finally:
-            await redis.aclose()
-    except Exception as exc:
-        logger.warning("Redis cache read failed", error=str(exc))
+        except Exception as exc:
+            logger.warning("Redis cache read failed", error=str(exc))
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -54,15 +67,10 @@ async def photon_autocomplete(q: str, lang: str, limit: int, settings: Settings)
             )
         )
 
-    try:
-        import redis.asyncio as aioredis
-
-        redis = aioredis.from_url(settings.REDIS_URL)
+    if redis is not None:
         try:
             await redis.set(cache_key, json.dumps([s.model_dump() for s in suggestions]), ex=86400)
-        finally:
-            await redis.aclose()
-    except Exception as exc:
-        logger.warning("Redis cache write failed", error=str(exc))
+        except Exception as exc:
+            logger.warning("Redis cache write failed", error=str(exc))
 
     return suggestions

@@ -20,13 +20,13 @@ class EventResponse(BaseModel):
     organizerId: str
     title: str
     description: str | None
-    date: str
+    date: datetime | str
     city: str
     address: str | None
     lat: float | None
     lng: float | None
     status: str
-    cancelledAt: str | None
+    cancelledAt: datetime | str | None
     coverUrl: str | None = None
     bookTitle: str | None = None
     theme: str | None
