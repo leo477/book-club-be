@@ -83,6 +83,12 @@ class _FakeSupabaseAuth:
             raise AuthApiError("Invalid login credentials", 400, "invalid_grant")
         return self._build_response(entry[1])
 
+    async def refresh_session(self, refresh_token: str) -> MagicMock:
+        if refresh_token != "fake-refresh-token":
+            raise AuthApiError("Invalid refresh token", 400, "invalid_token")
+        uid = next(iter(self._users.values()))[1] if self._users else uuid.uuid4()
+        return self._build_response(uid)
+
     def _build_response(self, uid: uuid.UUID) -> MagicMock:
         mock_user = MagicMock()
         mock_user.id = uid

@@ -1,7 +1,9 @@
+import secrets
+import string
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import EmailStr
 from sqlalchemy import select
@@ -10,19 +12,64 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.dependencies import get_current_user, get_db_dep, get_settings_dep
 from app.models.user import User
-from app.schemas.auth import AuthResponse, UserProfileResponse
-from app.services.auth_service import get_supabase_client, supabase_sign_in, supabase_sign_up
+from app.schemas.auth import AuthResponse, RefreshResponse, UserProfileResponse
+from app.services.auth_service import get_supabase_client, supabase_refresh, supabase_sign_in, supabase_sign_up
 
-router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+_AUTH_PREFIX = "/api/v1/auth"
+router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
+
+_REFRESH_COOKIE = "refresh_token"
+_DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
+
+
+def _looks_like_email(text: str) -> bool:
+    local, sep, domain = text.partition("@")
+    return bool(sep and local and "." in domain)
+
+
+def _random_display_name() -> str:
+    suffix = "".join(secrets.choice(_DISPLAY_NAME_ALPHABET) for _ in range(6))
+    return f"Reader_{suffix}"
+
+
+def _sanitize_display_name(display_name: str) -> str:
+    if not display_name or _looks_like_email(display_name.strip()):
+        return _random_display_name()
+    return display_name
+
+
+def _set_refresh_cookie(response: Response, refresh_token: str, settings: Settings) -> None:
+    secure = settings.ENV == "production"
+    response.set_cookie(
+        key=_REFRESH_COOKIE,
+        value=refresh_token,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path=_AUTH_PREFIX,
+    )
+
+
+def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
+    secure = settings.ENV == "production"
+    response.delete_cookie(
+        key=_REFRESH_COOKIE,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path=_AUTH_PREFIX,
+    )
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=None)
 async def register(
+    response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
     email: Annotated[EmailStr, Body()],
     password: Annotated[str, Body(min_length=8)],
-    displayName: Annotated[str, Body(min_length=1, max_length=100)],  # noqa: N803
+    display_name: Annotated[str, Body(alias="displayName", min_length=1, max_length=100)],
     role: Annotated[Literal["user", "organizer"], Body()] = "user",
 ) -> AuthResponse | JSONResponse:
     result = await db.execute(select(User).where(User.email == email))
@@ -32,8 +79,14 @@ async def register(
             detail={"error": "Email already exists", "code": "EMAIL_EXISTS"},
         )
 
+    if _looks_like_email(display_name.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "Display name cannot be an email address", "code": "INVALID_DISPLAY_NAME"},
+        )
+    safe_name = display_name
     client = await get_supabase_client(settings)
-    auth_response = await supabase_sign_up(client, str(email), password, displayName, role)
+    auth_response = await supabase_sign_up(client, str(email), password, safe_name, role)
 
     if auth_response.user is None:
         raise HTTPException(
@@ -47,7 +100,7 @@ async def register(
         id=uuid.uuid4(),
         supabase_user_id=supabase_user_id,
         email=str(email),
-        display_name=displayName,
+        display_name=safe_name,
         role=role,
         socials_public=False,
     )
@@ -62,15 +115,16 @@ async def register(
             content={"message": "Check your email to confirm registration", "code": "EMAIL_CONFIRMATION_REQUIRED"},
         )
 
+    _set_refresh_cookie(response, auth_response.session.refresh_token, settings)
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
-        refreshToken=auth_response.session.refresh_token,
     )
 
 
 @router.post("/login", status_code=status.HTTP_200_OK)
 async def login(
+    response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
     email: Annotated[EmailStr, Body()],
@@ -91,13 +145,14 @@ async def login(
     user = result.scalar_one_or_none()
     if not user:
         sb_user = auth_response.user
-        display_name = (sb_user.user_metadata or {}).get("display_name", sb_user.email or "")
+        raw_name = (sb_user.user_metadata or {}).get("display_name", sb_user.email or "")
+        display_name = _sanitize_display_name(str(raw_name))
         role = (sb_user.user_metadata or {}).get("role", "user")
         user = User(
             id=uuid.uuid4(),
             supabase_user_id=supabase_user_id,
             email=str(email),
-            display_name=str(display_name),
+            display_name=display_name,
             role=str(role),
             socials_public=False,
         )
@@ -106,17 +161,45 @@ async def login(
         await db.commit()
         await db.refresh(user)
 
+    _set_refresh_cookie(response, auth_response.session.refresh_token, settings)
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
-        refreshToken=auth_response.session.refresh_token,
+    )
+
+
+@router.post("/refresh", status_code=status.HTTP_200_OK)
+async def refresh_token(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    refresh_token_cookie: Annotated[str | None, Cookie(alias=_REFRESH_COOKIE)] = None,
+) -> RefreshResponse:
+    token = refresh_token_cookie
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Refresh token missing", "code": "MISSING_REFRESH_TOKEN"},
+        )
+    client = await get_supabase_client(settings)
+    auth_response = await supabase_refresh(client, token)
+    if auth_response.session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired refresh token", "code": "INVALID_REFRESH_TOKEN"},
+        )
+    _set_refresh_cookie(response, auth_response.session.refresh_token, settings)
+    return RefreshResponse(
+        accessToken=auth_response.session.access_token,
     )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
+    response: Response,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> Response:
+    _clear_refresh_cookie(response, settings)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -91,7 +91,7 @@ async def test_autocomplete_redis_unavailable_returns_results(async_client: Asyn
 
 
 @pytest.mark.asyncio
-async def test_autocomplete_photon_error_returns_502(async_client: AsyncClient) -> None:
+async def test_autocomplete_photon_error_returns_empty(async_client: AsyncClient) -> None:
     mock_redis_from_url = _make_redis_mock(cached_value=None)
 
     mock_ctx_response = AsyncMock()
@@ -111,4 +111,5 @@ async def test_autocomplete_photon_error_returns_502(async_client: AsyncClient) 
     ):
         response = await async_client.get("/api/v1/geocode/autocomplete?q=Kyiv")
 
-    assert response.status_code == 502
+    assert response.status_code == 200
+    assert response.json() == []
