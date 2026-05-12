@@ -43,9 +43,10 @@ class CreateClubRequest(BaseModel):
 
 
 class UpdateClubRequest(BaseModel):
-    name: str
+    # M-8: all fields optional so exclude_unset=True gives true PATCH semantics
+    name: str | None = None
     description: str | None = None
-    isPublic: bool = True
+    isPublic: bool | None = None
     city: str | None = None
     coverUrl: str | None = None
 

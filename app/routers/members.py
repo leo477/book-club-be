@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -77,12 +78,23 @@ async def ban_member(
     if not user_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    # M-7: compute expires_at from duration; None = permanent ban
+    duration_days_map = {"1": 1, "3": 3, "5": 5}
+    duration_str = str(body.duration)
+    now_utc = datetime.now(UTC)
+    expires_at = (
+        now_utc + timedelta(days=duration_days_map[duration_str])
+        if duration_str in duration_days_map
+        else None  # "permanent"
+    )
+
     ban = ClubBan(
         id=uuid.uuid4(),
         club_id=club_id,
         user_id=user_id,
         banned_by=current_user.id,
-        duration=str(body.duration),
+        duration=duration_str,
+        expires_at=expires_at,
     )
     db.add(ban)
 

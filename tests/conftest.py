@@ -200,6 +200,19 @@ async def async_client(override_get_db):
 
 
 @pytest_asyncio.fixture
+async def db_session(test_engine):
+    TestSessionLocal = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+        autocommit=False,
+    )
+    async with TestSessionLocal() as session:
+        yield session
+
+
+@pytest_asyncio.fixture
 async def register_user(async_client):
     async def _register(email="test@example.com", password="password123", displayName="Test User", role="user"):
         return await async_client.post(
