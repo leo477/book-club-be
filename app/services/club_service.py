@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.exceptions import AppError
 from app.models.club import Club
 from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
@@ -78,7 +78,7 @@ async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
     result = await db.execute(select(Club).where(Club.id == club_id))
     club = result.scalar_one_or_none()
     if not club:
-        raise HTTPException(status_code=404, detail="Club not found")
+        raise AppError(404, "Club not found", "CLUB_NOT_FOUND")
     return club
 
 

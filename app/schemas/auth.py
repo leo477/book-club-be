@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -22,7 +23,7 @@ class UserProfileResponse(BaseModel):
     displayName: str
     role: str
     avatarUrl: str | None = None
-    createdAt: str
+    createdAt: datetime | str
     socialsPublic: bool
     socials: dict[str, str | None]
 

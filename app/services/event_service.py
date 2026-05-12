@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.exceptions import AppError
 from app.models.event import Event, EventAttendee
 from app.schemas.events import AfterMeetingVenueSchema, EventResponse
 
@@ -107,7 +107,7 @@ async def get_event_or_404(event_id: uuid.UUID, db: AsyncSession) -> Event:
     result = await db.execute(select(Event).where(Event.id == event_id))
     event = result.scalar_one_or_none()
     if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
     return event
 
 

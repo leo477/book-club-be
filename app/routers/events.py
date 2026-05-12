@@ -19,7 +19,7 @@ from app.services.event_service import build_event_response, build_event_respons
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
 
-@router.get("")
+@router.get("", response_model=list[EventResponse])
 async def list_events(
     current_user: Annotated[User | None, Depends(get_optional_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -48,7 +48,7 @@ async def list_events(
     return await build_event_responses_bulk(list(events), db, current_user_id)
 
 
-@router.get("/my")
+@router.get("/my", response_model=list[EventResponse])
 async def list_my_events(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -75,7 +75,7 @@ async def list_my_events(
     return await build_event_responses_bulk(list(events), db, current_user.id)
 
 
-@router.get("/{event_id}")
+@router.get("/{event_id}", response_model=EventResponse)
 async def get_event(
     event_id: uuid.UUID,
     current_user: Annotated[User | None, Depends(get_optional_user)],
@@ -86,7 +86,7 @@ async def get_event(
     return await build_event_response(event, db, current_user_id)
 
 
-@router.post("/{event_id}/attend", status_code=status.HTTP_201_CREATED)
+@router.post("/{event_id}/attend", status_code=status.HTTP_201_CREATED, response_model=dict[str, int])
 async def attend_event(
     event_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -131,7 +131,7 @@ async def cancel_attendance(
     await db.commit()
 
 
-@router.patch("/{event_id}/reschedule")
+@router.patch("/{event_id}/reschedule", response_model=EventResponse)
 async def reschedule_event(
     event_id: uuid.UUID,
     body: RescheduleEventRequest,
@@ -151,7 +151,7 @@ async def reschedule_event(
     return await build_event_response(event, db, current_user.id)
 
 
-@router.patch("/{event_id}/cancel")
+@router.patch("/{event_id}/cancel", response_model=EventResponse)
 async def cancel_event(
     event_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],

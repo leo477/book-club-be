@@ -38,6 +38,8 @@ _API_DESCRIPTION = (
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+    import redis.asyncio as aioredis
+
     settings = get_settings()
     if settings.SENTRY_DSN:
         sentry_sdk.init(
@@ -47,8 +49,20 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             traces_sample_rate=0.1,
         )
         logger.info("Sentry initialized", env=settings.ENV)
+
+    redis_pool = aioredis.ConnectionPool.from_url(
+        settings.REDIS_URL,
+        max_connections=10,
+        decode_responses=False,
+    )
+    _app.state.redis_pool = redis_pool
+    logger.info("Redis pool created", url=settings.REDIS_URL)
+
     logger.info("Application starting", env=settings.ENV, version="1.0.0")
     yield
+
+    await redis_pool.aclose()
+    logger.info("Redis pool closed")
     logger.info("Application shutting down")
 
 
