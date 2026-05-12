@@ -9,6 +9,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.event import Event, EventAttendee
 from app.schemas.events import AfterMeetingVenueSchema, EventResponse
 
+
+def _assemble_event_response(
+    event: Event,
+    attendee_count: int,
+    is_attending: bool,
+    club_name: str,
+    organizer_id: uuid.UUID | None,
+) -> EventResponse:
+    return EventResponse(
+        id=str(event.id),
+        clubId=str(event.club_id),
+        clubName=club_name,
+        organizerId=str(organizer_id) if organizer_id else "",
+        title=event.title,
+        description=event.description,
+        date=event.date.isoformat() if event.date else "",
+        city=event.city,
+        address=event.address,
+        lat=event.lat,
+        lng=event.lng,
+        status=event.status,
+        cancelledAt=event.cancelled_at.isoformat() if event.cancelled_at else None,
+        coverUrl=event.cover_url,
+        bookTitle=event.book_title,
+        theme=event.theme,
+        tags=event.tags or [],
+        durationMinutes=event.duration_minutes,
+        afterMeetingVenue=(
+            AfterMeetingVenueSchema(**event.after_meeting_venue) if event.after_meeting_venue else None
+        ),
+        attendeeCount=attendee_count,
+        isAttending=is_attending,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bulk helper (avoids N+1 for event list endpoints)
 # ---------------------------------------------------------------------------
@@ -58,38 +93,16 @@ async def build_event_responses_bulk(
             club_name_map[club.id] = club.name
             organizer_id_map[club.id] = club.organizer_id
 
-    responses: list[EventResponse] = []
-    for event in events:
-        eff_club_name = club_name or club_name_map.get(event.club_id, "")
-        eff_organizer_id = organizer_id or organizer_id_map.get(event.club_id)
-        responses.append(
-            EventResponse(
-                id=str(event.id),
-                clubId=str(event.club_id),
-                clubName=eff_club_name,
-                organizerId=str(eff_organizer_id) if eff_organizer_id else "",
-                title=event.title,
-                description=event.description,
-                date=event.date.isoformat() if event.date else "",
-                city=event.city,
-                address=event.address,
-                lat=event.lat,
-                lng=event.lng,
-                status=event.status,
-                cancelledAt=event.cancelled_at.isoformat() if event.cancelled_at else None,
-                coverUrl=event.cover_url,
-                bookTitle=event.book_title,
-                theme=event.theme,
-                tags=event.tags or [],
-                durationMinutes=event.duration_minutes,
-                afterMeetingVenue=(
-                    AfterMeetingVenueSchema(**event.after_meeting_venue) if event.after_meeting_venue else None
-                ),
-                attendeeCount=attendee_counts.get(event.id, 0),
-                isAttending=event.id in attending_set,
-            )
+    return [
+        _assemble_event_response(
+            event,
+            attendee_counts.get(event.id, 0),
+            event.id in attending_set,
+            club_name or club_name_map.get(event.club_id, ""),
+            organizer_id or organizer_id_map.get(event.club_id),
         )
-    return responses
+        for event in events
+    ]
 
 
 async def get_event_or_404(event_id: uuid.UUID, db: AsyncSession) -> Event:
@@ -132,26 +145,4 @@ async def build_event_response(
             club_name = club_name or club.name
             organizer_id = organizer_id or club.organizer_id
 
-    return EventResponse(
-        id=str(event.id),
-        clubId=str(event.club_id),
-        clubName=club_name or "",
-        organizerId=str(organizer_id) if organizer_id else "",
-        title=event.title,
-        description=event.description,
-        date=event.date.isoformat() if event.date else "",
-        city=event.city,
-        address=event.address,
-        lat=event.lat,
-        lng=event.lng,
-        status=event.status,
-        cancelledAt=event.cancelled_at.isoformat() if event.cancelled_at else None,
-        coverUrl=event.cover_url,
-        bookTitle=event.book_title,
-        theme=event.theme,
-        tags=event.tags or [],
-        durationMinutes=event.duration_minutes,
-        afterMeetingVenue=AfterMeetingVenueSchema(**event.after_meeting_venue) if event.after_meeting_venue else None,
-        attendeeCount=attendee_count,
-        isAttending=is_attending,
-    )
+    return _assemble_event_response(event, attendee_count, is_attending, club_name or "", organizer_id)

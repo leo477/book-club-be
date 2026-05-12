@@ -14,9 +14,34 @@ from app.schemas.clubs import ClubResponse
 from app.schemas.events import AfterMeetingVenueSchema
 from app.schemas.users import UserStatsResponse
 
-# ---------------------------------------------------------------------------
-# Helpers for batch club responses (avoids N+1 queries in list endpoints)
-# ---------------------------------------------------------------------------
+
+def _assemble_club_response(club: Club, member_count: int, previews: list[str]) -> ClubResponse:
+    after_meeting_venue = None
+    if club.after_meeting_venue:
+        after_meeting_venue = AfterMeetingVenueSchema(**club.after_meeting_venue)
+    return ClubResponse(
+        id=str(club.id),
+        name=club.name,
+        description=club.description,
+        coverUrl=club.cover_url,
+        organizerId=str(club.organizer_id),
+        isPublic=club.is_public,
+        memberCount=member_count,
+        memberPreviews=previews,
+        createdAt=club.created_at.isoformat() if club.created_at else "",
+        status=club.status,
+        city=club.city,
+        nextMeetingDate=club.next_meeting_date.isoformat() if club.next_meeting_date else None,
+        address=club.address,
+        lat=club.lat,
+        lng=club.lng,
+        theme=club.theme,
+        currentBook=club.current_book,
+        tags=club.tags or [],
+        meetingDurationMinutes=club.meeting_duration_minutes,
+        afterMeetingVenue=after_meeting_venue,
+        cancelledAt=club.cancelled_at.isoformat() if club.cancelled_at else None,
+    )
 
 
 async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list[ClubResponse]:
@@ -26,7 +51,6 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
 
     club_ids = [c.id for c in clubs]
 
-    # One query: member counts per club
     counts_result = await db.execute(
         select(ClubMember.club_id, func.count().label("cnt"))
         .where(ClubMember.club_id.in_(club_ids))
@@ -34,7 +58,6 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
     )
     member_counts: dict[uuid.UUID, int] = {row.club_id: row.cnt for row in counts_result}
 
-    # One query: up to 5 avatar previews per club
     previews_result = await db.execute(
         select(ClubMember.club_id, User.avatar_url)
         .join(User, ClubMember.user_id == User.id)
@@ -46,38 +69,10 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
         if len(lst) < 5:
             lst.append(row.avatar_url)
 
-    responses: list[ClubResponse] = []
-    for club in clubs:
-        after_meeting_venue = None
-        if club.after_meeting_venue:
-            after_meeting_venue = AfterMeetingVenueSchema(**club.after_meeting_venue)
-
-        responses.append(
-            ClubResponse(
-                id=str(club.id),
-                name=club.name,
-                description=club.description,
-                coverUrl=club.cover_url,
-                organizerId=str(club.organizer_id),
-                isPublic=club.is_public,
-                memberCount=member_counts.get(club.id, 0),
-                memberPreviews=previews_map.get(club.id, []),
-                createdAt=club.created_at.isoformat() if club.created_at else "",
-                status=club.status,
-                city=club.city,
-                nextMeetingDate=club.next_meeting_date.isoformat() if club.next_meeting_date else None,
-                address=club.address,
-                lat=club.lat,
-                lng=club.lng,
-                theme=club.theme,
-                currentBook=club.current_book,
-                tags=club.tags or [],
-                meetingDurationMinutes=club.meeting_duration_minutes,
-                afterMeetingVenue=after_meeting_venue,
-                cancelledAt=club.cancelled_at.isoformat() if club.cancelled_at else None,
-            )
-        )
-    return responses
+    return [
+        _assemble_club_response(club, member_counts.get(club.id, 0), previews_map.get(club.id, []))
+        for club in clubs
+    ]
 
 
 async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
@@ -118,31 +113,4 @@ async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
         .limit(5)
     )
     previews = [r for r in members_result.scalars() if r]
-
-    after_meeting_venue = None
-    if club.after_meeting_venue:
-        after_meeting_venue = AfterMeetingVenueSchema(**club.after_meeting_venue)
-
-    return ClubResponse(
-        id=str(club.id),
-        name=club.name,
-        description=club.description,
-        coverUrl=club.cover_url,
-        organizerId=str(club.organizer_id),
-        isPublic=club.is_public,
-        memberCount=member_count,
-        memberPreviews=previews,
-        createdAt=club.created_at.isoformat() if club.created_at else "",
-        status=club.status,
-        city=club.city,
-        nextMeetingDate=club.next_meeting_date.isoformat() if club.next_meeting_date else None,
-        address=club.address,
-        lat=club.lat,
-        lng=club.lng,
-        theme=club.theme,
-        currentBook=club.current_book,
-        tags=club.tags or [],
-        meetingDurationMinutes=club.meeting_duration_minutes,
-        afterMeetingVenue=after_meeting_venue,
-        cancelledAt=club.cancelled_at.isoformat() if club.cancelled_at else None,
-    )
+    return _assemble_club_response(club, member_count, previews)
