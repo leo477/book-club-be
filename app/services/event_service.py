@@ -36,9 +36,7 @@ def _assemble_event_response(
         theme=event.theme,
         tags=event.tags or [],
         durationMinutes=event.duration_minutes,
-        afterMeetingVenue=(
-            AfterMeetingVenueSchema(**event.after_meeting_venue) if event.after_meeting_venue else None
-        ),
+        afterMeetingVenue=(AfterMeetingVenueSchema(**event.after_meeting_venue) if event.after_meeting_venue else None),
         attendeeCount=attendee_count,
         isAttending=is_attending,
     )

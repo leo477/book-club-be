@@ -70,8 +70,7 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
             lst.append(row.avatar_url)
 
     return [
-        _assemble_club_response(club, member_counts.get(club.id, 0), previews_map.get(club.id, []))
-        for club in clubs
+        _assemble_club_response(club, member_counts.get(club.id, 0), previews_map.get(club.id, [])) for club in clubs
     ]
 
 
