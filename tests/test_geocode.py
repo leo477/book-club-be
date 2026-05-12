@@ -33,25 +33,11 @@ def _make_aiohttp_mock(json_data: dict) -> MagicMock:
     return mock_ctx_session
 
 
-def _make_redis_mock(cached_value=None) -> MagicMock:
-    mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(return_value=cached_value)
-    mock_redis.set = AsyncMock()
-    mock_redis.aclose = AsyncMock()
-
-    mock_from_url = MagicMock(return_value=mock_redis)
-    return mock_from_url
-
-
 @pytest.mark.asyncio
 async def test_autocomplete_returns_suggestions(async_client: AsyncClient) -> None:
-    mock_redis_from_url = _make_redis_mock(cached_value=None)
     mock_aiohttp_session = _make_aiohttp_mock(FAKE_PHOTON_RESPONSE)
 
-    with (
-        patch("redis.asyncio.from_url", mock_redis_from_url),
-        patch("aiohttp.ClientSession", return_value=mock_aiohttp_session),
-    ):
+    with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
         response = await async_client.get("/api/v1/geocode/autocomplete?q=Kyiv")
 
     assert response.status_code == 200
@@ -71,18 +57,35 @@ async def test_autocomplete_q_too_short(async_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_autocomplete_redis_unavailable_returns_results(async_client: AsyncClient) -> None:
-    mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(side_effect=ConnectionError("Redis unavailable"))
-    mock_redis.aclose = AsyncMock()
-    mock_redis_from_url = MagicMock(return_value=mock_redis)
+    """When Redis raises an error, geocoding should still work via Photon."""
+    from app.dependencies import get_redis
+    from app.main import app
+
+    mock_redis_failing = AsyncMock()
+    mock_redis_failing.get = AsyncMock(side_effect=ConnectionError("Redis unavailable"))
+    mock_redis_failing.set = AsyncMock()
+
+    async def _failing_redis():
+        return mock_redis_failing
+
+    app.dependency_overrides[get_redis] = _failing_redis
 
     mock_aiohttp_session = _make_aiohttp_mock(FAKE_PHOTON_RESPONSE)
 
-    with (
-        patch("redis.asyncio.from_url", mock_redis_from_url),
-        patch("aiohttp.ClientSession", return_value=mock_aiohttp_session),
-    ):
-        response = await async_client.get("/api/v1/geocode/autocomplete?q=Kyiv")
+    try:
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            response = await async_client.get("/api/v1/geocode/autocomplete?q=Kyiv")
+    finally:
+        from unittest.mock import AsyncMock as _AsyncMock
+
+        _mock = _AsyncMock()
+        _mock.get = _AsyncMock(return_value=None)
+        _mock.set = _AsyncMock()
+
+        async def _default_redis():
+            return _mock
+
+        app.dependency_overrides[get_redis] = _default_redis
 
     assert response.status_code == 200
     data = response.json()
@@ -92,8 +95,6 @@ async def test_autocomplete_redis_unavailable_returns_results(async_client: Asyn
 
 @pytest.mark.asyncio
 async def test_autocomplete_photon_error_returns_502(async_client: AsyncClient) -> None:
-    mock_redis_from_url = _make_redis_mock(cached_value=None)
-
     mock_ctx_response = AsyncMock()
     mock_ctx_response.__aenter__ = AsyncMock(side_effect=aiohttp.ClientError("connection failed"))
     mock_ctx_response.__aexit__ = AsyncMock(return_value=False)
@@ -105,10 +106,7 @@ async def test_autocomplete_photon_error_returns_502(async_client: AsyncClient) 
     mock_ctx_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx_session.__aexit__ = AsyncMock(return_value=False)
 
-    with (
-        patch("redis.asyncio.from_url", mock_redis_from_url),
-        patch("aiohttp.ClientSession", return_value=mock_ctx_session),
-    ):
+    with patch("aiohttp.ClientSession", return_value=mock_ctx_session):
         response = await async_client.get("/api/v1/geocode/autocomplete?q=Kyiv")
 
     assert response.status_code == 502

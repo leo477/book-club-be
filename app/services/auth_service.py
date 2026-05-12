@@ -14,10 +14,15 @@ from app.config import Settings
 logger = structlog.get_logger()
 
 _jwks_clients: dict[str, PyJWKClient] = {}
+# M-9: cache async Supabase client by URL to avoid re-creating on every request
+_supabase_clients: dict[str, AsyncClient] = {}
 
 
 async def get_supabase_client(settings: Settings) -> AsyncClient:
-    return await acreate_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+    key = settings.SUPABASE_URL
+    if key not in _supabase_clients:
+        _supabase_clients[key] = await acreate_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+    return _supabase_clients[key]
 
 
 async def supabase_sign_up(
@@ -45,6 +50,16 @@ async def supabase_sign_up(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": str(exc), "code": "SUPABASE_AUTH_ERROR"},
+        ) from exc
+
+
+async def supabase_refresh(client: AsyncClient, refresh_token: str) -> AuthResponse:
+    try:
+        return await client.auth.refresh_session(refresh_token)
+    except AuthApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired refresh token", "code": "INVALID_REFRESH_TOKEN"},
         ) from exc
 
 

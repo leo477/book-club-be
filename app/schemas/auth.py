@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -22,12 +23,11 @@ class UserProfileResponse(BaseModel):
     displayName: str
     role: str
     avatarUrl: str | None = None
-    createdAt: str
+    createdAt: datetime | str
     socialsPublic: bool
     socials: dict[str, str | None]
 
-    # noinspection PyMethodDecoratorAdapted
-    @model_validator(mode="before")
+    @model_validator(mode="before")  # NOSONAR
     @classmethod
     def build_from_orm(cls, v: Any) -> Any:
         if hasattr(v, "display_name"):
@@ -47,7 +47,10 @@ class UserProfileResponse(BaseModel):
 class AuthResponse(BaseModel):
     user: UserProfileResponse
     accessToken: str
-    refreshToken: str
+
+
+class RefreshResponse(BaseModel):
+    accessToken: str
 
 
 class TokenData(BaseModel):

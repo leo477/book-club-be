@@ -82,8 +82,8 @@ class QuizSessionResponse(BaseModel):
     quizId: str
     eventId: str | None
     startedBy: str
-    startedAt: str
-    closedAt: str | None
+    startedAt: datetime | str
+    closedAt: datetime | str | None
     participantCount: int
 
 

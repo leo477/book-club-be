@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 manager = ConnectionManager()
 
 
-@router.get("/clubs/{club_id}/chat/rooms", status_code=status.HTTP_200_OK)
+@router.get("/clubs/{club_id}/chat/rooms", response_model=list[ChatRoomResponse], status_code=status.HTTP_200_OK)
 async def get_chat_rooms(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -63,7 +63,7 @@ async def get_chat_rooms(
     return [ChatRoomResponse(id=str(r.id), name=r.name) for r in rooms]
 
 
-@router.post("/clubs/{club_id}/chat/rooms", status_code=status.HTTP_201_CREATED)
+@router.post("/clubs/{club_id}/chat/rooms", response_model=ChatRoomResponse, status_code=status.HTTP_201_CREATED)
 async def create_chat_room(
     club_id: uuid.UUID,
     body: CreateChatRoomRequest,
@@ -79,7 +79,7 @@ async def create_chat_room(
     return ChatRoomResponse(id=str(room.id), name=room.name)
 
 
-@router.get("/chat/rooms/{room_id}/messages", status_code=status.HTTP_200_OK)
+@router.get("/chat/rooms/{room_id}/messages", response_model=list[ChatMessageResponse], status_code=status.HTTP_200_OK)
 async def get_messages(
     room_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -135,7 +135,7 @@ async def get_messages(
     return messages
 
 
-@router.post("/chat/rooms/{room_id}/messages", status_code=status.HTTP_201_CREATED)
+@router.post("/chat/rooms/{room_id}/messages", response_model=ChatMessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(
     room_id: uuid.UUID,
     body: SendMessageRequest,

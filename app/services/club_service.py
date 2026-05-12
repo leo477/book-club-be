@@ -47,7 +47,7 @@ async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
     result = await db.execute(select(Club).where(Club.id == club_id))
     club = result.scalar_one_or_none()
     if not club:
-        raise HTTPException(status_code=404, detail="Club not found")
+        raise AppError(404, "Club not found", "CLUB_NOT_FOUND")
     return club
 
 
@@ -81,31 +81,4 @@ async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
         .limit(5)
     )
     previews = [r for r in members_result.scalars() if r]
-
-    after_meeting_venue = None
-    if club.after_meeting_venue:
-        after_meeting_venue = AfterMeetingVenueSchema(**club.after_meeting_venue)
-
-    return ClubResponse(
-        id=str(club.id),
-        name=club.name,
-        description=club.description,
-        coverUrl=club.cover_url,
-        organizerId=str(club.organizer_id),
-        isPublic=club.is_public,
-        memberCount=member_count,
-        memberPreviews=previews,
-        createdAt=club.created_at.isoformat() if club.created_at else "",
-        status=club.status,
-        city=club.city,
-        nextMeetingDate=club.next_meeting_date.isoformat() if club.next_meeting_date else None,
-        address=club.address,
-        lat=club.lat,
-        lng=club.lng,
-        theme=club.theme,
-        currentBook=club.current_book,
-        tags=club.tags or [],
-        meetingDurationMinutes=club.meeting_duration_minutes,
-        afterMeetingVenue=after_meeting_venue,
-        cancelledAt=club.cancelled_at.isoformat() if club.cancelled_at else None,
-    )
+    return _assemble_club_response(club, member_count, previews)

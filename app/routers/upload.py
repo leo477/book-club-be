@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from typing import Annotated
 
@@ -41,7 +42,6 @@ async def upload_cover(
 
     from supabase import create_client
 
-    supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
     ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg"
     path = f"covers/{uuid.uuid4()}.{ext}"
     supabase.storage.from_("covers").upload(path, contents, {"content-type": file.content_type or "image/jpeg"})
