@@ -14,7 +14,6 @@ from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
 from app.models.user import User
 from app.schemas.clubs import ClubResponse
-from app.schemas.events import AfterMeetingVenueSchema
 from app.schemas.users import UserStatsResponse
 
 
@@ -98,28 +97,23 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
     )
     counts_map = dict(counts_result.all())
 
-    # 2. Отримуємо прев'ю аватарів (до 5 штук) для кожного клубу
-    # Використовуємо віконну функцію row_number, щоб обмежити кількість учасників на клуб
-    from sqlalchemy import over
-
     subq = (
         select(
             ClubMember.club_id,
             User.avatar_url,
-            func.row_number().over(
+            func.row_number()
+            .over(
                 partition_by=ClubMember.club_id,
-                order_by=ClubMember.joined_at.desc()  # або інше поле сортування
-            ).label("rn")
+                order_by=ClubMember.joined_at.desc(),
+            )
+            .label("rn"),
         )
         .join(User, User.id == ClubMember.user_id)
         .where(ClubMember.club_id.in_(club_ids))
         .subquery()
     )
 
-    previews_result = await db.execute(
-        select(subq.c.club_id, subq.c.avatar_url)
-        .where(subq.c.rn <= 5)
-    )
+    previews_result = await db.execute(select(subq.c.club_id, subq.c.avatar_url).where(subq.c.rn <= 5))
 
     previews_map = {}
     for row in previews_result.all():
@@ -132,13 +126,12 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
     for club in clubs:
         responses.append(
             _assemble_club_response(
-                club=club,
-                member_count=counts_map.get(club.id, 0),
-                previews=previews_map.get(club.id, [])
+                club=club, member_count=counts_map.get(club.id, 0), previews=previews_map.get(club.id, [])
             )
         )
 
     return responses
+
 
 def _assemble_club_response(club: Club, member_count: int, previews: list[str]) -> ClubResponse:
     return ClubResponse(
@@ -149,5 +142,5 @@ def _assemble_club_response(club: Club, member_count: int, previews: list[str]) 
         memberCount=member_count,
         memberPreviews=previews,
         # Наприклад, якщо є поле owner_id
-        ownerId=club.owner_id if hasattr(club, 'owner_id') else None,
+        ownerId=club.owner_id if hasattr(club, "owner_id") else None,
     )
