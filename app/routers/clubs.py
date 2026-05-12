@@ -17,7 +17,7 @@ from app.models.user import User
 from app.schemas.clubs import ClubResponse, CreateClubRequest, RescheduleMeetingRequest, UpdateClubRequest
 from app.schemas.events import CreateEventRequest, EventResponse
 from app.services.club_service import build_club_response,build_club_responses_bulk, delete_club_cascade, get_club_or_404
-from app.services.event_service import build_event_response
+from app.services.event_service import build_event_response, build_event_responses_bulk
 
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
