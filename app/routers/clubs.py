@@ -15,7 +15,7 @@ from app.models.club_member import ClubMember
 from app.models.user import User
 from app.schemas.clubs import ClubResponse, CreateClubRequest, RescheduleMeetingRequest, UpdateClubRequest
 from app.schemas.events import CreateEventRequest, EventResponse
-from app.services.club_service import build_club_response, get_club_or_404
+from app.services.club_service import build_club_response, delete_club_cascade, get_club_or_404
 from app.services.event_service import build_event_response
 
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
@@ -176,6 +176,16 @@ async def reschedule_club(
     return await build_club_response(club, db)
 
 
+@router.delete("/{club_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_club(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> None:
+    await require_club_organizer(club_id, current_user, db)
+    await delete_club_cascade(club_id, db)
+
+
 @router.post("/{club_id}/join")
 async def join_club(
     club_id: uuid.UUID,
@@ -236,7 +246,7 @@ async def list_club_events(
     club_id: uuid.UUID,
     current_user: Annotated[User | None, Depends(get_optional_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    upcoming_only: bool = False,
+    include_past: bool = False,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[EventResponse]:
@@ -245,7 +255,7 @@ async def list_club_events(
     club = await get_club_or_404(club_id, db)
     stmt = select(Event).where(Event.club_id == club_id)
 
-    if upcoming_only:
+    if not include_past:
         stmt = stmt.where(Event.date >= datetime.now(tz=UTC))
 
     stmt = stmt.order_by(Event.date.asc()).offset(skip).limit(limit)
