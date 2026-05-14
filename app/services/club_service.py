@@ -14,6 +14,7 @@ from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
 from app.models.user import User
 from app.schemas.clubs import ClubResponse
+from app.schemas.events import AfterMeetingVenueSchema
 from app.schemas.users import UserStatsResponse
 
 
@@ -95,7 +96,7 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
         .where(ClubMember.club_id.in_(club_ids))
         .group_by(ClubMember.club_id)
     )
-    counts_map = dict(counts_result.all())
+    counts_map: dict[uuid.UUID, int] = {row[0]: row[1] for row in counts_result.all()}
 
     subq = (
         select(
@@ -115,7 +116,7 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
 
     previews_result = await db.execute(select(subq.c.club_id, subq.c.avatar_url).where(subq.c.rn <= 5))
 
-    previews_map = {}
+    previews_map: dict[uuid.UUID, list[str]] = {}
     for row in previews_result.all():
         cid, url = row
         if url:
@@ -135,12 +136,27 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
 
 def _assemble_club_response(club: Club, member_count: int, previews: list[str]) -> ClubResponse:
     return ClubResponse(
-        id=club.id,
+        id=str(club.id),
         name=club.name,
         description=club.description,
-        # Додайте інші поля вашої моделі Club
+        coverUrl=club.cover_url,
+        organizerId=str(club.organizer_id),
+        isPublic=club.is_public,
         memberCount=member_count,
         memberPreviews=previews,
-        # Наприклад, якщо є поле owner_id
-        ownerId=club.owner_id if hasattr(club, "owner_id") else None,
+        createdAt=club.created_at,
+        status=club.status,
+        city=club.city,
+        nextMeetingDate=club.next_meeting_date,
+        address=club.address,
+        lat=club.lat,
+        lng=club.lng,
+        theme=club.theme,
+        currentBook=club.current_book,
+        tags=club.tags or [],
+        meetingDurationMinutes=club.meeting_duration_minutes,
+        afterMeetingVenue=AfterMeetingVenueSchema.model_validate(club.after_meeting_venue)
+        if club.after_meeting_venue
+        else None,
+        cancelledAt=club.cancelled_at,
     )
