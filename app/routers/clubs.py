@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
+from app.exceptions import AppError
 from app.models.club import Club
 from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
@@ -87,6 +88,10 @@ async def create_club(
 ) -> ClubResponse:
     if current_user.role != "organizer":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only organizers can create clubs")
+
+    existing = await db.execute(select(Club).where(Club.organizer_id == current_user.id).limit(1))
+    if existing.scalar_one_or_none() is not None:
+        raise AppError(409, "You already own a club", "ORGANIZER_ALREADY_HAS_CLUB")
 
     club = Club(
         id=uuid.uuid4(),
