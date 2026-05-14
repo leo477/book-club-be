@@ -72,19 +72,19 @@ async def test_autocomplete_redis_unavailable_returns_results(async_client: Asyn
 
     mock_aiohttp_session = _make_aiohttp_mock(FAKE_PHOTON_RESPONSE)
 
+    from unittest.mock import AsyncMock as _AsyncMock
+
+    _mock = _AsyncMock()
+    _mock.get = _AsyncMock(return_value=None)
+    _mock.set = _AsyncMock()
+
+    async def _default_redis():
+        return _mock
+
     try:
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
             response = await async_client.get("/api/v1/geocode/autocomplete?q=Kyiv")
     finally:
-        from unittest.mock import AsyncMock as _AsyncMock
-
-        _mock = _AsyncMock()
-        _mock.get = _AsyncMock(return_value=None)
-        _mock.set = _AsyncMock()
-
-        async def _default_redis():
-            return _mock
-
         app.dependency_overrides[get_redis] = _default_redis
 
     assert response.status_code == 200
