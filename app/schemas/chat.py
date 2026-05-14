@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class ChatRoomResponse(BaseModel):
     id: str
     name: str
+    eventId: str | None = None
 
 
 class ChatMessageResponse(BaseModel):

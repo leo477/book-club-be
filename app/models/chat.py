@@ -14,6 +14,9 @@ class ChatRoom(AppBase):
 
     club_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clubs.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=True, index=True
+    )
 
 
 class ChatMessage(AppBase):

@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.dependencies import get_current_user, get_db_dep, is_club_organizer, require_club_organizer
+from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
+from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.schemas.chat import (
     BanFromRoomRequest,
@@ -60,7 +62,7 @@ async def get_chat_rooms(
 ) -> list[ChatRoomResponse]:
     result = await db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id))
     rooms = result.scalars().all()
-    return [ChatRoomResponse(id=str(r.id), name=r.name) for r in rooms]
+    return [ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms]
 
 
 @router.post("/clubs/{club_id}/chat/rooms", response_model=ChatRoomResponse, status_code=status.HTTP_201_CREATED)
@@ -309,3 +311,57 @@ async def websocket_endpoint(
         logger.exception("Unexpected WebSocket error", exc_info=exc)
     finally:
         manager.disconnect(room_id, websocket)
+
+
+@router.post("/events/{event_id}/chat/room", response_model=ChatRoomResponse, status_code=status.HTTP_201_CREATED)
+async def create_event_chat_room(
+    event_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ChatRoomResponse:
+    event_result = await db.execute(select(Event).where(Event.id == event_id))
+    event = event_result.scalar_one_or_none()
+    if event is None:
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
+
+    await require_club_organizer(event.club_id, current_user, db)
+
+    existing_result = await db.execute(select(ChatRoom).where(ChatRoom.event_id == event_id))
+    if existing_result.scalar_one_or_none() is not None:
+        raise AppError(409, "Event chat room already exists", "EVENT_CHAT_ALREADY_EXISTS")
+
+    room = ChatRoom(id=uuid.uuid4(), club_id=event.club_id, event_id=event_id, name=event.title + " · Chat")
+    db.add(room)
+    await db.commit()
+    await db.refresh(room)
+    return ChatRoomResponse(id=str(room.id), name=room.name, eventId=str(room.event_id) if room.event_id else None)
+
+
+@router.get("/events/{event_id}/chat/room", response_model=ChatRoomResponse, status_code=status.HTTP_200_OK)
+async def get_event_chat_room(
+    event_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ChatRoomResponse:
+    event_result = await db.execute(select(Event).where(Event.id == event_id))
+    event = event_result.scalar_one_or_none()
+    if event is None:
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
+
+    organizer = await is_club_organizer(event.club_id, current_user.id, db)
+    if not organizer:
+        attendee_result = await db.execute(
+            select(EventAttendee).where(
+                EventAttendee.event_id == event_id,
+                EventAttendee.user_id == current_user.id,
+            )
+        )
+        if attendee_result.scalar_one_or_none() is None:
+            raise AppError(403, "Access denied", "FORBIDDEN")
+
+    room_result = await db.execute(select(ChatRoom).where(ChatRoom.event_id == event_id))
+    room = room_result.scalar_one_or_none()
+    if room is None:
+        raise AppError(404, "Event chat not found", "EVENT_CHAT_NOT_FOUND")
+
+    return ChatRoomResponse(id=str(room.id), name=room.name, eventId=str(room.event_id) if room.event_id else None)

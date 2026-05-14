@@ -505,3 +505,26 @@ async def test_delete_club(async_client, register_user, auth_headers):
 
     get_resp = await async_client.get(f"/api/v1/clubs/{club_id}")
     assert get_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_second_club_returns_409(async_client, register_user, auth_headers):
+    """Organizer cannot create a second club — must receive 409 with ORGANIZER_ALREADY_HAS_CLUB."""
+    await register_user(email="second_club_org@example.com")
+    headers = await auth_headers(email="second_club_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+
+    first_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "First Club", "description": "Desc", "city": "Kyiv"},
+    )
+    assert first_resp.status_code == 201
+
+    second_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "Second Club", "description": "Desc", "city": "Lviv"},
+    )
+    assert second_resp.status_code == 409
+    assert second_resp.json()["detail"]["code"] == "ORGANIZER_ALREADY_HAS_CLUB"
