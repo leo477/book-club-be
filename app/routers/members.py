@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
+from app.exceptions import AppError
 from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.user import User
@@ -17,7 +19,7 @@ from app.schemas.clubs import BanRequest, BanResponse, MemberResponse
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
 
-@router.get("/members")
+@router.get("/members", response_model=list[MemberResponse])
 async def list_members(
     club_id: uuid.UUID,
     _current_user: Annotated[User | None, Depends(get_optional_user)],
@@ -57,13 +59,13 @@ async def remove_member(
         select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id))
     )
     if not existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+        raise AppError(404, "Member not found", "MEMBER_NOT_FOUND")
 
     await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id)))
     await db.commit()
 
 
-@router.post("/members/{user_id}/ban", status_code=status.HTTP_201_CREATED)
+@router.post("/members/{user_id}/ban", response_model=BanResponse, status_code=status.HTTP_201_CREATED)
 async def ban_member(
     club_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -75,14 +77,25 @@ async def ban_member(
 
     user_result = await db.execute(select(User).where(User.id == user_id))
     if not user_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise AppError(404, "User not found", "USER_NOT_FOUND")
+
+    # M-7: compute expires_at from duration; None = permanent ban
+    duration_days_map = {"1": 1, "3": 3, "5": 5}
+    duration_str = str(body.duration)
+    now_utc = datetime.now(UTC)
+    expires_at = (
+        now_utc + timedelta(days=duration_days_map[duration_str])
+        if duration_str in duration_days_map
+        else None  # "permanent"
+    )
 
     ban = ClubBan(
         id=uuid.uuid4(),
         club_id=club_id,
         user_id=user_id,
         banned_by=current_user.id,
-        duration=str(body.duration),
+        duration=duration_str,
+        expires_at=expires_at,
     )
     db.add(ban)
 
@@ -99,7 +112,7 @@ async def ban_member(
     )
 
 
-@router.get("/bans")
+@router.get("/bans", response_model=list[BanResponse])
 async def list_bans(
     club_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],

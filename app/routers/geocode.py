@@ -1,20 +1,22 @@
 from typing import Annotated
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Query
 
 from app.config import Settings
-from app.dependencies import get_settings_dep
+from app.dependencies import get_redis, get_settings_dep
 from app.schemas.geocode import GeocodeSuggestion
 from app.services.geocoding_service import photon_autocomplete
 
 router = APIRouter(prefix="/api/v1/geocode", tags=["geocode"])
 
 
-@router.get("/autocomplete")
+@router.get("/autocomplete", response_model=list[GeocodeSuggestion])
 async def autocomplete(
     settings: Annotated[Settings, Depends(get_settings_dep)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
     q: Annotated[str, Query(min_length=2, max_length=200)],
     lang: str = "uk",
     limit: Annotated[int, Query(ge=1, le=10)] = 5,
 ) -> list[GeocodeSuggestion]:
-    return await photon_autocomplete(q, lang, limit, settings)
+    return await photon_autocomplete(q, lang, limit, settings, redis=redis)

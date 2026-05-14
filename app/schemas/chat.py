@@ -1,9 +1,12 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
 class ChatRoomResponse(BaseModel):
     id: str
     name: str
+    eventId: str | None = None
 
 
 class ChatMessageResponse(BaseModel):
@@ -11,7 +14,7 @@ class ChatMessageResponse(BaseModel):
     senderId: str
     senderName: str
     text: str
-    timestamp: str  # ISO
+    timestamp: datetime | str
 
 
 class SendMessageRequest(BaseModel):

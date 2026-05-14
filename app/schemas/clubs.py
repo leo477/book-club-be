@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -16,10 +17,10 @@ class ClubResponse(BaseModel):
     isPublic: bool
     memberCount: int
     memberPreviews: list[str] = []
-    createdAt: str
+    createdAt: datetime | str
     status: str = "active"
     city: str | None = None
-    nextMeetingDate: str | None = None
+    nextMeetingDate: datetime | str | None = None
     address: str | None = None
     lat: float | None = None
     lng: float | None = None
@@ -28,7 +29,7 @@ class ClubResponse(BaseModel):
     tags: list[str] = []
     meetingDurationMinutes: int | None = None
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
-    cancelledAt: str | None = None
+    cancelledAt: datetime | str | None = None
 
 
 class CreateClubRequest(BaseModel):
@@ -43,9 +44,10 @@ class CreateClubRequest(BaseModel):
 
 
 class UpdateClubRequest(BaseModel):
-    name: str
+    # M-8: all fields optional so exclude_unset=True gives true PATCH semantics
+    name: str | None = None
     description: str | None = None
-    isPublic: bool = True
+    isPublic: bool | None = None
     city: str | None = None
     coverUrl: str | None = None
 
@@ -61,7 +63,7 @@ class BanRequest(BaseModel):
 class BanResponse(BaseModel):
     userId: str
     clubId: str
-    bannedAt: str
+    bannedAt: datetime | str
     duration: str
     bannedBy: str
 
