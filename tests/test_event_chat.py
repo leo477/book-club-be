@@ -22,9 +22,7 @@ async def _setup(async_client, register_user, auth_headers, email):
 @pytest.mark.asyncio
 async def test_create_event_chat_room(async_client, register_user, auth_headers):
     """Organizer creates an event chat room → 201 with id, name, eventId."""
-    headers, club_id, event_id = await _setup(
-        async_client, register_user, auth_headers, "chat_create@example.com"
-    )
+    headers, club_id, event_id = await _setup(async_client, register_user, auth_headers, "chat_create@example.com")
 
     resp = await async_client.post(f"/api/v1/events/{event_id}/chat/room", headers=headers)
     assert resp.status_code == 201
@@ -37,9 +35,7 @@ async def test_create_event_chat_room(async_client, register_user, auth_headers)
 @pytest.mark.asyncio
 async def test_create_event_chat_room_duplicate_returns_409(async_client, register_user, auth_headers):
     """Creating a chat room twice for the same event returns 409."""
-    headers, club_id, event_id = await _setup(
-        async_client, register_user, auth_headers, "chat_duplicate@example.com"
-    )
+    headers, club_id, event_id = await _setup(async_client, register_user, auth_headers, "chat_duplicate@example.com")
 
     first = await async_client.post(f"/api/v1/events/{event_id}/chat/room", headers=headers)
     assert first.status_code == 201
@@ -51,9 +47,7 @@ async def test_create_event_chat_room_duplicate_returns_409(async_client, regist
 @pytest.mark.asyncio
 async def test_get_event_chat_room_as_organizer(async_client, register_user, auth_headers):
     """Organizer creates then GETs the event chat room → 200."""
-    headers, club_id, event_id = await _setup(
-        async_client, register_user, auth_headers, "chat_get@example.com"
-    )
+    headers, club_id, event_id = await _setup(async_client, register_user, auth_headers, "chat_get@example.com")
 
     await async_client.post(f"/api/v1/events/{event_id}/chat/room", headers=headers)
 
@@ -66,9 +60,7 @@ async def test_get_event_chat_room_as_organizer(async_client, register_user, aut
 @pytest.mark.asyncio
 async def test_get_event_chat_room_not_found(async_client, register_user, auth_headers):
     """GET before creating the room returns 404."""
-    headers, club_id, event_id = await _setup(
-        async_client, register_user, auth_headers, "chat_notfound@example.com"
-    )
+    headers, club_id, event_id = await _setup(async_client, register_user, auth_headers, "chat_notfound@example.com")
 
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=headers)
     assert resp.status_code == 404
@@ -77,9 +69,7 @@ async def test_get_event_chat_room_not_found(async_client, register_user, auth_h
 @pytest.mark.asyncio
 async def test_create_event_chat_room_non_organizer(async_client, register_user, auth_headers):
     """A non-organizer club member cannot create a chat room → 403."""
-    headers, club_id, event_id = await _setup(
-        async_client, register_user, auth_headers, "chat_org_nonorg@example.com"
-    )
+    headers, club_id, event_id = await _setup(async_client, register_user, auth_headers, "chat_org_nonorg@example.com")
 
     # Register a second user and have them join the club
     await register_user(email="chat_member_nonorg@example.com")
