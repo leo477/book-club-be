@@ -83,11 +83,13 @@ async def test_list_events_filter_by_city(async_client, register_user, auth_head
 
 @pytest.mark.asyncio
 async def test_list_events_filter_by_club_id(async_client, register_user, auth_headers):
-    headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_clubfilter@example.com")
-    club_id1 = await _create_club(async_client, headers, "FilterClub1")
-    club_id2 = await _create_club(async_client, headers, "FilterClub2")
-    event1 = await _create_event(async_client, headers, club_id1)
-    await _create_event(async_client, headers, club_id2)
+    # Two separate organizers so each can own one club (one-club-per-organizer limit)
+    headers1 = await _setup_organizer(async_client, register_user, auth_headers, "ev_clubfilter1@example.com")
+    headers2 = await _setup_organizer(async_client, register_user, auth_headers, "ev_clubfilter2@example.com")
+    club_id1 = await _create_club(async_client, headers1, "FilterClub1")
+    club_id2 = await _create_club(async_client, headers2, "FilterClub2")
+    event1 = await _create_event(async_client, headers1, club_id1)
+    await _create_event(async_client, headers2, club_id2)
 
     resp = await async_client.get(f"/api/v1/events?club_id={club_id1}")
     assert resp.status_code == 200
