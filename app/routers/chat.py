@@ -78,7 +78,7 @@ async def create_chat_room(
     db.add(room)
     await db.commit()
     await db.refresh(room)
-    return ChatRoomResponse(id=str(room.id), name=room.name)
+    return ChatRoomResponse(id=str(room.id), name=room.name, eventId=None)
 
 
 @router.get("/chat/rooms/{room_id}/messages", response_model=list[ChatMessageResponse], status_code=status.HTTP_200_OK)
@@ -92,10 +92,7 @@ async def get_messages(
     # MN-5: verify room exists
     room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
     if room_result.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Room not found", "code": "ROOM_NOT_FOUND"},
-        )
+        raise AppError(404, "Room not found", "ROOM_NOT_FOUND")
 
     query = (
         select(ChatMessage, User.display_name)
@@ -108,10 +105,7 @@ async def get_messages(
         try:
             cursor_uuid = uuid.UUID(before_id)
         except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"error": "Invalid cursor", "code": "INVALID_CURSOR"},
-            ) from exc
+            raise AppError(422, "Invalid cursor", "INVALID_CURSOR") from exc
         before_result = await db.execute(select(ChatMessage.timestamp).where(ChatMessage.id == cursor_uuid))
         before_ts = before_result.scalar_one_or_none()
         if before_ts is not None:
@@ -148,10 +142,7 @@ async def send_message(
     room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
     room = room_result.scalar_one_or_none()
     if room is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Room not found", "code": "ROOM_NOT_FOUND"},
-        )
+        raise AppError(404, "Room not found", "ROOM_NOT_FOUND")
 
     # MN-4: check if user is banned from this room
     now = datetime.now(UTC)
@@ -163,10 +154,7 @@ async def send_message(
         )
     )
     if ban_result.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "You are banned from this room", "code": "ROOM_BANNED"},
-        )
+        raise AppError(403, "You are banned from this room", "ROOM_BANNED")
 
     msg = ChatMessage(room_id=room_id, sender_id=current_user.id, text=body.text)
     db.add(msg)
@@ -330,7 +318,7 @@ async def create_event_chat_room(
     if existing_result.scalar_one_or_none() is not None:
         raise AppError(409, "Event chat room already exists", "EVENT_CHAT_ALREADY_EXISTS")
 
-    room = ChatRoom(id=uuid.uuid4(), club_id=event.club_id, event_id=event_id, name=event.title + " · Chat")
+    room = ChatRoom(club_id=event.club_id, event_id=event_id, name=event.title + " · Chat")
     db.add(room)
     await db.commit()
     await db.refresh(room)
