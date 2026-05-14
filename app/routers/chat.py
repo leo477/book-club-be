@@ -25,6 +25,8 @@ from app.services.auth_service import decode_access_token
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
+_ROOM_NOT_FOUND = "Room not found"
+
 
 class ConnectionManager:
     def __init__(self) -> None:
@@ -92,7 +94,7 @@ async def get_messages(
     # MN-5: verify room exists
     room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
     if room_result.scalar_one_or_none() is None:
-        raise AppError(404, "Room not found", "ROOM_NOT_FOUND")
+        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
 
     query = (
         select(ChatMessage, User.display_name)
@@ -142,7 +144,7 @@ async def send_message(
     room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
     room = room_result.scalar_one_or_none()
     if room is None:
-        raise AppError(404, "Room not found", "ROOM_NOT_FOUND")
+        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
 
     # MN-4: check if user is banned from this room
     now = datetime.now(UTC)
@@ -209,10 +211,7 @@ async def ban_from_room(
     room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
     room = room_result.scalar_one_or_none()
     if room is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Room not found", "code": "ROOM_NOT_FOUND"},
-        )
+        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
 
     await require_club_organizer(room.club_id, current_user, db)
 
