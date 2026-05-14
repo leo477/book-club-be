@@ -84,9 +84,8 @@ async def register(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "Display name cannot be an email address", "code": "INVALID_DISPLAY_NAME"},
         )
-    safe_name = display_name
     client = await get_supabase_client(settings)
-    auth_response = await supabase_sign_up(client, str(email), password, safe_name, role)
+    auth_response = await supabase_sign_up(client, str(email), password, display_name, role)
 
     if auth_response.user is None:
         raise HTTPException(
@@ -100,7 +99,7 @@ async def register(
         id=uuid.uuid4(),
         supabase_user_id=supabase_user_id,
         email=str(email),
-        display_name=safe_name,
+        display_name=display_name,
         role=role,
         socials_public=False,
     )

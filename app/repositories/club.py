@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,8 +63,15 @@ class ClubRepository:
         return [r for r in result.scalars() if r]
 
     async def is_banned(self, club_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        now = datetime.now(UTC)
         result = await self.db.execute(
-            select(ClubBan).where(and_(ClubBan.club_id == club_id, ClubBan.user_id == user_id))
+            select(ClubBan).where(
+                and_(
+                    ClubBan.club_id == club_id,
+                    ClubBan.user_id == user_id,
+                    or_(ClubBan.expires_at.is_(None), ClubBan.expires_at > now),
+                )
+            )
         )
         return result.scalar_one_or_none() is not None
 

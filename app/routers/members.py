@@ -4,11 +4,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
+from app.exceptions import AppError
 from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.user import User
@@ -58,7 +59,7 @@ async def remove_member(
         select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id))
     )
     if not existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+        raise AppError(404, "Member not found", "MEMBER_NOT_FOUND")
 
     await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id)))
     await db.commit()
@@ -76,7 +77,7 @@ async def ban_member(
 
     user_result = await db.execute(select(User).where(User.id == user_id))
     if not user_result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise AppError(404, "User not found", "USER_NOT_FOUND")
 
     # M-7: compute expires_at from duration; None = permanent ban
     duration_days_map = {"1": 1, "3": 3, "5": 5}

@@ -86,7 +86,7 @@ async def test_join_club_banned(async_client, register_user, auth_headers):
     # Banned user tries to rejoin
     rejoin_resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
     assert rejoin_resp.status_code == 403
-    assert "banned" in rejoin_resp.json()["detail"].lower()
+    assert "banned" in rejoin_resp.json()["detail"]["error"].lower()
 
 
 @pytest.mark.asyncio

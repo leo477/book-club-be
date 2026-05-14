@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,7 +87,7 @@ async def create_club(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> ClubResponse:
     if current_user.role != "organizer":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only organizers can create clubs")
+        raise AppError(403, "Only organizers can create clubs", "FORBIDDEN")
 
     existing = await db.execute(select(Club).where(Club.organizer_id == current_user.id).limit(1))
     if existing.scalar_one_or_none() is not None:
@@ -220,13 +220,13 @@ async def join_club(
         now_utc = datetime.now(UTC)
         ban_active = ban.expires_at is None or ban.expires_at > now_utc
         if ban_active:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are banned from this club")
+            raise AppError(403, "You are banned from this club", "CLUB_BANNED")
 
     existing = await db.execute(
         select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already a member")
+        raise AppError(409, "Already a member", "ALREADY_MEMBER")
 
     membership = ClubMember(
         id=uuid.uuid4(),
@@ -240,7 +240,7 @@ async def join_club(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already a member") from exc
+        raise AppError(409, "Already a member", "ALREADY_MEMBER") from exc
 
     count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
     member_count = count_result.scalar() or 0
@@ -260,7 +260,7 @@ async def leave_club(
     )
     member = existing.scalar_one_or_none()
     if not member:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Not a member")
+        raise AppError(409, "Not a member", "NOT_A_MEMBER")
 
     await db.execute(
         delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
