@@ -1,6 +1,7 @@
-from datetime import datetime
+import datetime
+import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MeetingResponse(BaseModel):
@@ -22,13 +23,13 @@ class QuizResponse(BaseModel):
 
 
 class CreateQuizRequest(BaseModel):
-    title: str
-    description: str | None = None
+    title: str = Field(max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class UpdateQuizRequest(BaseModel):
-    title: str
-    description: str | None = None
+    title: str = Field(max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class QuizQuestionResponse(BaseModel):
@@ -41,13 +42,13 @@ class QuizQuestionResponse(BaseModel):
 
 
 class AddQuestionRequest(BaseModel):
-    question: str
+    question: str = Field(max_length=1000)
     options: list[str]
     correctIndex: int
 
 
 class UpdateQuestionRequest(BaseModel):
-    question: str | None = None
+    question: str | None = Field(default=None, max_length=1000)
     options: list[str] | None = None
     correctIndex: int | None = None
 
@@ -74,7 +75,7 @@ class AttemptResponse(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    eventId: str
+    eventId: uuid.UUID | None = None
 
 
 class QuizSessionResponse(BaseModel):
@@ -82,8 +83,8 @@ class QuizSessionResponse(BaseModel):
     quizId: str
     eventId: str | None
     startedBy: str
-    startedAt: datetime | str
-    closedAt: datetime | str | None
+    startedAt: datetime.datetime | str
+    closedAt: datetime.datetime | str | None
     participantCount: int
 
 

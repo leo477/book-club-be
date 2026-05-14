@@ -50,11 +50,12 @@ async def get_current_user(
     return user
 
 
-async def require_club_organizer(
+async def _fetch_organizer_membership(
     club_id: uuid.UUID,
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_dep)],
-) -> ClubMember:
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> ClubMember | None:
+    """Shared DB query for organizer membership checks (MN-12: eliminates duplicate logic)."""
     from sqlalchemy import and_, select
 
     from app.models.club_member import ClubMember as ClubMemberModel
@@ -63,12 +64,20 @@ async def require_club_organizer(
         select(ClubMemberModel).where(
             and_(
                 ClubMemberModel.club_id == club_id,
-                ClubMemberModel.user_id == current_user.id,
+                ClubMemberModel.user_id == user_id,
                 ClubMemberModel.role == "organizer",
             )
         )
     )
-    membership = result.scalar_one_or_none()
+    return result.scalar_one_or_none()
+
+
+async def require_club_organizer(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> ClubMember:
+    membership = await _fetch_organizer_membership(club_id, current_user.id, db)
     if not membership:
         raise AppError(status.HTTP_403_FORBIDDEN, "Not authorized", "FORBIDDEN")
     return membership
@@ -90,20 +99,8 @@ async def require_event_club_organizer(
 
 
 async def is_club_organizer(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
-    from sqlalchemy import and_, select
-
-    from app.models.club_member import ClubMember as ClubMemberModel
-
-    result = await db.execute(
-        select(ClubMemberModel).where(
-            and_(
-                ClubMemberModel.club_id == club_id,
-                ClubMemberModel.user_id == user_id,
-                ClubMemberModel.role == "organizer",
-            )
-        )
-    )
-    return result.scalar_one_or_none() is not None
+    """Check organizer status without raising; delegates to shared query (MN-12)."""
+    return await _fetch_organizer_membership(club_id, user_id, db) is not None
 
 
 async def get_optional_user(

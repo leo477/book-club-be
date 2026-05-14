@@ -276,3 +276,232 @@ async def test_list_clubs_member_previews(async_client, register_user, auth_head
     assert resp.status_code == 200
     club = next(c for c in resp.json() if c["id"] == club_id)
     assert "https://example.com/avatar.png" in club["memberPreviews"]
+
+
+# ---------------------------------------------------------------------------
+# pause / cancel / reschedule / update
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pause_club(async_client, register_user, auth_headers):
+    """Organizer can pause their club; status becomes 'paused'."""
+    await register_user(email="pause_org@example.com")
+    headers = await auth_headers(email="pause_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "Pause Test Club", "description": "Desc", "city": "Kyiv"},
+    )
+    assert club_resp.status_code == 201
+    club_id = club_resp.json()["id"]
+
+    resp = await async_client.patch(f"/api/v1/clubs/{club_id}/pause", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_pause_club_non_organizer(async_client, register_user, auth_headers):
+    """A regular member cannot pause a club → 403."""
+    await register_user(email="pause_org2@example.com")
+    org_headers = await auth_headers(email="pause_org2@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=org_headers, json={"role": "organizer"})
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=org_headers,
+        json={"name": "Pause Perm Club", "description": "Desc", "city": "Kyiv"},
+    )
+    club_id = club_resp.json()["id"]
+
+    await register_user(email="pause_member@example.com")
+    member_headers = await auth_headers(email="pause_member@example.com")
+    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=member_headers)
+
+    resp = await async_client.patch(f"/api/v1/clubs/{club_id}/pause", headers=member_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_cancel_club(async_client, register_user, auth_headers):
+    """Organizer can cancel their club; status becomes 'cancelled' and cancelledAt is set."""
+    await register_user(email="cancel_org@example.com")
+    headers = await auth_headers(email="cancel_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "Cancel Test Club", "description": "Desc", "city": "Lviv"},
+    )
+    assert club_resp.status_code == 201
+    club_id = club_resp.json()["id"]
+
+    resp = await async_client.patch(f"/api/v1/clubs/{club_id}/cancel", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "cancelled"
+    assert data["cancelledAt"] is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_club_then_list_shows_cancelled_at(async_client, register_user, auth_headers):
+    """After cancellation, listing clubs returns the club with cancelledAt populated (exercises build_club_responses_bulk)."""
+    await register_user(email="cancel_list_org@example.com")
+    headers = await auth_headers(email="cancel_list_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "CancelledBulk Club", "description": "Desc", "city": "Kyiv"},
+    )
+    club_id = club_resp.json()["id"]
+
+    await async_client.patch(f"/api/v1/clubs/{club_id}/cancel", headers=headers)
+
+    list_resp = await async_client.get("/api/v1/clubs", headers=headers)
+    assert list_resp.status_code == 200
+    club = next((c for c in list_resp.json() if c["id"] == club_id), None)
+    assert club is not None
+    assert club["status"] == "cancelled"
+    assert club["cancelledAt"] is not None
+
+
+@pytest.mark.asyncio
+async def test_reschedule_club(async_client, register_user, auth_headers):
+    """Organizer can reschedule; nextMeetingDate is updated and status becomes 'active'."""
+    await register_user(email="reschedule_org@example.com")
+    headers = await auth_headers(email="reschedule_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "Reschedule Club", "description": "Desc", "city": "Odesa"},
+    )
+    assert club_resp.status_code == 201
+    club_id = club_resp.json()["id"]
+
+    # First pause it so we can verify status reverts to active
+    await async_client.patch(f"/api/v1/clubs/{club_id}/pause", headers=headers)
+
+    new_date = "2030-06-15T18:00:00"
+    resp = await async_client.patch(
+        f"/api/v1/clubs/{club_id}/reschedule",
+        headers=headers,
+        json={"newDate": new_date},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "active"
+    assert data["nextMeetingDate"] is not None
+    assert "2030-06-15" in data["nextMeetingDate"]
+
+
+@pytest.mark.asyncio
+async def test_update_club_name(async_client, register_user, auth_headers):
+    """Organizer can patch club name; other fields remain unchanged."""
+    await register_user(email="update_org@example.com")
+    headers = await auth_headers(email="update_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "Original Name", "description": "Some desc", "city": "Kharkiv"},
+    )
+    assert club_resp.status_code == 201
+    club_id = club_resp.json()["id"]
+    original_description = club_resp.json()["description"]
+
+    resp = await async_client.patch(
+        f"/api/v1/clubs/{club_id}",
+        headers=headers,
+        json={"name": "Updated Name"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "Updated Name"
+    # description should be unchanged (true PATCH)
+    assert data["description"] == original_description
+
+
+@pytest.mark.asyncio
+async def test_update_club_non_organizer(async_client, register_user, auth_headers):
+    """Non-organizer member cannot update a club → 403."""
+    await register_user(email="upd_org@example.com")
+    org_headers = await auth_headers(email="upd_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=org_headers, json={"role": "organizer"})
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=org_headers,
+        json={"name": "NoUpdate Club", "description": "Desc", "city": "Kyiv"},
+    )
+    club_id = club_resp.json()["id"]
+
+    await register_user(email="upd_member@example.com")
+    member_headers = await auth_headers(email="upd_member@example.com")
+
+    resp = await async_client.patch(
+        f"/api/v1/clubs/{club_id}",
+        headers=member_headers,
+        json={"name": "Hacked Name"},
+    )
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Club service: build_club_responses_bulk edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_club_responses_bulk_no_optional_fields(async_client, register_user, auth_headers):
+    """Club created with all optional fields omitted is listed without errors."""
+    await register_user(email="minimal_org@example.com")
+    headers = await auth_headers(email="minimal_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+
+    # Create club with minimal fields (no city, no tags, no afterMeetingVenue)
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "Minimal Club", "description": None},
+    )
+    assert club_resp.status_code == 201
+    club_id = club_resp.json()["id"]
+
+    list_resp = await async_client.get("/api/v1/clubs", headers=headers)
+    assert list_resp.status_code == 200
+    club = next((c for c in list_resp.json() if c["id"] == club_id), None)
+    assert club is not None
+    assert club["city"] is None
+    assert club["tags"] == []
+    assert club["afterMeetingVenue"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_clubs_empty_returns_empty_list(async_client):
+    """When no clubs exist the list endpoint returns an empty list (not 404 / error)."""
+    resp = await async_client.get("/api/v1/clubs")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_delete_club(async_client, register_user, auth_headers):
+    """Organizer can delete their club → 204, subsequent GET returns 404."""
+    await register_user(email="delete_org@example.com")
+    headers = await auth_headers(email="delete_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+    club_resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": "Delete Me Club", "description": "Desc", "city": "Kyiv"},
+    )
+    assert club_resp.status_code == 201
+    club_id = club_resp.json()["id"]
+
+    del_resp = await async_client.delete(f"/api/v1/clubs/{club_id}", headers=headers)
+    assert del_resp.status_code == 204
+
+    get_resp = await async_client.get(f"/api/v1/clubs/{club_id}")
+    assert get_resp.status_code == 404
