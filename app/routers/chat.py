@@ -108,13 +108,11 @@ async def get_messages(
             cursor_uuid = uuid.UUID(before_id)
         except ValueError as exc:
             raise AppError(422, "Invalid cursor", "INVALID_CURSOR") from exc
-        before_result = await db.execute(select(ChatMessage.timestamp).where(ChatMessage.id == cursor_uuid))
-        before_ts = before_result.scalar_one_or_none()
-        if before_ts is not None:
-            query = query.where(
-                (ChatMessage.timestamp < before_ts)
-                | ((ChatMessage.timestamp == before_ts) & (ChatMessage.id < cursor_uuid))
-            )
+        cursor_ts_subq = select(ChatMessage.timestamp).where(ChatMessage.id == cursor_uuid).scalar_subquery()
+        query = query.where(
+            (ChatMessage.timestamp < cursor_ts_subq)
+            | ((ChatMessage.timestamp == cursor_ts_subq) & (ChatMessage.id < cursor_uuid))
+        )
 
     query = query.order_by(ChatMessage.timestamp.desc(), ChatMessage.id.desc()).limit(limit)
     rows = (await db.execute(query)).all()
