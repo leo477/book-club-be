@@ -58,12 +58,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _app.state.redis_pool = redis_pool
     logger.info("Redis pool created", url=settings.REDIS_URL)
 
-    from alembic.config import Config
+    import subprocess
 
-    from alembic import command
-
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+    subprocess.run(
+        ["/app/.venv/bin/alembic", "upgrade", "head"],
+        check=True,
+        cwd="/app",
+    )
     logger.info("Database migrations applied")
 
     logger.info("Application starting", env=settings.ENV, version="1.0.0")
