@@ -158,16 +158,6 @@ def create_app() -> FastAPI:
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,
-        allow_origin_regex=settings.CORS_ORIGIN_REGEX,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["X-Request-ID", "X-Total-Count"],
-    )
-
     @app.middleware("http")
     async def logging_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
         bound_logger = logger.bind(
@@ -183,6 +173,16 @@ def create_app() -> FastAPI:
             return JSONResponse(status_code=500, content={"detail": "Internal server error"})
         bound_logger.info("Request completed", status_code=response.status_code)
         return response  # type: ignore[no-any-return]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_origin_regex=settings.CORS_ORIGIN_REGEX,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Request-ID", "X-Total-Count"],
+    )
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
