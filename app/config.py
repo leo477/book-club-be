@@ -11,9 +11,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ALLOWED_ORIGINS: list[str] = [
         "http://localhost:4200",
-        "https://book-club-fe-zaharr3-8415-dmytros-projects-ad22eb22.vercel.app",
-        "https://book-club-3cqi4lu8f-dmytros-projects-ad22eb22.vercel.app",
     ]
+    CORS_ORIGIN_REGEX: str = r"^https://book-club-[a-z0-9-]+-dmytros-projects-ad22eb22\.vercel\.app$"
     REDIS_URL: str = "redis://localhost:6379"
     PHOTON_URL: str = "https://photon.komoot.io"
     SENTRY_DSN: str = ""
