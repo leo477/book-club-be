@@ -176,7 +176,11 @@ def create_app() -> FastAPI:
             client=request.client.host if request.client else "unknown",
         )
         bound_logger.info("Request received")
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            bound_logger.exception("Unhandled exception", exc_info=exc)
+            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
         bound_logger.info("Request completed", status_code=response.status_code)
         return response  # type: ignore[no-any-return]
 
