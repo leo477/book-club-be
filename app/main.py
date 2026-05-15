@@ -158,6 +158,22 @@ def create_app() -> FastAPI:
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
+    @app.middleware("http")
+    async def logging_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
+        bound_logger = logger.bind(
+            method=request.method,
+            url=str(request.url),
+            client=request.client.host if request.client else "unknown",
+        )
+        bound_logger.info("Request received")
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            bound_logger.exception("Unhandled exception", exc_info=exc)
+            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        bound_logger.info("Request completed", status_code=response.status_code)
+        return response  # type: ignore[no-any-return]
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
@@ -167,18 +183,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["X-Request-ID", "X-Total-Count"],
     )
-
-    @app.middleware("http")
-    async def logging_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
-        bound_logger = logger.bind(
-            method=request.method,
-            url=str(request.url),
-            client=request.client.host if request.client else "unknown",
-        )
-        bound_logger.info("Request received")
-        response = await call_next(request)
-        bound_logger.info("Request completed", status_code=response.status_code)
-        return response  # type: ignore[no-any-return]
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
