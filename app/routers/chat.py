@@ -252,6 +252,27 @@ async def websocket_endpoint(
         return
 
     await manager.connect(room_id, websocket)
+
+    _BAN_CACHE_TTL = 30  # seconds
+    ban_cache_result: bool | None = None
+    ban_cache_expires: datetime = datetime.now(UTC)
+
+    async def check_ban_cached() -> bool:
+        nonlocal ban_cache_result, ban_cache_expires
+        now_ = datetime.now(UTC)
+        if ban_cache_result is not None and now_ < ban_cache_expires:
+            return ban_cache_result
+        ban_q = await db.execute(
+            select(ChatRoomBan).where(
+                ChatRoomBan.room_id == uuid.UUID(room_id),
+                ChatRoomBan.user_id == user.id,
+                (ChatRoomBan.banned_until.is_(None)) | (ChatRoomBan.banned_until > now_),
+            )
+        )
+        ban_cache_result = ban_q.scalar_one_or_none() is not None
+        ban_cache_expires = now_ + timedelta(seconds=_BAN_CACHE_TTL)
+        return ban_cache_result
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -259,16 +280,7 @@ async def websocket_endpoint(
             if not text:
                 continue
 
-            # MN-4: check if user is banned from this room before inserting
-            now = datetime.now(UTC)
-            ban_result = await db.execute(
-                select(ChatRoomBan).where(
-                    ChatRoomBan.room_id == uuid.UUID(room_id),
-                    ChatRoomBan.user_id == user.id,
-                    (ChatRoomBan.banned_until.is_(None)) | (ChatRoomBan.banned_until > now),
-                )
-            )
-            if ban_result.scalar_one_or_none() is not None:
+            if await check_ban_cached():
                 await websocket.send_json(
                     {"type": "error", "payload": {"code": "ROOM_BANNED", "message": "You are banned from this room"}}
                 )
