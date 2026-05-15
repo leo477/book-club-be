@@ -251,7 +251,7 @@ async def websocket_endpoint(
 
     await manager.connect(room_id, websocket)
 
-    _BAN_CACHE_TTL = 30  # seconds
+    _ban_cache_ttl = 30  # seconds
     ban_cache_result: bool | None = None
     ban_cache_expires: datetime = datetime.now(UTC)
 
@@ -268,7 +268,7 @@ async def websocket_endpoint(
             )
         )
         ban_cache_result = ban_q.scalar_one_or_none() is not None
-        ban_cache_expires = now_ + timedelta(seconds=_BAN_CACHE_TTL)
+        ban_cache_expires = now_ + timedelta(seconds=_ban_cache_ttl)
         return ban_cache_result
 
     try:
