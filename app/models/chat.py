@@ -31,9 +31,10 @@ class ChatMessage(AppBase):
 
 class ChatRoomBan(AppBase):
     __tablename__ = "chat_room_bans"
+    __table_args__ = (Index("ix_chat_room_bans_room_user", "room_id", "user_id"),)
 
     room_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("chat_rooms.id"), nullable=False, index=True
+        UUID(as_uuid=True), ForeignKey("chat_rooms.id"), nullable=False
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     banned_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

@@ -30,6 +30,10 @@ async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> User:
+    cached: User | None = getattr(request.state, "_current_user", None)
+    if cached is not None:
+        return cached
+
     from app.models.user import User as UserModel
     from app.services.auth_service import decode_access_token
 
@@ -47,6 +51,8 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user:
         raise AppError(status.HTTP_401_UNAUTHORIZED, "User not found", "USER_NOT_FOUND")
+
+    request.state._current_user = user
     return user
 
 
