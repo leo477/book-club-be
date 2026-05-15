@@ -52,19 +52,24 @@ async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
 
 
 async def get_user_stats(user_id: uuid.UUID, db: AsyncSession) -> UserStatsResponse:
+    from sqlalchemy import case
+
     clubs_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.user_id == user_id))
-    quizzes_result = await db.execute(
-        select(func.count()).select_from(QuizAttempt).where(QuizAttempt.user_id == user_id)
-    )
-    wins_result = await db.execute(
-        select(func.count())
+
+    quiz_result = await db.execute(
+        select(
+            func.count().label("total"),
+            func.count(case((QuizAttempt.score == QuizAttempt.total, 1))).label("wins"),
+        )
         .select_from(QuizAttempt)
-        .where(QuizAttempt.user_id == user_id, QuizAttempt.score == QuizAttempt.total)
+        .where(QuizAttempt.user_id == user_id)
     )
+    quiz_row = quiz_result.one()
+
     return UserStatsResponse(
         clubsJoined=clubs_result.scalar() or 0,
-        quizzesTaken=quizzes_result.scalar() or 0,
-        quizWins=wins_result.scalar() or 0,
+        quizzesTaken=quiz_row.total or 0,
+        quizWins=quiz_row.wins or 0,
         likesReceived=0,
         booksRead=0,
     )
