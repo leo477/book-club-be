@@ -61,10 +61,15 @@ async def list_clubs(
 async def list_my_clubs(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[ClubResponse]:
     member_club_ids = select(ClubMember.club_id).where(ClubMember.user_id == current_user.id)
     result = await db.execute(
-        select(Club).where(or_(Club.id.in_(member_club_ids), Club.organizer_id == current_user.id))
+        select(Club)
+        .where(or_(Club.id.in_(member_club_ids), Club.organizer_id == current_user.id))
+        .offset(skip)
+        .limit(limit)
     )
     clubs = result.scalars().all()
     return await build_club_responses_bulk(list(clubs), db)
