@@ -8,6 +8,14 @@ services:
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
     envVars: []
-    
+
+  - type: cron
+    name: keep-alive
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    schedule: "*/10 * * * *"
+    startCommand: "curl -sf https://book-club-be.onrender.com/health || true"
+
 previews:
   generation: off
