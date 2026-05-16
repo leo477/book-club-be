@@ -88,3 +88,7 @@ package-lock.json
 # Claude Code (local tool config)
 .claudignore
 /.claude/
+
+# Playwright CLI scratch + manual test screenshots
+/.playwright-cli/
+/*.png

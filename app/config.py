@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = [
         "http://localhost:4200",
     ]
-    CORS_ORIGIN_REGEX: str = r"^https://book-club-[a-z0-9-]+-dmytros-projects-ad22eb22\.vercel\.app$"
+    CORS_ORIGIN_REGEX: str = r"^https://book-club-[a-z0-9-]+\.vercel\.app$"
     REDIS_URL: str = "redis://localhost:6379"
     PHOTON_URL: str = "https://photon.komoot.io"
     SENTRY_DSN: str = ""
