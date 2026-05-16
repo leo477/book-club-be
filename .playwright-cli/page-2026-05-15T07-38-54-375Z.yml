@@ -1,0 +1,143 @@
+- generic [ref=e3]:
+  - banner [ref=e5]:
+    - generic [ref=e7]:
+      - link "BookClub home" [ref=e8] [cursor=pointer]:
+        - /url: /
+        - text: BookClub
+      - navigation "Main navigation" [ref=e9]:
+        - link "Discover" [ref=e140] [cursor=pointer]:
+          - /url: /clubs
+        - link "Events" [ref=e141] [cursor=pointer]:
+          - /url: /events
+      - generic [ref=e12]:
+        - button "Switch to light mode" [ref=e142]:
+          - img:
+            - img
+        - button "Перейти на українську" [ref=e143]: UK
+        - button "User menu for Test User Updated" [ref=e15]:
+          - generic [ref=e16]: TU
+  - main [ref=e17]:
+    - generic [ref=e20]:
+      - region "Test User Updated" [ref=e21]:
+        - generic [ref=e22]: TU
+        - heading "Test User Updated" [level=1] [ref=e23]
+        - generic [ref=e24]: 🎯 Organizer
+        - paragraph [ref=e25]: Member since травень 2026 р.
+      - region "Edit Profile" [ref=e144]:
+        - heading "Edit Profile" [level=2] [ref=e145]:
+          - generic [ref=e28]: ✏️
+          - text: Edit Profile
+        - generic [ref=e30]:
+          - generic [ref=e31]:
+            - generic [ref=e32]: Display Name
+            - textbox "Display Name" [active] [ref=e146]:
+              - /placeholder: Your display name
+              - text: Test User Updated
+          - button "Save Name" [ref=e147]
+      - region "Your Role" [ref=e148]:
+        - heading "Your Role" [level=2] [ref=e149]:
+          - generic [ref=e38]: 🔖
+          - text: Your Role
+        - paragraph [ref=e39]: Choose how you participate in book clubs.
+        - group "Your Role" [ref=e150]:
+          - generic [ref=e42]: Your Role
+          - button "Reader Discover clubs, join discussions, take quizzes." [ref=e151]:
+            - generic [ref=e44]: 📖
+            - generic [ref=e45]: Reader
+            - generic [ref=e46]: Discover clubs, join discussions, take quizzes.
+          - button "Organizer Create clubs, run quizzes, and manage members. ✓ Active" [pressed] [ref=e152]:
+            - generic [ref=e48]: 🎯
+            - generic [ref=e49]: Organizer
+            - generic [ref=e50]: Create clubs, run quizzes, and manage members.
+            - generic [ref=e51]: ✓ Active
+      - region "Statistics" [ref=e153]:
+        - heading "Statistics" [level=2] [ref=e154]:
+          - generic [ref=e54]: 📊
+          - text: Statistics
+        - generic [ref=e56]:
+          - generic [ref=e57]:
+            - generic [ref=e58]: 📚
+            - term [ref=e59]: Clubs joined
+            - definition [ref=e60]: "0"
+          - generic [ref=e61]:
+            - generic [ref=e62]: 🧠
+            - term [ref=e63]: Quizzes taken
+            - definition [ref=e64]: "0"
+          - generic [ref=e65]:
+            - generic [ref=e66]: 🏆
+            - term [ref=e67]: Quizzes won
+            - definition [ref=e68]: "0"
+          - generic [ref=e69]:
+            - generic [ref=e70]: ❤️
+            - term [ref=e71]: Likes Received
+            - definition [ref=e72]: "0"
+          - generic [ref=e73]:
+            - generic [ref=e74]: 📖
+            - term [ref=e75]: Books read
+            - definition [ref=e76]: "0"
+      - region "Social media" [ref=e155]:
+        - heading "Social media" [level=2] [ref=e156]:
+          - generic [ref=e79]: 🌐
+          - text: Social media
+        - generic [ref=e81] [cursor=pointer]:
+          - checkbox "Show social media to all club members" [ref=e157]
+          - text: Show social media to all club members
+        - list "Social media" [ref=e158]:
+          - listitem [ref=e86]:
+            - 'link "Telegram: @testuser" [ref=e87] [cursor=pointer]':
+              - /url: https://t.me/testuser
+              - img [ref=e88]
+              - text: "@testuser"
+          - listitem [ref=e90]:
+            - 'link "Instagram: @testuser123" [ref=e91] [cursor=pointer]':
+              - /url: https://instagram.com/testuser123
+              - img [ref=e92]
+              - text: "@testuser123"
+          - listitem [ref=e94]:
+            - 'link "GitHub: testuser-github" [ref=e95] [cursor=pointer]':
+              - /url: https://github.com/testuser-github
+              - img [ref=e96]
+              - text: testuser-github
+        - generic [ref=e98]:
+          - generic [ref=e99]:
+            - generic [ref=e101]:
+              - generic [ref=e102]: Telegram
+              - textbox "Telegram" [ref=e103]:
+                - /placeholder: username (без @)
+                - text: testuser
+            - generic [ref=e105]:
+              - generic [ref=e106]: Instagram
+              - textbox "Instagram" [ref=e107]:
+                - /placeholder: username (без @)
+                - text: testuser123
+            - generic [ref=e109]:
+              - generic [ref=e110]: Twitter / X
+              - textbox "Twitter / X" [ref=e111]:
+                - /placeholder: username (без @)
+            - generic [ref=e113]:
+              - generic [ref=e114]: LinkedIn
+              - textbox "LinkedIn" [ref=e115]:
+                - /placeholder: username або повний URL
+            - generic [ref=e117]:
+              - generic [ref=e118]: GitHub
+              - textbox "GitHub" [ref=e119]:
+                - /placeholder: username
+                - text: testuser-github
+            - generic [ref=e121]:
+              - generic [ref=e122]: Goodreads
+              - textbox "Goodreads" [ref=e123]:
+                - /placeholder: username або повний URL
+          - button "Save" [ref=e159]
+  - button "Open chat" [ref=e160]:
+    - img [ref=e127]
+  - contentinfo [ref=e130]:
+    - generic [ref=e131]:
+      - paragraph [ref=e132]: 📚 BookClub © 2026 — All rights reserved
+      - navigation "Footer navigation" [ref=e133]:
+        - list [ref=e134]:
+          - listitem [ref=e135]:
+            - link "Privacy" [ref=e161] [cursor=pointer]:
+              - /url: /privacy
+          - listitem [ref=e137]:
+            - link "Terms" [ref=e162] [cursor=pointer]:
+              - /url: /terms

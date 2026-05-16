@@ -1,0 +1,40 @@
+- generic [ref=e203]:
+  - generic:
+    - generic:
+      - generic:
+        - generic:
+          - generic:
+            - generic: Book Club
+          - generic:
+            - generic:
+              - generic: ✦
+              - generic:
+                - text: Book
+                - text: Club
+              - generic: ✦
+  - main [ref=e204]:
+    - generic [ref=e205]:
+      - generic [ref=e206]:
+        - heading "📚 Book Club" [level=1] [ref=e207]
+        - paragraph [ref=e208]: Ласкаво просимо назад
+      - generic [ref=e209]:
+        - heading "Увійти" [level=2] [ref=e210]
+        - generic [ref=e211]:
+          - group "Увійти" [ref=e212]:
+            - generic [ref=e213]: Увійти
+            - group [ref=e214]:
+              - generic [ref=e215]: Email
+              - textbox "Email" [ref=e216]:
+                - /placeholder: you@example.com
+            - group [ref=e217]:
+              - generic [ref=e218]: Пароль
+              - textbox "Пароль" [ref=e219]:
+                - /placeholder: ••••••••
+          - button "Увійти" [ref=e220]
+        - paragraph [ref=e221]:
+          - text: Немає акаунту?
+          - link "Реєстрація" [ref=e222] [cursor=pointer]:
+            - /url: /register
+      - paragraph [ref=e223]:
+        - link "← На головну" [ref=e224] [cursor=pointer]:
+          - /url: /

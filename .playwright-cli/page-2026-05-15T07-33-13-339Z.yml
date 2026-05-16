@@ -1,0 +1,184 @@
+- generic [ref=e26]:
+  - banner [ref=e28]:
+    - generic [ref=e30]:
+      - link "BookClub home" [ref=e31] [cursor=pointer]:
+        - /url: /
+        - text: BookClub
+      - navigation "Main navigation" [ref=e32]:
+        - link "Discover" [ref=e410] [cursor=pointer]:
+          - /url: /clubs
+        - link "Events" [ref=e411] [cursor=pointer]:
+          - /url: /events
+      - generic [ref=e35]:
+        - button "Switch to dark mode" [ref=e412]:
+          - img:
+            - img
+        - button "Перейти на українську" [active] [ref=e413]: UK
+        - button "User menu for Test User Updated" [ref=e38]:
+          - generic [ref=e39]: TU
+  - main [ref=e40]:
+    - generic [ref=e231]:
+      - region "Search clubs" [ref=e232]:
+        - generic [ref=e233]:
+          - heading "Book Clubs" [level=1] [ref=e414]
+          - paragraph [ref=e235]: Discover communities of readers near you
+          - generic [ref=e236]:
+            - generic [ref=e237]: Search clubs...
+            - searchbox "Search clubs..." [ref=e415]
+      - generic [ref=e239]:
+        - tablist "Club filter" [ref=e240]:
+          - generic [ref=e241]:
+            - tab "All Clubs" [selected] [ref=e416]
+            - tab "My Clubs" [ref=e417]
+        - tabpanel [ref=e245]:
+          - list [ref=e246]:
+            - listitem [ref=e247]:
+              - generic [ref=e252]:
+                - generic [ref=e253]:
+                  - heading "test" [level=3] [ref=e254]
+                  - paragraph [ref=e255]: test
+                - generic [ref=e256]:
+                  - button "Join test" [ref=e418]: Join
+                  - link "View test" [ref=e419] [cursor=pointer]:
+                    - /url: /clubs/ae57500b-698b-45de-ad0d-53b729b6892b
+                    - text: View
+            - listitem [ref=e259]:
+              - generic [ref=e264]:
+                - generic [ref=e265]:
+                  - heading "Kyiv" [level=3] [ref=e266]
+                  - paragraph [ref=e267]: Kyiv
+                - generic [ref=e268]:
+                  - button "Join Kyiv" [ref=e420]: Join
+                  - link "View Kyiv" [ref=e421] [cursor=pointer]:
+                    - /url: /clubs/f165e1ab-f292-4a81-895b-5067df8bb642
+                    - text: View
+            - listitem [ref=e271]:
+              - generic [ref=e276]:
+                - generic [ref=e277]:
+                  - heading "tret" [level=3] [ref=e278]
+                  - paragraph [ref=e279]: tre
+                - generic [ref=e280]:
+                  - button "Join tret" [ref=e422]: Join
+                  - link "View tret" [ref=e423] [cursor=pointer]:
+                    - /url: /clubs/19f8fb3c-1542-4b87-9365-9aa8299c654e
+                    - text: View
+            - listitem [ref=e283]:
+              - generic [ref=e288]:
+                - generic [ref=e289]:
+                  - heading "123" [level=3] [ref=e290]
+                  - paragraph [ref=e291]: "1"
+                - generic [ref=e292]:
+                  - button "Join 123" [ref=e424]: Join
+                  - link "View 123" [ref=e425] [cursor=pointer]:
+                    - /url: /clubs/166b8789-0067-44a5-b9a7-3a209293eb55
+                    - text: View
+            - listitem [ref=e295]:
+              - generic [ref=e300]:
+                - generic [ref=e301]:
+                  - heading "Audit Club Test" [level=3] [ref=e302]
+                  - paragraph [ref=e303]: Тестовий клуб для аудиту
+                - generic [ref=e304]:
+                  - button "Join Audit Club Test" [ref=e426]: Join
+                  - link "View Audit Club Test" [ref=e427] [cursor=pointer]:
+                    - /url: /clubs/b1ff475c-7958-43b6-b463-c005c3a0d559
+                    - text: View
+            - listitem [ref=e307]:
+              - generic [ref=e312]:
+                - generic [ref=e313]:
+                  - heading "[Audit] Club 1778501868166" [level=3] [ref=e314]
+                  - paragraph [ref=e315]: Audit test club — safe to delete
+                - generic [ref=e316]:
+                  - button "Join [Audit] Club 1778501868166" [ref=e428]: Join
+                  - link "View [Audit] Club 1778501868166" [ref=e429] [cursor=pointer]:
+                    - /url: /clubs/2affc525-02bb-4fc6-a2c3-99baad3c5773
+                    - text: View
+            - listitem [ref=e319]:
+              - generic [ref=e324]:
+                - generic [ref=e325]:
+                  - heading "[Audit] Club 1778502535125" [level=3] [ref=e326]
+                  - paragraph [ref=e327]: Audit test club — safe to delete
+                - generic [ref=e328]:
+                  - button "Join [Audit] Club 1778502535125" [ref=e430]: Join
+                  - link "View [Audit] Club 1778502535125" [ref=e431] [cursor=pointer]:
+                    - /url: /clubs/11f6bac7-d598-457f-ba9e-b84e82c01b53
+                    - text: View
+            - listitem [ref=e331]:
+              - generic [ref=e336]:
+                - generic [ref=e337]:
+                  - heading "terrtr" [level=3] [ref=e338]
+                  - paragraph [ref=e339]: tretet
+                - generic [ref=e340]:
+                  - button "Join terrtr" [ref=e432]: Join
+                  - link "View terrtr" [ref=e433] [cursor=pointer]:
+                    - /url: /clubs/efc6aa3b-14e7-4a6e-ba2e-8a8e3eae5dc9
+                    - text: View
+            - listitem [ref=e343]:
+              - generic [ref=e348]:
+                - generic [ref=e349]:
+                  - heading "[Audit] Club 1778502861144" [level=3] [ref=e350]
+                  - paragraph [ref=e351]: Audit test club — safe to delete
+                - generic [ref=e352]:
+                  - button "Join [Audit] Club 1778502861144" [ref=e434]: Join
+                  - link "View [Audit] Club 1778502861144" [ref=e435] [cursor=pointer]:
+                    - /url: /clubs/f72e14c0-979f-4d41-bc4d-f81e3435892b
+                    - text: View
+            - listitem [ref=e355]:
+              - generic [ref=e360]:
+                - generic [ref=e361]:
+                  - heading "[Audit] Club 1778502199241" [level=3] [ref=e362]
+                  - paragraph [ref=e363]: Audit test club — safe to delete
+                - generic [ref=e364]:
+                  - button "Join [Audit] Club 1778502199241" [ref=e436]: Join
+                  - link "View [Audit] Club 1778502199241" [ref=e437] [cursor=pointer]:
+                    - /url: /clubs/be0578c5-3111-4921-92ca-b76577d3ea75
+                    - text: View
+            - listitem [ref=e367]:
+              - generic [ref=e372]:
+                - generic [ref=e373]:
+                  - heading "[Audit] Club 1778503437791" [level=3] [ref=e374]
+                  - paragraph [ref=e375]: Audit test club — safe to delete
+                - generic [ref=e376]:
+                  - button "Join [Audit] Club 1778503437791" [ref=e438]: Join
+                  - link "View [Audit] Club 1778503437791" [ref=e439] [cursor=pointer]:
+                    - /url: /clubs/e6b91cd5-f385-43f5-99f4-a73f32cb2cd5
+                    - text: View
+            - listitem [ref=e379]:
+              - generic [ref=e384]:
+                - generic [ref=e385]:
+                  - heading "[Audit] Club 1778503882154" [level=3] [ref=e386]
+                  - paragraph [ref=e387]: Audit test club — safe to delete
+                - generic [ref=e388]:
+                  - button "Join [Audit] Club 1778503882154" [ref=e440]: Join
+                  - link "View [Audit] Club 1778503882154" [ref=e441] [cursor=pointer]:
+                    - /url: /clubs/c1579f1a-9f98-4209-b7bb-7a8ae8a4246c
+                    - text: View
+      - link "Create club" [ref=e442] [cursor=pointer]:
+        - /url: /clubs/create
+        - img [ref=e392]
+  - generic:
+    - button "Close chat" [ref=e443]:
+      - img [ref=e206]
+    - generic [ref=e395]:
+      - generic [ref=e396]:
+        - heading "Club Chat" [level=2] [ref=e444]
+        - button "close" [ref=e398]:
+          - img [ref=e399]
+      - log [ref=e401]:
+        - generic [ref=e402]:
+          - generic [ref=e403]: 💬
+          - paragraph [ref=e404]: The organizer hasn't set up a chat for this club yet.
+      - generic [ref=e405]:
+        - textbox "Type a message..." [ref=e445]
+        - button "Send" [disabled] [ref=e446]:
+          - img [ref=e408]
+  - contentinfo [ref=e209]:
+    - generic [ref=e210]:
+      - paragraph [ref=e211]: 📚 BookClub © 2026 — All rights reserved
+      - navigation "Footer navigation" [ref=e212]:
+        - list [ref=e213]:
+          - listitem [ref=e214]:
+            - link "Privacy" [ref=e447] [cursor=pointer]:
+              - /url: /privacy
+          - listitem [ref=e216]:
+            - link "Terms" [ref=e448] [cursor=pointer]:
+              - /url: /terms

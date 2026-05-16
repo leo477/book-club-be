@@ -1,0 +1,64 @@
+- generic [ref=e4]:
+  - generic:
+    - generic:
+      - generic:
+        - generic:
+          - generic:
+            - generic: Book Club
+          - generic:
+            - generic:
+              - generic: ✦
+              - generic:
+                - text: Book
+                - text: Club
+              - generic: ✦
+  - main [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - heading "📚 Book Club" [level=1] [ref=e8]
+        - paragraph [ref=e9]: Створіть акаунт
+      - generic [ref=e10]:
+        - heading "Створити акаунт" [level=2] [ref=e11]
+        - group "Створити акаунт" [ref=e13]:
+          - generic [ref=e14]: Створити акаунт
+          - group [ref=e15]:
+            - generic [ref=e16]: Ім'я користувача
+            - textbox "Ім'я користувача" [ref=e17]:
+              - /placeholder: Ada Lovelace
+              - text: a
+            - alert [ref=e47]: Мінімум 2 символів.
+          - group [ref=e18]:
+            - generic [ref=e19]: Email
+            - textbox "Email" [ref=e20]:
+              - /placeholder: you@example.com
+              - text: test@example.com
+          - group [ref=e21]:
+            - generic [ref=e22]: Пароль
+            - textbox "Пароль" [ref=e23]:
+              - /placeholder: ••••••••
+              - text: TestPass123!
+          - generic [ref=e53]: Надійний
+          - group [ref=e24]:
+            - generic [ref=e25]: Підтвердіть пароль
+            - textbox "Підтвердіть пароль" [ref=e26]:
+              - /placeholder: ••••••••
+              - text: TestPass123!
+          - group "Я хочу…" [ref=e27]:
+            - generic [ref=e28]: Я хочу…
+            - generic [ref=e29]:
+              - button "📖 Читач Приєднуватись до клубів та проходити квізи" [pressed] [ref=e30]:
+                - generic [ref=e31]: 📖
+                - generic [ref=e32]: Читач
+                - generic [ref=e33]: Приєднуватись до клубів та проходити квізи
+              - button "🎯 Організатор Створювати клуби та проводити квізи" [ref=e34]:
+                - generic [ref=e35]: 🎯
+                - generic [ref=e36]: Організатор
+                - generic [ref=e37]: Створювати клуби та проводити квізи
+          - button "Створити акаунт" [active] [ref=e38]
+        - paragraph [ref=e39]:
+          - text: Вже є акаунт?
+          - link "Увійти" [ref=e40] [cursor=pointer]:
+            - /url: /login
+      - paragraph [ref=e41]:
+        - link "← На головну" [ref=e42] [cursor=pointer]:
+          - /url: /

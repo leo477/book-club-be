@@ -1,0 +1,38 @@
+- generic [ref=e26]:
+  - banner [ref=e28]:
+    - generic [ref=e30]:
+      - link "BookClub home" [ref=e31] [cursor=pointer]:
+        - /url: /
+        - text: BookClub
+      - navigation "Main navigation" [ref=e32]:
+        - link "Огляд" [ref=e33] [cursor=pointer]:
+          - /url: /clubs
+        - link "Події" [ref=e34] [cursor=pointer]:
+          - /url: /events
+      - generic [ref=e35]:
+        - button "Темна тема" [ref=e36]:
+          - img:
+            - img
+        - button "Switch to English" [ref=e37]: EN
+        - button "User menu for Test User Updated" [ref=e38]:
+          - generic [ref=e39]: TU
+  - main [ref=e40]:
+    - alert [ref=e225]:
+      - paragraph [ref=e226]: 😕
+      - heading "Клуб не знайдено" [level=2] [ref=e227]
+      - paragraph [ref=e228]: Failed to load club details.
+      - link "← Назад до клубів" [ref=e229] [cursor=pointer]:
+        - /url: /clubs
+  - button "Відкрити чат" [ref=e205]:
+    - img [ref=e206]
+  - contentinfo [ref=e209]:
+    - generic [ref=e210]:
+      - paragraph [ref=e211]: 📚 BookClub © 2026 — Усі права захищені
+      - navigation "Footer navigation" [ref=e212]:
+        - list [ref=e213]:
+          - listitem [ref=e214]:
+            - link "Конфіденційність" [ref=e215] [cursor=pointer]:
+              - /url: /privacy
+          - listitem [ref=e216]:
+            - link "Умови" [ref=e217] [cursor=pointer]:
+              - /url: /terms

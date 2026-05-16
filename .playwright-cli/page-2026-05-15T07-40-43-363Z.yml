@@ -1,0 +1,46 @@
+- generic [ref=e3]:
+  - banner [ref=e5]:
+    - generic [ref=e7]:
+      - link "BookClub home" [ref=e8] [cursor=pointer]:
+        - /url: /
+        - text: BookClub
+      - navigation "Main navigation" [ref=e9]:
+        - link "Огляд" [ref=e10] [cursor=pointer]:
+          - /url: /clubs
+        - link "Події" [ref=e11] [cursor=pointer]:
+          - /url: /events
+      - generic [ref=e12]:
+        - button "Світла тема" [ref=e13]:
+          - img:
+            - img
+        - button "Switch to English" [ref=e14]: EN
+        - button "User menu for Test User Updated - Modified" [ref=e15]:
+          - generic [ref=e16]: TU
+  - main [ref=e17]:
+    - generic [ref=e19]:
+      - generic [ref=e21]:
+        - heading "Події" [level=1] [ref=e22]
+        - paragraph [ref=e23]: Відкривайте та приєднуйтесь до майбутніх зустрічей
+      - generic [ref=e24]:
+        - tablist "Event filter" [ref=e25]:
+          - generic [ref=e26]:
+            - tab "Майбутні" [ref=e28]
+            - tab "Мої події" [active] [selected] [ref=e29]
+        - tabpanel [ref=e49]:
+          - generic [ref=e51]:
+            - generic [ref=e52]: 📅
+            - heading "Немає майбутніх подій" [level=3] [ref=e53]
+            - paragraph [ref=e54]: Приєднуйтесь до клубів, щоб бачити їхні події тут.
+  - button "Відкрити чат" [ref=e36]:
+    - img [ref=e37]
+  - contentinfo [ref=e40]:
+    - generic [ref=e41]:
+      - paragraph [ref=e42]: 📚 BookClub © 2026 — Усі права захищені
+      - navigation "Footer navigation" [ref=e43]:
+        - list [ref=e44]:
+          - listitem [ref=e45]:
+            - link "Конфіденційність" [ref=e46] [cursor=pointer]:
+              - /url: /privacy
+          - listitem [ref=e47]:
+            - link "Умови" [ref=e48] [cursor=pointer]:
+              - /url: /terms

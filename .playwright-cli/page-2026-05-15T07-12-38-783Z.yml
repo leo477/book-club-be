@@ -1,0 +1,167 @@
+- generic [ref=e65]:
+  - banner [ref=e67]:
+    - generic [ref=e69]:
+      - link "BookClub home" [ref=e70] [cursor=pointer]:
+        - /url: /
+        - text: BookClub
+      - navigation "Main navigation" [ref=e71]:
+        - link "Огляд" [ref=e72] [cursor=pointer]:
+          - /url: /clubs
+        - link "Події" [ref=e73] [cursor=pointer]:
+          - /url: /events
+      - generic [ref=e74]:
+        - button "Темна тема" [ref=e75]:
+          - img:
+            - img
+        - button "Switch to English" [ref=e76]: EN
+        - button "User menu for testuser" [ref=e77]:
+          - generic [ref=e78]: T
+  - main [ref=e79]:
+    - generic [ref=e81]:
+      - region "Search clubs" [ref=e82]:
+        - generic [ref=e83]:
+          - heading "Книжкові клуби" [level=1] [ref=e84]
+          - paragraph [ref=e85]: Знайдіть спільноти читачів поруч
+          - generic [ref=e86]:
+            - generic [ref=e87]: Шукати клуби...
+            - searchbox "Шукати клуби..." [ref=e88]
+      - generic [ref=e89]:
+        - tablist "Club filter" [ref=e90]:
+          - generic [ref=e91]:
+            - tab "Всі клуби" [active] [selected] [ref=e93]
+            - tab "Мої клуби" [ref=e94]
+        - tabpanel [ref=e544]:
+          - list [ref=e545]:
+            - listitem [ref=e546]:
+              - generic [ref=e551]:
+                - generic [ref=e552]:
+                  - heading "test" [level=3] [ref=e553]
+                  - paragraph [ref=e554]: test
+                - generic [ref=e555]:
+                  - button "Приєднатися test" [ref=e556]: Приєднатися
+                  - link "Переглянути test" [ref=e557] [cursor=pointer]:
+                    - /url: /clubs/ae57500b-698b-45de-ad0d-53b729b6892b
+                    - text: Переглянути
+            - listitem [ref=e558]:
+              - generic [ref=e563]:
+                - generic [ref=e564]:
+                  - heading "Kyiv" [level=3] [ref=e565]
+                  - paragraph [ref=e566]: Kyiv
+                - generic [ref=e567]:
+                  - button "Приєднатися Kyiv" [ref=e568]: Приєднатися
+                  - link "Переглянути Kyiv" [ref=e569] [cursor=pointer]:
+                    - /url: /clubs/f165e1ab-f292-4a81-895b-5067df8bb642
+                    - text: Переглянути
+            - listitem [ref=e570]:
+              - generic [ref=e575]:
+                - generic [ref=e576]:
+                  - heading "tret" [level=3] [ref=e577]
+                  - paragraph [ref=e578]: tre
+                - generic [ref=e579]:
+                  - button "Приєднатися tret" [ref=e580]: Приєднатися
+                  - link "Переглянути tret" [ref=e581] [cursor=pointer]:
+                    - /url: /clubs/19f8fb3c-1542-4b87-9365-9aa8299c654e
+                    - text: Переглянути
+            - listitem [ref=e582]:
+              - generic [ref=e587]:
+                - generic [ref=e588]:
+                  - heading "123" [level=3] [ref=e589]
+                  - paragraph [ref=e590]: "1"
+                - generic [ref=e591]:
+                  - button "Приєднатися 123" [ref=e592]: Приєднатися
+                  - link "Переглянути 123" [ref=e593] [cursor=pointer]:
+                    - /url: /clubs/166b8789-0067-44a5-b9a7-3a209293eb55
+                    - text: Переглянути
+            - listitem [ref=e594]:
+              - generic [ref=e599]:
+                - generic [ref=e600]:
+                  - heading "Audit Club Test" [level=3] [ref=e601]
+                  - paragraph [ref=e602]: Тестовий клуб для аудиту
+                - generic [ref=e603]:
+                  - button "Приєднатися Audit Club Test" [ref=e604]: Приєднатися
+                  - link "Переглянути Audit Club Test" [ref=e605] [cursor=pointer]:
+                    - /url: /clubs/b1ff475c-7958-43b6-b463-c005c3a0d559
+                    - text: Переглянути
+            - listitem [ref=e606]:
+              - generic [ref=e611]:
+                - generic [ref=e612]:
+                  - heading "[Audit] Club 1778501868166" [level=3] [ref=e613]
+                  - paragraph [ref=e614]: Audit test club — safe to delete
+                - generic [ref=e615]:
+                  - button "Приєднатися [Audit] Club 1778501868166" [ref=e616]: Приєднатися
+                  - link "Переглянути [Audit] Club 1778501868166" [ref=e617] [cursor=pointer]:
+                    - /url: /clubs/2affc525-02bb-4fc6-a2c3-99baad3c5773
+                    - text: Переглянути
+            - listitem [ref=e618]:
+              - generic [ref=e623]:
+                - generic [ref=e624]:
+                  - heading "[Audit] Club 1778502535125" [level=3] [ref=e625]
+                  - paragraph [ref=e626]: Audit test club — safe to delete
+                - generic [ref=e627]:
+                  - button "Приєднатися [Audit] Club 1778502535125" [ref=e628]: Приєднатися
+                  - link "Переглянути [Audit] Club 1778502535125" [ref=e629] [cursor=pointer]:
+                    - /url: /clubs/11f6bac7-d598-457f-ba9e-b84e82c01b53
+                    - text: Переглянути
+            - listitem [ref=e630]:
+              - generic [ref=e635]:
+                - generic [ref=e636]:
+                  - heading "terrtr" [level=3] [ref=e637]
+                  - paragraph [ref=e638]: tretet
+                - generic [ref=e639]:
+                  - button "Приєднатися terrtr" [ref=e640]: Приєднатися
+                  - link "Переглянути terrtr" [ref=e641] [cursor=pointer]:
+                    - /url: /clubs/efc6aa3b-14e7-4a6e-ba2e-8a8e3eae5dc9
+                    - text: Переглянути
+            - listitem [ref=e642]:
+              - generic [ref=e647]:
+                - generic [ref=e648]:
+                  - heading "[Audit] Club 1778502861144" [level=3] [ref=e649]
+                  - paragraph [ref=e650]: Audit test club — safe to delete
+                - generic [ref=e651]:
+                  - button "Приєднатися [Audit] Club 1778502861144" [ref=e652]: Приєднатися
+                  - link "Переглянути [Audit] Club 1778502861144" [ref=e653] [cursor=pointer]:
+                    - /url: /clubs/f72e14c0-979f-4d41-bc4d-f81e3435892b
+                    - text: Переглянути
+            - listitem [ref=e654]:
+              - generic [ref=e659]:
+                - generic [ref=e660]:
+                  - heading "[Audit] Club 1778502199241" [level=3] [ref=e661]
+                  - paragraph [ref=e662]: Audit test club — safe to delete
+                - generic [ref=e663]:
+                  - button "Приєднатися [Audit] Club 1778502199241" [ref=e664]: Приєднатися
+                  - link "Переглянути [Audit] Club 1778502199241" [ref=e665] [cursor=pointer]:
+                    - /url: /clubs/be0578c5-3111-4921-92ca-b76577d3ea75
+                    - text: Переглянути
+            - listitem [ref=e666]:
+              - generic [ref=e671]:
+                - generic [ref=e672]:
+                  - heading "[Audit] Club 1778503437791" [level=3] [ref=e673]
+                  - paragraph [ref=e674]: Audit test club — safe to delete
+                - generic [ref=e675]:
+                  - button "Приєднатися [Audit] Club 1778503437791" [ref=e676]: Приєднатися
+                  - link "Переглянути [Audit] Club 1778503437791" [ref=e677] [cursor=pointer]:
+                    - /url: /clubs/e6b91cd5-f385-43f5-99f4-a73f32cb2cd5
+                    - text: Переглянути
+            - listitem [ref=e678]:
+              - generic [ref=e683]:
+                - generic [ref=e684]:
+                  - heading "[Audit] Club 1778503882154" [level=3] [ref=e685]
+                  - paragraph [ref=e686]: Audit test club — safe to delete
+                - generic [ref=e687]:
+                  - button "Приєднатися [Audit] Club 1778503882154" [ref=e688]: Приєднатися
+                  - link "Переглянути [Audit] Club 1778503882154" [ref=e689] [cursor=pointer]:
+                    - /url: /clubs/c1579f1a-9f98-4209-b7bb-7a8ae8a4246c
+                    - text: Переглянути
+  - button "Відкрити чат" [ref=e241]:
+    - img [ref=e242]
+  - contentinfo [ref=e245]:
+    - generic [ref=e246]:
+      - paragraph [ref=e247]: 📚 BookClub © 2026 — Усі права захищені
+      - navigation "Footer navigation" [ref=e248]:
+        - list [ref=e249]:
+          - listitem [ref=e250]:
+            - link "Конфіденційність" [ref=e251] [cursor=pointer]:
+              - /url: /privacy
+          - listitem [ref=e252]:
+            - link "Умови" [ref=e253] [cursor=pointer]:
+              - /url: /terms
