@@ -45,13 +45,7 @@ def upgrade() -> None:
 
     # 2. Backfill from the existing ``timestamp`` column, which semantically
     #    represents the same moment (message creation time).
-    op.execute(
-        sa.text(
-            "UPDATE chat_messages "
-            'SET created_at = "timestamp" '
-            "WHERE created_at IS NULL"
-        )
-    )
+    op.execute(sa.text('UPDATE chat_messages SET created_at = "timestamp" WHERE created_at IS NULL'))
 
     # 3. Enforce NOT NULL and attach a server default for future inserts.
     op.alter_column(
