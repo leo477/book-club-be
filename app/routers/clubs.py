@@ -281,25 +281,25 @@ async def join_club(
         raise
     except TimeoutError as exc:
         # C1: convert hang into a precise 503 instead of a 20s bare 500.
-        logger.error("join_club timed out", timeout_s=_JOIN_DB_TIMEOUT_SECONDS)
+        log.error("join_club timed out", timeout_s=_JOIN_DB_TIMEOUT_SECONDS)
         try:
             await db.rollback()
         except SQLAlchemyError:
-            logger.exception("join_club rollback failed after timeout")
+            log.exception("join_club rollback failed after timeout")
         raise AppError(
             503,
             "Database is temporarily unavailable, please retry",
             "JOIN_TIMEOUT",
         ) from exc
     except SQLAlchemyError as exc:
-        logger.exception("join_club database error")
+        log.exception("join_club database error")
         try:
             await db.rollback()
         except SQLAlchemyError:
-            logger.exception("join_club rollback failed after database error")
+            log.exception("join_club rollback failed after database error")
         raise AppError(503, "Database error while joining club", "JOIN_DB_ERROR") from exc
 
-    logger.info("join_club succeeded", member_count=member_count)
+    log.info("join_club succeeded", member_count=member_count)
     return {"memberCount": member_count}
 
 
