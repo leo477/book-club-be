@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import and_, delete, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
@@ -24,6 +26,13 @@ from app.services.club_service import (
     get_club_or_404,
 )
 from app.services.event_service import build_event_response, build_event_responses_bulk
+
+logger = structlog.get_logger(__name__)
+
+# C1: hard cap for the join handler. Production observed 20+s hangs returning
+# bare 500s; this ensures we always answer the client within a bounded window
+# and surface a structured 503 instead of a connection-killing hang.
+_JOIN_DB_TIMEOUT_SECONDS = 8.0
 
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
@@ -208,12 +217,16 @@ async def delete_club(
     await delete_club_cascade(club_id, db)
 
 
-@router.post("/{club_id}/join")
-async def join_club(
+async def _do_join_club(
     club_id: uuid.UUID,
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_dep)],
-) -> dict[str, int]:
+    current_user: User,
+    db: AsyncSession,
+) -> int:
+    """Perform the join transaction and return the new member count.
+
+    Extracted so the whole DB workflow can be bounded by ``asyncio.wait_for``
+    (C1 — production observed 20s+ hangs on this endpoint).
+    """
     await get_club_or_404(club_id, db)
 
     # M-7: check for active ban (respects expires_at; NULL = permanent)
@@ -228,7 +241,7 @@ async def join_club(
             raise AppError(403, "You are banned from this club", "CLUB_BANNED")
 
     existing = await db.execute(
-        select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
+        select(ClubMember.id).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
     )
     if existing.scalar_one_or_none():
         raise AppError(409, "Already a member", "ALREADY_MEMBER")
@@ -248,7 +261,45 @@ async def join_club(
         raise AppError(409, "Already a member", "ALREADY_MEMBER") from exc
 
     count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
-    member_count = count_result.scalar() or 0
+    return int(count_result.scalar() or 0)
+
+
+@router.post("/{club_id}/join")
+async def join_club(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> dict[str, int]:
+    log = logger.bind(club_id=str(club_id), user_id=str(current_user.id))
+    try:
+        member_count = await asyncio.wait_for(
+            _do_join_club(club_id, current_user, db),
+            timeout=_JOIN_DB_TIMEOUT_SECONDS,
+        )
+    except AppError:
+        # Already a structured response (404/403/409) — let it propagate.
+        raise
+    except TimeoutError as exc:
+        # C1: convert hang into a precise 503 instead of a 20s bare 500.
+        log.error("join_club timed out", timeout_s=_JOIN_DB_TIMEOUT_SECONDS)
+        try:
+            await db.rollback()
+        except SQLAlchemyError:
+            log.exception("join_club rollback failed after timeout")
+        raise AppError(
+            503,
+            "Database is temporarily unavailable, please retry",
+            "JOIN_TIMEOUT",
+        ) from exc
+    except SQLAlchemyError as exc:
+        log.exception("join_club database error")
+        try:
+            await db.rollback()
+        except SQLAlchemyError:
+            log.exception("join_club rollback failed after database error")
+        raise AppError(503, "Database error while joining club", "JOIN_DB_ERROR") from exc
+
+    log.info("join_club succeeded", member_count=member_count)
     return {"memberCount": member_count}
 
 
