@@ -11,13 +11,6 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = structlog.get_logger(__name__)
-
-# C1: hard cap for the join handler. Production observed 20+s hangs returning
-# bare 500s; this ensures we always answer the client within a bounded window
-# and surface a structured 503 instead of a connection-killing hang.
-_JOIN_DB_TIMEOUT_SECONDS = 8.0
-
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
 from app.exceptions import AppError
 from app.models.club import Club
@@ -33,6 +26,13 @@ from app.services.club_service import (
     get_club_or_404,
 )
 from app.services.event_service import build_event_response, build_event_responses_bulk
+
+logger = structlog.get_logger(__name__)
+
+# C1: hard cap for the join handler. Production observed 20+s hangs returning
+# bare 500s; this ensures we always answer the client within a bounded window
+# and surface a structured 503 instead of a connection-killing hang.
+_JOIN_DB_TIMEOUT_SECONDS = 8.0
 
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
@@ -279,27 +279,27 @@ async def join_club(
     except AppError:
         # Already a structured response (404/403/409) — let it propagate.
         raise
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         # C1: convert hang into a precise 503 instead of a 20s bare 500.
-        log.error("join_club timed out", timeout_s=_JOIN_DB_TIMEOUT_SECONDS)
+        logger.error("join_club timed out", timeout_s=_JOIN_DB_TIMEOUT_SECONDS)
         try:
             await db.rollback()
         except SQLAlchemyError:
-            log.exception("join_club rollback failed after timeout")
+            logger.exception("join_club rollback failed after timeout")
         raise AppError(
             503,
             "Database is temporarily unavailable, please retry",
             "JOIN_TIMEOUT",
         ) from exc
     except SQLAlchemyError as exc:
-        log.exception("join_club database error")
+        logger.exception("join_club database error")
         try:
             await db.rollback()
         except SQLAlchemyError:
-            log.exception("join_club rollback failed after database error")
+            logger.exception("join_club rollback failed after database error")
         raise AppError(503, "Database error while joining club", "JOIN_DB_ERROR") from exc
 
-    log.info("join_club succeeded", member_count=member_count)
+    logger.info("join_club succeeded", member_count=member_count)
     return {"memberCount": member_count}
 
 
