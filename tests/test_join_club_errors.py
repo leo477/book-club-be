@@ -1,8 +1,12 @@
 import asyncio
-from unittest.mock import patch
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+from app.exceptions import AppError
+from app.routers.clubs import _do_join_club, join_club
 
 
 async def _organizer_with_club(async_client, register_user, auth_headers, email, club_name):
@@ -31,7 +35,7 @@ async def test_join_club_timeout_returns_503(async_client, register_user, auth_h
 
     assert resp.status_code == 503
     body = resp.json()
-    assert body.get("code") == "JOIN_TIMEOUT" or body.get("detail", {}).get("code") == "JOIN_TIMEOUT"
+    assert body.get("detail", {}).get("code") == "JOIN_TIMEOUT"
 
 
 @pytest.mark.asyncio
@@ -50,7 +54,7 @@ async def test_join_club_db_error_returns_503(async_client, register_user, auth_
 
     assert resp.status_code == 503
     body = resp.json()
-    assert body.get("code") == "JOIN_DB_ERROR" or body.get("detail", {}).get("code") == "JOIN_DB_ERROR"
+    assert body.get("detail", {}).get("code") == "JOIN_DB_ERROR"
 
 
 @pytest.mark.asyncio
@@ -70,3 +74,72 @@ async def test_join_club_real_timeout_path(async_client, register_user, auth_hea
         resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_do_join_club_integrity_error_maps_to_already_member():
+    """TOCTOU race: SELECT shows no membership, but INSERT collides on the unique constraint."""
+    club_id = uuid.uuid4()
+    user = MagicMock()
+    user.id = uuid.uuid4()
+
+    db = MagicMock()
+    db.execute = AsyncMock()
+    ban_result = MagicMock()
+    ban_result.scalar_one_or_none = MagicMock(return_value=None)
+    existing_result = MagicMock()
+    existing_result.scalar_one_or_none = MagicMock(return_value=None)
+    db.execute.side_effect = [ban_result, existing_result]
+    db.add = MagicMock()
+    db.commit = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("dup")))
+    db.rollback = AsyncMock()
+
+    with patch("app.routers.clubs.get_club_or_404", new=AsyncMock(return_value=MagicMock())):
+        with pytest.raises(AppError) as exc_info:
+            await _do_join_club(club_id, user, db)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "ALREADY_MEMBER"
+    db.rollback.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_join_club_timeout_rollback_failure_still_returns_503():
+    """Rollback after timeout itself raises SQLAlchemyError — handler must still return 503."""
+    club_id = uuid.uuid4()
+    user = MagicMock()
+    user.id = uuid.uuid4()
+    db = MagicMock()
+    db.rollback = AsyncMock(side_effect=SQLAlchemyError("rollback failed"))
+
+    async def _hang(*_args, **_kwargs):
+        raise TimeoutError
+
+    with patch("app.routers.clubs._do_join_club", side_effect=_hang):
+        with pytest.raises(AppError) as exc_info:
+            await join_club(club_id, user, db)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["code"] == "JOIN_TIMEOUT"
+    db.rollback.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_join_club_db_error_rollback_failure_still_returns_503():
+    """Rollback after DB error itself raises — handler must still return 503."""
+    club_id = uuid.uuid4()
+    user = MagicMock()
+    user.id = uuid.uuid4()
+    db = MagicMock()
+    db.rollback = AsyncMock(side_effect=SQLAlchemyError("rollback failed"))
+
+    async def _boom(*_args, **_kwargs):
+        raise SQLAlchemyError("boom")
+
+    with patch("app.routers.clubs._do_join_club", side_effect=_boom):
+        with pytest.raises(AppError) as exc_info:
+            await join_club(club_id, user, db)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["code"] == "JOIN_DB_ERROR"
+    db.rollback.assert_awaited()
