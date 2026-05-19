@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -224,9 +223,24 @@ async def _do_join_club(
 ) -> int:
     """Perform the join transaction and return the new member count.
 
-    Extracted so the whole DB workflow can be bounded by ``asyncio.wait_for``
-    (C1 — production observed 20s+ hangs on this endpoint).
+    C1: a PostgreSQL statement_timeout is set at the start of the transaction
+    so that any stalled DB call is aborted by the server (raises OperationalError)
+    rather than hanging the Python coroutine.  This avoids the coroutine-
+    cancellation hazard of asyncio.wait_for with a shared AsyncSession.
     """
+    from sqlalchemy import text
+
+    # C1: enforce an 8-second ceiling on every statement in this transaction.
+    # If any call stalls (lock contention, pooler issue), Postgres aborts it
+    # and raises OperationalError — caught cleanly in join_club without
+    # cancelling the coroutine or leaving the connection in an undefined state.
+    # SET LOCAL is PostgreSQL-specific; guard with a dialect check so tests
+    # running against SQLite are unaffected.
+    conn = await db.connection()
+    if conn.dialect.name == "postgresql":
+        timeout_ms = int(_JOIN_DB_TIMEOUT_SECONDS * 1000)
+        await db.execute(text(f"SET LOCAL statement_timeout = '{timeout_ms}ms'"))
+
     await get_club_or_404(club_id, db)
 
     # M-7: check for active ban (respects expires_at; NULL = permanent)
@@ -272,31 +286,18 @@ async def join_club(
 ) -> dict[str, int]:
     log = logger.bind(club_id=str(club_id), user_id=str(current_user.id))
     try:
-        member_count = await asyncio.wait_for(
-            _do_join_club(club_id, current_user, db),
-            timeout=_JOIN_DB_TIMEOUT_SECONDS,
-        )
+        member_count = await _do_join_club(club_id, current_user, db)
     except AppError:
         # Already a structured response (404/403/409) — let it propagate.
         raise
-    except TimeoutError as exc:
-        # C1: convert hang into a precise 503 instead of a 20s bare 500.
-        log.error("join_club timed out", timeout_s=_JOIN_DB_TIMEOUT_SECONDS)
-        try:
-            await db.rollback()
-        except SQLAlchemyError:
-            log.exception("join_club rollback failed after timeout")
-        raise AppError(
-            503,
-            "Database is temporarily unavailable, please retry",
-            "JOIN_TIMEOUT",
-        ) from exc
     except SQLAlchemyError as exc:
         log.exception("join_club database error")
         try:
             await db.rollback()
         except SQLAlchemyError:
             log.exception("join_club rollback failed after database error")
+        # C1: statement_timeout fires as OperationalError; surface it as a
+        # bounded 503 rather than an unhandled 500.
         raise AppError(503, "Database error while joining club", "JOIN_DB_ERROR") from exc
 
     log.info("join_club succeeded", member_count=member_count)
