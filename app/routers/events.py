@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -96,8 +96,8 @@ async def attend_event(
     if event.status in ("cancelled",):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot attend a cancelled event")
 
-    event_date = event.date if event.date.tzinfo is not None else event.date.replace(tzinfo=timezone.utc)
-    if event_date - datetime.now(tz=timezone.utc) < timedelta(days=3):
+    event_date = event.date if event.date.tzinfo is not None else event.date.replace(tzinfo=UTC)
+    if event_date - datetime.now(tz=UTC) < timedelta(days=3):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration closed")
 
     member_result = await db.execute(
