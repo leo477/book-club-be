@@ -250,9 +250,7 @@ async def test_list_bans_organizer_via_club_organizer_id(async_client, register_
 
     # Simulate the L6 edge case: remove the organizer's club_members record so
     # require_club_organizer would raise 403, but Club.organizer_id still matches.
-    await db_session.execute(
-        delete(ClubMemberModel).where(ClubMemberModel.club_id == _uuid.UUID(club_id))
-    )
+    await db_session.execute(delete(ClubMemberModel).where(ClubMemberModel.club_id == _uuid.UUID(club_id)))
     await db_session.commit()
 
     # Despite missing club_members record, Club.organizer_id fallback allows access.
