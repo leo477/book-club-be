@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
 from app.exceptions import AppError
+from app.models.club import Club
 from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.user import User
@@ -118,7 +119,22 @@ async def list_bans(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> list[BanResponse]:
-    _ = await require_club_organizer(club_id, current_user, db)
+    # L6: require_club_organizer checks club_members for role="organizer", but a
+    # brand-new club's organizer_id in the clubs table is the authoritative source.
+    # If the club_members record is missing (data inconsistency / race on creation),
+    # fall back to checking Club.organizer_id directly so the endpoint returns []
+    # instead of 403, avoiding a spurious frontend warning for new clubs.
+    club_result = await db.execute(select(Club).where(Club.id == club_id))
+    club = club_result.scalar_one_or_none()
+    if club is None:
+        raise AppError(404, "Club not found", "CLUB_NOT_FOUND")
+
+    if club.organizer_id != current_user.id:
+        # Not the club owner — check club_members for organizer role (e.g. delegated).
+        try:
+            await require_club_organizer(club_id, current_user, db)
+        except AppError:
+            raise AppError(403, "Not authorized", "FORBIDDEN") from None
 
     result = await db.execute(select(ClubBan).where(ClubBan.club_id == club_id))
     bans = result.scalars().all()
