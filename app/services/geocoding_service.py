@@ -43,15 +43,17 @@ async def photon_autocomplete(
     photon_lang = lang if lang in {"default", "de", "en", "fr"} else "en"
 
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=settings.PHOTON_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(
                 f"{settings.PHOTON_URL}/api/",
                 params={"q": q, "limit": limit, "lang": photon_lang},
+                headers={"User-Agent": "BookClub/1.0"},
             ) as response:
                 response.raise_for_status()
                 data = await response.json()
     except Exception as exc:
-        logger.error("Photon geocoding request failed", error=str(exc))
+        logger.error("Photon geocoding request failed", error=str(exc), exc_type=type(exc).__name__)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Geocoding service unavailable") from exc
 
     suggestions: list[GeocodeSuggestion] = []
