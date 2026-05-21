@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     CORS_ORIGIN_REGEX: str = r"^https://book-club-[a-z0-9-]+\.vercel\.app$"
     REDIS_URL: str = "redis://localhost:6379"
     PHOTON_URL: str = "https://photon.komoot.io"
+    PHOTON_TIMEOUT: int = 8
     SENTRY_DSN: str = ""
     LOG_LEVEL: str = "INFO"
     ENV: str = "development"
