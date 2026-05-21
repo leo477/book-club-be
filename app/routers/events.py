@@ -101,9 +101,7 @@ async def attend_event(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration closed")
 
     member_result = await db.execute(
-        select(ClubMember.id).where(
-            and_(ClubMember.club_id == event.club_id, ClubMember.user_id == current_user.id)
-        )
+        select(ClubMember.id).where(and_(ClubMember.club_id == event.club_id, ClubMember.user_id == current_user.id))
     )
     auto_joined = False
     if member_result.scalar_one_or_none() is None:
