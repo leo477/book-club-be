@@ -40,11 +40,13 @@ async def photon_autocomplete(
         except Exception as exc:
             logger.warning("Redis cache read failed", error=str(exc))
 
+    photon_lang = lang if lang in {"default", "de", "en", "fr"} else "en"
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{settings.PHOTON_URL}/api/",
-                params={"q": q, "limit": limit, "lang": lang},
+                params={"q": q, "limit": limit, "lang": photon_lang},
             ) as response:
                 response.raise_for_status()
                 data = await response.json()
