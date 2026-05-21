@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,7 @@ from app.dependencies import get_current_user, get_db_dep, get_optional_user, re
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
-from app.schemas.events import EventResponse, RescheduleEventRequest
+from app.schemas.events import AttendEventResponse, EventResponse, RescheduleEventRequest
 from app.services.event_service import build_event_response, build_event_responses_bulk, get_event_or_404
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
@@ -86,20 +86,38 @@ async def get_event(
     return await build_event_response(event, db, current_user_id)
 
 
-@router.post("/{event_id}/attend", status_code=status.HTTP_201_CREATED, response_model=dict[str, int])
+@router.post("/{event_id}/attend", status_code=status.HTTP_201_CREATED, response_model=AttendEventResponse)
 async def attend_event(
     event_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-) -> dict[str, int]:
+) -> AttendEventResponse:
     event = await get_event_or_404(event_id, db)
-    if event.status in ("cancelled",):
+    if event.status == "cancelled":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot attend a cancelled event")
+
+    event_date = event.date if event.date.tzinfo is not None else event.date.replace(tzinfo=UTC)
+    if event_date - datetime.now(tz=UTC) < timedelta(days=3):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration closed")
+
+    member_result = await db.execute(
+        select(ClubMember.id).where(and_(ClubMember.club_id == event.club_id, ClubMember.user_id == current_user.id))
+    )
+    auto_joined = member_result.scalar_one_or_none() is None
+    if auto_joined:
+        db.add(
+            ClubMember(
+                id=uuid.uuid4(),
+                club_id=event.club_id,
+                user_id=current_user.id,
+                role="member",
+            )
+        )
 
     existing = await db.execute(
         select(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id))
     )
-    if existing.scalar_one_or_none():
+    if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already attending")
 
     db.add(EventAttendee(event_id=event_id, user_id=current_user.id))
@@ -110,12 +128,10 @@ async def attend_event(
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already attending") from exc
 
-    from sqlalchemy import func
-
     count_result = await db.execute(
         select(func.count()).select_from(EventAttendee).where(EventAttendee.event_id == event_id)
     )
-    return {"attendeeCount": count_result.scalar() or 0}
+    return AttendEventResponse(attendeeCount=count_result.scalar() or 0, autoJoined=auto_joined)
 
 
 @router.delete("/{event_id}/attend", status_code=status.HTTP_204_NO_CONTENT)
