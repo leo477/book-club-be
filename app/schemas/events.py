@@ -55,3 +55,8 @@ class RescheduleEventRequest(BaseModel):
     newDate: str
     newAddress: str | None = None
     newCity: str | None = None
+
+
+class AttendEventResponse(BaseModel):
+    attendeeCount: int
+    autoJoined: bool
