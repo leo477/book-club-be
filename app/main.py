@@ -61,7 +61,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     import asyncio
 
     proc = await asyncio.create_subprocess_exec(
-        "/app/.venv/bin/alembic", "upgrade", "head",
+        "/app/.venv/bin/alembic",
+        "upgrade",
+        "head",
         cwd="/app",
     )
     await proc.wait()
