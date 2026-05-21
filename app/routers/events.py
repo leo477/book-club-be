@@ -93,7 +93,7 @@ async def attend_event(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> AttendEventResponse:
     event = await get_event_or_404(event_id, db)
-    if event.status in ("cancelled",):
+    if event.status == "cancelled":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot attend a cancelled event")
 
     event_date = event.date if event.date.tzinfo is not None else event.date.replace(tzinfo=UTC)
@@ -113,12 +113,13 @@ async def attend_event(
                 role="member",
             )
         )
+        await db.flush()
         auto_joined = True
 
     existing = await db.execute(
         select(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id))
     )
-    if existing.scalar_one_or_none():
+    if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already attending")
 
     db.add(EventAttendee(event_id=event_id, user_id=current_user.id))

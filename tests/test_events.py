@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -248,6 +249,56 @@ async def test_attend_event_not_found(async_client, register_user, auth_headers)
     headers = await auth_headers(email="ev_att_nf@example.com")
     resp = await async_client.post(f"/api/v1/events/{uuid.uuid4()}/attend", headers=headers)
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_attend_event_registration_closed(async_client, register_user, auth_headers):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_att_deadline@example.com")
+    club_id = await _create_club(async_client, org_headers, "DeadlineClub")
+    soon = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    event = await _create_event(async_client, org_headers, club_id, {**EVENT_PAYLOAD, "date": soon})
+
+    await register_user(email="ev_att_deadline_m@example.com")
+    member_headers = await auth_headers(email="ev_att_deadline_m@example.com")
+
+    resp = await async_client.post(f"/api/v1/events/{event['id']}/attend", headers=member_headers)
+    assert resp.status_code == 400
+    assert "Registration closed" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_attend_event_auto_joins_club(async_client, register_user, auth_headers):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_att_autojoin@example.com")
+    club_id = await _create_club(async_client, org_headers, "AutoJoinClub")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    await register_user(email="ev_att_autojoin_m@example.com")
+    member_headers = await auth_headers(email="ev_att_autojoin_m@example.com")
+
+    resp = await async_client.post(f"/api/v1/events/{event['id']}/attend", headers=member_headers)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["autoJoined"] is True
+
+    members_resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=org_headers)
+    assert members_resp.status_code == 200
+    member_ids = [m["userId"] for m in members_resp.json()]
+    assert any(m for m in members_resp.json() if m.get("userId") and member_ids)
+
+
+@pytest.mark.asyncio
+async def test_attend_event_no_auto_join_when_already_member(async_client, register_user, auth_headers):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_att_nojoin@example.com")
+    club_id = await _create_club(async_client, org_headers, "NoJoinClub")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    await register_user(email="ev_att_nojoin_m@example.com")
+    member_headers = await auth_headers(email="ev_att_nojoin_m@example.com")
+    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=member_headers)
+
+    resp = await async_client.post(f"/api/v1/events/{event['id']}/attend", headers=member_headers)
+    assert resp.status_code == 201
+    assert resp.json()["autoJoined"] is False
 
 
 # ---------------------------------------------------------------------------
