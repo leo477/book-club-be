@@ -282,8 +282,7 @@ async def test_attend_event_auto_joins_club(async_client, register_user, auth_he
 
     members_resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=org_headers)
     assert members_resp.status_code == 200
-    member_ids = [m["userId"] for m in members_resp.json()]
-    assert any(m for m in members_resp.json() if m.get("userId") and member_ids)
+    assert len(members_resp.json()) >= 2
 
 
 @pytest.mark.asyncio

@@ -103,8 +103,8 @@ async def attend_event(
     member_result = await db.execute(
         select(ClubMember.id).where(and_(ClubMember.club_id == event.club_id, ClubMember.user_id == current_user.id))
     )
-    auto_joined = False
-    if member_result.scalar_one_or_none() is None:
+    auto_joined = member_result.scalar_one_or_none() is None
+    if auto_joined:
         db.add(
             ClubMember(
                 id=uuid.uuid4(),
@@ -113,8 +113,6 @@ async def attend_event(
                 role="member",
             )
         )
-        await db.flush()
-        auto_joined = True
 
     existing = await db.execute(
         select(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id))
