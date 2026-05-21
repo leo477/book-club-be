@@ -58,13 +58,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _app.state.redis_pool = redis_pool
     logger.info("Redis pool created", url=settings.REDIS_URL)
 
-    import subprocess
+    import asyncio
 
-    subprocess.run(
-        ["/app/.venv/bin/alembic", "upgrade", "head"],
-        check=True,
+    proc = await asyncio.create_subprocess_exec(
+        "/app/.venv/bin/alembic", "upgrade", "head",
         cwd="/app",
     )
+    await proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(f"alembic upgrade head failed with exit code {proc.returncode}")
     logger.info("Database migrations applied")
 
     logger.info("Application starting", env=settings.ENV, version="1.0.0")
