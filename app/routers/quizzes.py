@@ -14,7 +14,6 @@ from app.schemas.quizzes import (
     AttemptResponse,
     CreateQuizRequest,
     CreateSessionRequest,
-    LeaderboardEntry,
     LeaderboardResponse,
     QuizQuestionResponse,
     QuizResponse,
@@ -25,6 +24,7 @@ from app.schemas.quizzes import (
     UpdateQuestionRequest,
     UpdateQuizRequest,
 )
+from app.services.quiz_service import get_quiz_leaderboard, submit_quiz_attempt
 
 QUIZ_NOT_FOUND = "Quiz not found"
 QUESTION_NOT_FOUND = "Question not found"
@@ -319,43 +319,7 @@ async def submit_attempt(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> AttemptResponse:
-    quiz = await _get_quiz_or_404(quiz_id, db)
-
-    if not quiz.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "Quiz is not active", "code": "QUIZ_NOT_ACTIVE"},
-        )
-
-    questions_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id).order_by(QuizQuestion.position)
-    )
-    questions_db = questions_result.scalars().all()
-    total = len(questions_db)
-
-    score = sum(1 for i, q in enumerate(questions_db) if i < len(req.answers) and req.answers[i] == q.correct_index)
-
-    attempt = QuizAttempt(
-        id=uuid.uuid4(),
-        quiz_id=quiz_id,
-        user_id=current_user.id,
-        score=score,
-        total=total,
-        answers=req.answers,
-    )
-    db.add(attempt)
-    await db.flush()
-    await db.commit()
-    await db.refresh(attempt)
-
-    return AttemptResponse(
-        id=str(attempt.id),
-        quizId=str(attempt.quiz_id),
-        userId=str(attempt.user_id),
-        score=attempt.score,
-        total=attempt.total,
-        answers=attempt.answers,
-    )
+    return await submit_quiz_attempt(quiz_id, current_user, req, db)
 
 
 @router.post("/quizzes/{quiz_id}/sessions", status_code=status.HTTP_201_CREATED)
@@ -423,49 +387,7 @@ async def get_leaderboard(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> LeaderboardResponse:
-    await _get_quiz_or_404(quiz_id, db)
-
-    session_result = await db.execute(
-        select(QuizSession).where(QuizSession.id == session_id, QuizSession.quiz_id == quiz_id)
-    )
-    # M-4: retain session object to use started_at for scoping attempts
-    session_obj = session_result.scalar_one_or_none()
-    if session_obj is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
-        )
-
-    total_questions_result = await db.execute(
-        select(func.count()).select_from(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
-    )
-    total_questions = total_questions_result.scalar() or 0
-
-    attempts_result = await db.execute(
-        select(QuizAttempt, User.display_name, User.avatar_url)
-        .join(User, QuizAttempt.user_id == User.id)
-        .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.created_at >= session_obj.started_at)
-        .order_by(QuizAttempt.score.desc(), QuizAttempt.created_at.asc())
-    )
-    rows = attempts_result.all()
-
-    seen_users: dict[str, LeaderboardEntry] = {}
-    rank = 1
-    for attempt, display_name, avatar_url in rows:
-        user_id_str = str(attempt.user_id)
-        if user_id_str not in seen_users:
-            seen_users[user_id_str] = LeaderboardEntry(
-                rank=rank,
-                userId=user_id_str,
-                displayName=display_name,
-                avatarUrl=avatar_url,
-                score=attempt.score,
-                totalQuestions=total_questions,
-                hasAttempted=True,
-            )
-            rank += 1
-
-    return LeaderboardResponse(entries=list(seen_users.values()))
+    return await get_quiz_leaderboard(quiz_id, session_id, db)
 
 
 @router.patch("/quizzes/{quiz_id}/sessions/{session_id}/close", status_code=status.HTTP_204_NO_CONTENT)

@@ -6,14 +6,13 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import and_, delete, func, or_, select
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
 from app.exceptions import AppError
 from app.models.club import Club
-from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.user import User
 from app.schemas.clubs import ClubResponse, CreateClubRequest, RescheduleMeetingRequest, UpdateClubRequest
@@ -21,17 +20,15 @@ from app.schemas.events import CreateEventRequest, EventResponse
 from app.services.club_service import (
     build_club_response,
     build_club_responses_bulk,
+    create_club_service,
+    create_event_service,
     delete_club_cascade,
     get_club_or_404,
+    join_club_service,
 )
-from app.services.event_service import build_event_response, build_event_responses_bulk
+from app.services.event_service import build_event_responses_bulk
 
 logger = structlog.get_logger(__name__)
-
-# C1: hard cap for the join handler. Production observed 20+s hangs returning
-# bare 500s; this ensures we always answer the client within a bounded window
-# and surface a structured 503 instead of a connection-killing hang.
-_JOIN_DB_TIMEOUT_SECONDS = 8.0
 
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
@@ -99,39 +96,7 @@ async def create_club(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> ClubResponse:
-    if current_user.role != "organizer":
-        raise AppError(403, "Only organizers can create clubs", "FORBIDDEN")
-
-    existing = await db.execute(select(Club).where(Club.organizer_id == current_user.id).limit(1))
-    if existing.scalar_one_or_none() is not None:
-        raise AppError(409, "You already own a club", "ORGANIZER_ALREADY_HAS_CLUB")
-
-    club = Club(
-        id=uuid.uuid4(),
-        name=body.name,
-        description=body.description,
-        cover_url=body.coverUrl,
-        is_public=body.isPublic,
-        organizer_id=current_user.id,
-        city=body.city,
-        tags=body.tags or [],
-        meeting_duration_minutes=body.meetingDurationMinutes,
-        after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
-        status="active",
-    )
-    db.add(club)
-    await db.flush()
-
-    membership = ClubMember(
-        id=uuid.uuid4(),
-        club_id=club.id,
-        user_id=current_user.id,
-        role="organizer",
-    )
-    db.add(membership)
-    await db.commit()
-    await db.refresh(club)
-    return await build_club_response(club, db)
+    return await create_club_service(body, current_user, db)
 
 
 @router.patch("/{club_id}")
@@ -216,68 +181,6 @@ async def delete_club(
     await delete_club_cascade(club_id, db)
 
 
-async def _do_join_club(
-    club_id: uuid.UUID,
-    current_user: User,
-    db: AsyncSession,
-) -> int:
-    """Perform the join transaction and return the new member count.
-
-    C1: a PostgreSQL statement_timeout is set at the start of the transaction
-    so that any stalled DB call is aborted by the server (raises OperationalError)
-    rather than hanging the Python coroutine.  This avoids the coroutine-
-    cancellation hazard of asyncio.wait_for with a shared AsyncSession.
-    """
-    from sqlalchemy import text
-
-    # C1: enforce an 8-second ceiling on every statement in this transaction.
-    # If any call stalls (lock contention, pooler issue), Postgres aborts it
-    # and raises OperationalError — caught cleanly in join_club without
-    # cancelling the coroutine or leaving the connection in an undefined state.
-    # SET LOCAL is PostgreSQL-specific; guard with a dialect check so tests
-    # running against SQLite are unaffected.
-    conn = await db.connection()
-    if conn.dialect.name == "postgresql":
-        timeout_ms = int(_JOIN_DB_TIMEOUT_SECONDS * 1000)
-        await db.execute(text(f"SET LOCAL statement_timeout = '{timeout_ms}ms'"))
-
-    await get_club_or_404(club_id, db)
-
-    # M-7: check for active ban (respects expires_at; NULL = permanent)
-    ban_result = await db.execute(
-        select(ClubBan).where(and_(ClubBan.club_id == club_id, ClubBan.user_id == current_user.id))
-    )
-    ban = ban_result.scalar_one_or_none()
-    if ban is not None:
-        now_utc = datetime.now(UTC)
-        ban_active = ban.expires_at is None or ban.expires_at > now_utc
-        if ban_active:
-            raise AppError(403, "You are banned from this club", "CLUB_BANNED")
-
-    existing = await db.execute(
-        select(ClubMember.id).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
-    )
-    if existing.scalar_one_or_none():
-        raise AppError(409, "Already a member", "ALREADY_MEMBER")
-
-    membership = ClubMember(
-        id=uuid.uuid4(),
-        club_id=club_id,
-        user_id=current_user.id,
-        role="member",
-    )
-    db.add(membership)
-    # M-5: guard against TOCTOU race — a concurrent join between the SELECT and INSERT
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise AppError(409, "Already a member", "ALREADY_MEMBER") from exc
-
-    count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
-    return int(count_result.scalar() or 0)
-
-
 @router.post("/{club_id}/join")
 async def join_club(
     club_id: uuid.UUID,
@@ -286,7 +189,7 @@ async def join_club(
 ) -> dict[str, int]:
     log = logger.bind(club_id=str(club_id), user_id=str(current_user.id))
     try:
-        member_count = await _do_join_club(club_id, current_user, db)
+        member_count = await join_club_service(club_id, current_user, db)
     except AppError:
         # Already a structured response (404/403/409) — let it propagate.
         raise
@@ -359,28 +262,4 @@ async def create_event(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> EventResponse:
-    _ = await require_club_organizer(club_id, current_user, db)
-    club = await get_club_or_404(club_id, db)
-
-    from app.models.event import Event
-
-    event = Event(
-        id=uuid.uuid4(),
-        club_id=club_id,
-        title=body.title,
-        description=body.description,
-        date=body.date,
-        city=body.city,
-        address=body.address,
-        theme=body.theme,
-        tags=body.tags,
-        duration_minutes=body.durationMinutes,
-        after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
-        cover_url=body.coverUrl,
-        book_title=body.bookTitle,
-        status="scheduled",
-    )
-    db.add(event)
-    await db.commit()
-    await db.refresh(event)
-    return await build_event_response(event, db, current_user.id, club_name=club.name, organizer_id=club.organizer_id)
+    return await create_event_service(body, club_id, current_user, db)

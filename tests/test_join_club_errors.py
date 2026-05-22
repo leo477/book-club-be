@@ -5,7 +5,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from app.exceptions import AppError
-from app.routers.clubs import _do_join_club, join_club
+from app.routers.clubs import join_club
+from app.services.club_service import join_club_service
 
 
 async def _organizer_with_club(async_client, register_user, auth_headers, email, club_name):
@@ -30,7 +31,7 @@ async def test_join_club_statement_timeout_returns_503(async_client, register_us
     async def _timeout(*_args, **_kwargs):
         raise OperationalError("statement", {}, Exception("canceling statement due to statement timeout"))
 
-    with patch("app.routers.clubs._do_join_club", side_effect=_timeout):
+    with patch("app.routers.clubs.join_club_service", side_effect=_timeout):
         resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     assert resp.status_code == 503
@@ -49,7 +50,7 @@ async def test_join_club_db_error_returns_503(async_client, register_user, auth_
     async def _boom(*_args, **_kwargs):
         raise SQLAlchemyError("boom")
 
-    with patch("app.routers.clubs._do_join_club", side_effect=_boom):
+    with patch("app.routers.clubs.join_club_service", side_effect=_boom):
         resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
     assert resp.status_code == 503
@@ -80,9 +81,9 @@ async def test_do_join_club_integrity_error_maps_to_already_member():
     db.commit = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("dup")))
     db.rollback = AsyncMock()
 
-    with patch("app.routers.clubs.get_club_or_404", new=AsyncMock(return_value=MagicMock())):
+    with patch("app.services.club_service.get_club_or_404", new=AsyncMock(return_value=MagicMock())):
         with pytest.raises(AppError) as exc_info:
-            await _do_join_club(club_id, user, db)
+            await join_club_service(club_id, user, db)
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["code"] == "ALREADY_MEMBER"
@@ -101,7 +102,7 @@ async def test_join_club_db_error_rollback_failure_still_returns_503():
     async def _boom(*_args, **_kwargs):
         raise SQLAlchemyError("boom")
 
-    with patch("app.routers.clubs._do_join_club", side_effect=_boom):
+    with patch("app.routers.clubs.join_club_service", side_effect=_boom):
         with pytest.raises(AppError) as exc_info:
             await join_club(club_id, user, db)
 

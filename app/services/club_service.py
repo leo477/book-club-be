@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
-from sqlalchemy import delete as sa_delete
+from sqlalchemy import and_, delete as sa_delete
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import AppError
@@ -13,9 +16,12 @@ from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
 from app.models.user import User
-from app.schemas.clubs import ClubResponse
-from app.schemas.events import AfterMeetingVenueSchema
+from app.schemas.clubs import BanRequest, BanResponse, ClubResponse, CreateClubRequest
+from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
 from app.schemas.users import UserStatsResponse
+
+if TYPE_CHECKING:
+    pass
 
 
 async def delete_club_cascade(club_id: uuid.UUID, db: AsyncSession) -> None:
@@ -137,6 +143,204 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
         )
 
     return responses
+
+
+# ---------------------------------------------------------------------------
+# Service-layer business logic (extracted from routers)
+# ---------------------------------------------------------------------------
+
+# C1: hard cap for the join handler — mirrors the constant in clubs.py router.
+_JOIN_DB_TIMEOUT_SECONDS = 8.0
+
+
+async def create_club_service(
+    body: CreateClubRequest,
+    current_user: User,
+    db: AsyncSession,
+) -> ClubResponse:
+    """Create a club and add the organizer as the first member."""
+    if current_user.role != "organizer":
+        raise AppError(403, "Only organizers can create clubs", "FORBIDDEN")
+
+    existing = await db.execute(select(Club).where(Club.organizer_id == current_user.id).limit(1))
+    if existing.scalar_one_or_none() is not None:
+        raise AppError(409, "You already own a club", "ORGANIZER_ALREADY_HAS_CLUB")
+
+    club = Club(
+        id=uuid.uuid4(),
+        name=body.name,
+        description=body.description,
+        cover_url=body.coverUrl,
+        is_public=body.isPublic,
+        organizer_id=current_user.id,
+        city=body.city,
+        tags=body.tags or [],
+        meeting_duration_minutes=body.meetingDurationMinutes,
+        after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
+        status="active",
+    )
+    db.add(club)
+    await db.flush()
+
+    membership = ClubMember(
+        id=uuid.uuid4(),
+        club_id=club.id,
+        user_id=current_user.id,
+        role="organizer",
+    )
+    db.add(membership)
+    await db.commit()
+    await db.refresh(club)
+    return await build_club_response(club, db)
+
+
+async def join_club_service(
+    club_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> int:
+    """Perform the join transaction and return the new member count.
+
+    C1: a PostgreSQL statement_timeout is set at the start of the transaction
+    so that any stalled DB call is aborted by the server (raises OperationalError)
+    rather than hanging the Python coroutine.  This avoids the coroutine-
+    cancellation hazard of asyncio.wait_for with a shared AsyncSession.
+    """
+    from sqlalchemy import text
+
+    # C1: enforce an 8-second ceiling on every statement in this transaction.
+    # If any call stalls (lock contention, pooler issue), Postgres aborts it
+    # and raises OperationalError — caught cleanly in join_club without
+    # cancelling the coroutine or leaving the connection in an undefined state.
+    # SET LOCAL is PostgreSQL-specific; guard with a dialect check so tests
+    # running against SQLite are unaffected.
+    conn = await db.connection()
+    if conn.dialect.name == "postgresql":
+        timeout_ms = int(_JOIN_DB_TIMEOUT_SECONDS * 1000)
+        await db.execute(text(f"SET LOCAL statement_timeout = '{timeout_ms}ms'"))
+
+    await get_club_or_404(club_id, db)
+
+    # M-7: check for active ban (respects expires_at; NULL = permanent)
+    ban_result = await db.execute(
+        select(ClubBan).where(and_(ClubBan.club_id == club_id, ClubBan.user_id == current_user.id))
+    )
+    ban = ban_result.scalar_one_or_none()
+    if ban is not None:
+        now_utc = datetime.now(UTC)
+        ban_active = ban.expires_at is None or ban.expires_at > now_utc
+        if ban_active:
+            raise AppError(403, "You are banned from this club", "CLUB_BANNED")
+
+    existing = await db.execute(
+        select(ClubMember.id).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
+    )
+    if existing.scalar_one_or_none():
+        raise AppError(409, "Already a member", "ALREADY_MEMBER")
+
+    membership = ClubMember(
+        id=uuid.uuid4(),
+        club_id=club_id,
+        user_id=current_user.id,
+        role="member",
+    )
+    db.add(membership)
+    # M-5: guard against TOCTOU race — a concurrent join between the SELECT and INSERT
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise AppError(409, "Already a member", "ALREADY_MEMBER") from exc
+
+    count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
+    return int(count_result.scalar() or 0)
+
+
+async def ban_user_service(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: BanRequest,
+    current_user: User,
+    db: AsyncSession,
+) -> BanResponse:
+    """Ban a user from a club, removing their membership."""
+    from app.dependencies import require_club_organizer
+
+    await require_club_organizer(club_id, current_user, db)
+
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    if not user_result.scalar_one_or_none():
+        raise AppError(404, "User not found", "USER_NOT_FOUND")
+
+    # M-7: compute expires_at from duration; None = permanent ban
+    duration_days_map = {"1": 1, "3": 3, "5": 5}
+    duration_str = str(body.duration)
+    now_utc = datetime.now(UTC)
+    expires_at = (
+        now_utc + timedelta(days=duration_days_map[duration_str])
+        if duration_str in duration_days_map
+        else None  # "permanent"
+    )
+
+    ban = ClubBan(
+        id=uuid.uuid4(),
+        club_id=club_id,
+        user_id=user_id,
+        banned_by=current_user.id,
+        duration=duration_str,
+        expires_at=expires_at,
+    )
+    db.add(ban)
+
+    from sqlalchemy import delete as _delete
+
+    await db.execute(_delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id)))
+    await db.commit()
+    await db.refresh(ban)
+
+    return BanResponse(
+        userId=str(user_id),
+        clubId=str(club_id),
+        bannedAt=ban.banned_at.isoformat(),
+        duration=str(body.duration),
+        bannedBy=str(current_user.id),
+    )
+
+
+async def create_event_service(
+    body: CreateEventRequest,
+    club_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> EventResponse:
+    """Create an event for a club (organizer only)."""
+    from app.dependencies import require_club_organizer
+    from app.models.event import Event
+    from app.services.event_service import build_event_response
+
+    await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
+
+    event = Event(
+        id=uuid.uuid4(),
+        club_id=club_id,
+        title=body.title,
+        description=body.description,
+        date=body.date,
+        city=body.city,
+        address=body.address,
+        theme=body.theme,
+        tags=body.tags,
+        duration_minutes=body.durationMinutes,
+        after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
+        cover_url=body.coverUrl,
+        book_title=body.bookTitle,
+        status="scheduled",
+    )
+    db.add(event)
+    await db.commit()
+    await db.refresh(event)
+    return await build_event_response(event, db, current_user.id, club_name=club.name, organizer_id=club.organizer_id)
 
 
 def _assemble_club_response(club: Club, member_count: int, previews: list[str]) -> ClubResponse:

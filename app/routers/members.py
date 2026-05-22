@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
@@ -16,6 +15,7 @@ from app.models.club_member import ClubMember
 from app.models.user import User
 from app.schemas.auth import build_socials
 from app.schemas.clubs import BanRequest, BanResponse, MemberResponse
+from app.services.club_service import ban_user_service
 
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
@@ -74,43 +74,7 @@ async def ban_member(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> BanResponse:
-    _ = await require_club_organizer(club_id, current_user, db)
-
-    user_result = await db.execute(select(User).where(User.id == user_id))
-    if not user_result.scalar_one_or_none():
-        raise AppError(404, "User not found", "USER_NOT_FOUND")
-
-    # M-7: compute expires_at from duration; None = permanent ban
-    duration_days_map = {"1": 1, "3": 3, "5": 5}
-    duration_str = str(body.duration)
-    now_utc = datetime.now(UTC)
-    expires_at = (
-        now_utc + timedelta(days=duration_days_map[duration_str])
-        if duration_str in duration_days_map
-        else None  # "permanent"
-    )
-
-    ban = ClubBan(
-        id=uuid.uuid4(),
-        club_id=club_id,
-        user_id=user_id,
-        banned_by=current_user.id,
-        duration=duration_str,
-        expires_at=expires_at,
-    )
-    db.add(ban)
-
-    await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id)))
-    await db.commit()
-    await db.refresh(ban)
-
-    return BanResponse(
-        userId=str(user_id),
-        clubId=str(club_id),
-        bannedAt=ban.banned_at.isoformat(),
-        duration=str(body.duration),
-        bannedBy=str(current_user.id),
-    )
+    return await ban_user_service(club_id, user_id, body, current_user, db)
 
 
 @router.get("/bans")
