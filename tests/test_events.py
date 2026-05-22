@@ -510,3 +510,85 @@ async def test_list_club_events_with_upcoming_filter(async_client, register_user
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/events?upcoming_only=true")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/v1/events/{event_id}  (update event)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_event_title(async_client, register_user, auth_headers):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_update1@example.com")
+    club_id = await _create_club(async_client, org_headers, "UpdateClub1")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    resp = await async_client.patch(
+        f"/api/v1/events/{event['id']}",
+        headers=org_headers,
+        json={"title": "Updated Title"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "Updated Title"
+
+
+@pytest.mark.asyncio
+async def test_update_event_multiple_fields(async_client, register_user, auth_headers):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_update2@example.com")
+    club_id = await _create_club(async_client, org_headers, "UpdateClub2")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    resp = await async_client.patch(
+        f"/api/v1/events/{event['id']}",
+        headers=org_headers,
+        json={"title": "New Title", "description": "New Desc", "city": "Lviv"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["title"] == "New Title"
+    assert data["description"] == "New Desc"
+    assert data["city"] == "Lviv"
+
+
+@pytest.mark.asyncio
+async def test_update_event_with_after_meeting_venue(async_client, register_user, auth_headers):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_update3@example.com")
+    club_id = await _create_club(async_client, org_headers, "UpdateClub3")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    resp = await async_client.patch(
+        f"/api/v1/events/{event['id']}",
+        headers=org_headers,
+        json={"after_meeting_venue": {"name": "Bar XYZ", "address": "Main St 1"}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["afterMeetingVenue"]["name"] == "Bar XYZ"
+
+
+@pytest.mark.asyncio
+async def test_update_event_non_organizer_forbidden(async_client, register_user, auth_headers):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_update4_org@example.com")
+    club_id = await _create_club(async_client, org_headers, "UpdateClub4")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    await register_user(email="ev_update4_m@example.com")
+    member_headers = await auth_headers(email="ev_update4_m@example.com")
+
+    resp = await async_client.patch(
+        f"/api/v1/events/{event['id']}",
+        headers=member_headers,
+        json={"title": "Hacked Title"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_update_event_not_found(async_client, register_user, auth_headers):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_update5@example.com")
+    resp = await async_client.patch(
+        f"/api/v1/events/{uuid.uuid4()}",
+        headers=org_headers,
+        json={"title": "Ghost"},
+    )
+    assert resp.status_code == 404

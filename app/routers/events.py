@@ -158,7 +158,12 @@ async def update_event(
     event = await get_event_or_404(event_id, db)
     for field, value in body.model_dump(exclude_unset=True).items():
         if field == "after_meeting_venue":
-            setattr(event, field, value.model_dump() if value is not None else None)
+            if value is None:
+                setattr(event, field, None)
+            elif isinstance(value, dict):
+                setattr(event, field, value)
+            else:
+                setattr(event, field, value.model_dump())
         else:
             setattr(event, field, value)
     await db.commit()
