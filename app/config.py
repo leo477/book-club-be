@@ -1,7 +1,9 @@
+import logging
 from functools import lru_cache
 
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -26,16 +28,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
-    @model_validator(mode="after")
-    def validate_settings(self) -> "Settings":
-        if self.ENV not in ("test", "testing"):
-            if not self.SUPABASE_URL or not self.SUPABASE_ANON_KEY or not self.SUPABASE_JWT_SECRET:
-                raise ValueError(
-                    "SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_JWT_SECRET must be set. "
-                    "Find these in your Supabase project Settings > API."
-                )
-
-        return self
+    @property
+    def supabase_configured(self) -> bool:
+        return bool(self.SUPABASE_URL and self.SUPABASE_ANON_KEY and self.SUPABASE_JWT_SECRET)
 
 
 @lru_cache
