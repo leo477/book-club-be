@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from fastapi import HTTPException
+from fastapi import status as http_status
+from sqlalchemy import and_, func, select
+from sqlalchemy import select as sa_select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import AppError
+from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
-from app.schemas.events import AfterMeetingVenueSchema, EventResponse
+from app.models.user import User
+from app.schemas.events import AfterMeetingVenueSchema, AttendEventResponse, EventResponse
 
 
 def _assemble_event_response(
@@ -110,14 +117,12 @@ async def fetch_enriched_event_list(
     skip: int = 0,
     limit: int = 20,
 ) -> list[EventResponse]:
-    from app.models.club import Club
     from sqlalchemy import literal
 
+    from app.models.club import Club
+
     attendee_count_sq = (
-        select(func.count())
-        .where(EventAttendee.event_id == Event.id)
-        .correlate(Event)
-        .scalar_subquery()
+        select(func.count()).where(EventAttendee.event_id == Event.id).correlate(Event).scalar_subquery()
     )
 
     if current_user_id is not None:
@@ -172,16 +177,9 @@ async def get_event_or_404(event_id: uuid.UUID, db: AsyncSession) -> Event:
 
 async def attend_event_service(
     event_id: uuid.UUID,
-    current_user: "User",
+    current_user: User,
     db: AsyncSession,
-) -> "AttendEventResponse":
-    from app.models.club_member import ClubMember
-    from app.schemas.events import AttendEventResponse
-    from fastapi import HTTPException, status as http_status
-    from sqlalchemy.exc import IntegrityError
-    from datetime import UTC, datetime, timedelta
-    from sqlalchemy import and_, func, select as sa_select
-
+) -> AttendEventResponse:
     event = await get_event_or_404(event_id, db)
 
     if event.status == "cancelled":
@@ -199,7 +197,9 @@ async def attend_event_service(
         db.add(ClubMember(id=uuid.uuid4(), club_id=event.club_id, user_id=current_user.id, role="member"))
 
     existing = await db.execute(
-        sa_select(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id))
+        sa_select(EventAttendee).where(
+            and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id)
+        )
     )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="Already attending")

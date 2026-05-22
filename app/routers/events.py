@@ -13,7 +13,12 @@ from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.schemas.events import AttendEventResponse, EventResponse, EventUpdatePayload, RescheduleEventRequest
-from app.services.event_service import attend_event_service, build_event_response, fetch_enriched_event_list, get_event_or_404
+from app.services.event_service import (
+    attend_event_service,
+    build_event_response,
+    fetch_enriched_event_list,
+    get_event_or_404,
+)
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
