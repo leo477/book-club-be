@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import HTTPException
 from fastapi import status as http_status
@@ -111,7 +112,7 @@ async def build_event_responses_bulk(
 
 
 async def fetch_enriched_event_list(
-    filter_clauses: list,
+    filter_clauses: list[Any],
     db: AsyncSession,
     current_user_id: uuid.UUID | None = None,
     skip: int = 0,
