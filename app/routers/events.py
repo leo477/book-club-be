@@ -13,7 +13,7 @@ from app.dependencies import get_current_user, get_db_dep, get_optional_user, re
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
-from app.schemas.events import AttendEventResponse, EventResponse, RescheduleEventRequest
+from app.schemas.events import AttendEventResponse, EventResponse, EventUpdatePayload, RescheduleEventRequest
 from app.services.event_service import build_event_response, build_event_responses_bulk, get_event_or_404
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
@@ -145,6 +145,25 @@ async def cancel_attendance(
         delete(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id))
     )
     await db.commit()
+
+
+@router.patch("/{event_id}", response_model=EventResponse)
+async def update_event(
+    event_id: uuid.UUID,
+    body: EventUpdatePayload,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
+) -> EventResponse:
+    event = await get_event_or_404(event_id, db)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        if field == "after_meeting_venue":
+            setattr(event, field, value.model_dump() if value is not None else None)
+        else:
+            setattr(event, field, value)
+    await db.commit()
+    await db.refresh(event)
+    return await build_event_response(event, db, current_user.id)
 
 
 @router.patch("/{event_id}/reschedule", response_model=EventResponse)
