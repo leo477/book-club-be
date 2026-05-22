@@ -7,7 +7,23 @@ services:
     autoDeploy: true
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
-    envVars: []
+    envVars:
+      - key: ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
 
   - type: cron
     name: keep-alive
