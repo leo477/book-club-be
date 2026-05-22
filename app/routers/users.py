@@ -18,14 +18,14 @@ from app.services.club_service import get_user_stats
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 
-@router.get("/me", response_model=UserProfileResponse)
+@router.get("/me")
 async def get_me(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserProfileResponse:
     return UserProfileResponse.model_validate(current_user)
 
 
-@router.get("/me/stats", response_model=UserStatsResponse)
+@router.get("/me/stats")
 async def get_my_stats(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -33,7 +33,7 @@ async def get_my_stats(
     return await get_user_stats(current_user.id, db)
 
 
-@router.patch("/me", response_model=UserProfileResponse)
+@router.patch("/me")
 async def update_profile(
     body: UpdateProfileRequest,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -46,7 +46,7 @@ async def update_profile(
     return UserProfileResponse.model_validate(current_user)
 
 
-@router.patch("/me/role", response_model=UserProfileResponse)
+@router.patch("/me/role")
 async def update_role(
     body: UpdateRoleRequest,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -58,7 +58,7 @@ async def update_role(
     return UserProfileResponse.model_validate(current_user)
 
 
-@router.patch("/me/socials", response_model=UserProfileResponse)
+@router.patch("/me/socials")
 async def update_socials(
     body: UpdateSocialsRequest,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -71,7 +71,7 @@ async def update_socials(
     return UserProfileResponse.model_validate(current_user)
 
 
-@router.patch("/me/socials-visibility", response_model=UserProfileResponse)
+@router.patch("/me/socials-visibility")
 async def update_socials_visibility(
     body: UpdateSocialsVisibilityRequest,
     current_user: Annotated[User, Depends(get_current_user)],

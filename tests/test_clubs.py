@@ -384,7 +384,7 @@ async def test_reschedule_club(async_client, register_user, auth_headers):
     # First pause it so we can verify status reverts to active
     await async_client.patch(f"/api/v1/clubs/{club_id}/pause", headers=headers)
 
-    new_date = "2030-06-15T18:00:00"
+    new_date = "2030-06-15T18:00:00+00:00"
     resp = await async_client.patch(
         f"/api/v1/clubs/{club_id}/reschedule",
         headers=headers,
