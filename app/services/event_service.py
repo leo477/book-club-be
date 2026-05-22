@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import func, select
+from fastapi import HTTPException
+from fastapi import status as http_status
+from sqlalchemy import and_, func, select
+from sqlalchemy import select as sa_select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import AppError
+from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
-from app.schemas.events import AfterMeetingVenueSchema, EventResponse
+from app.models.user import User
+from app.schemas.events import AfterMeetingVenueSchema, AttendEventResponse, EventResponse
 
 
 def _assemble_event_response(
@@ -103,12 +111,111 @@ async def build_event_responses_bulk(
     ]
 
 
+async def fetch_enriched_event_list(
+    filter_clauses: list[Any],
+    db: AsyncSession,
+    current_user_id: uuid.UUID | None = None,
+    skip: int = 0,
+    limit: int = 20,
+) -> list[EventResponse]:
+    from sqlalchemy import literal
+
+    from app.models.club import Club
+
+    attendee_count_sq = (
+        select(func.count()).where(EventAttendee.event_id == Event.id).correlate(Event).scalar_subquery()
+    )
+
+    if current_user_id is not None:
+        is_attending_col = (
+            select(func.count())
+            .where(
+                EventAttendee.event_id == Event.id,
+                EventAttendee.user_id == current_user_id,
+            )
+            .correlate(Event)
+            .scalar_subquery()
+            > 0
+        ).label("is_attending")
+    else:
+        is_attending_col = literal(False).label("is_attending")
+
+    stmt = (
+        select(
+            Event,
+            Club.name.label("club_name"),
+            Club.organizer_id.label("organizer_id"),
+            attendee_count_sq.label("attendee_count"),
+            is_attending_col,
+        )
+        .join(Club, Event.club_id == Club.id)
+        .where(*filter_clauses)
+        .order_by(Event.date.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+
+    result = await db.execute(stmt)
+    return [
+        _assemble_event_response(
+            row.Event,
+            row.attendee_count,
+            bool(row.is_attending),
+            row.club_name,
+            row.organizer_id,
+        )
+        for row in result
+    ]
+
+
 async def get_event_or_404(event_id: uuid.UUID, db: AsyncSession) -> Event:
     result = await db.execute(select(Event).where(Event.id == event_id))
     event = result.scalar_one_or_none()
     if not event:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
     return event
+
+
+async def attend_event_service(
+    event_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> AttendEventResponse:
+    event = await get_event_or_404(event_id, db)
+
+    if event.status == "cancelled":
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Cannot attend a cancelled event")
+
+    event_date = event.date if event.date.tzinfo is not None else event.date.replace(tzinfo=UTC)
+    if event_date - datetime.now(tz=UTC) < timedelta(days=3):
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Registration closed")
+
+    member_result = await db.execute(
+        sa_select(ClubMember.id).where(and_(ClubMember.club_id == event.club_id, ClubMember.user_id == current_user.id))
+    )
+    auto_joined = member_result.scalar_one_or_none() is None
+    if auto_joined:
+        db.add(ClubMember(id=uuid.uuid4(), club_id=event.club_id, user_id=current_user.id, role="member"))
+
+    existing = await db.execute(
+        sa_select(EventAttendee).where(
+            and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id)
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="Already attending")
+
+    db.add(EventAttendee(event_id=event_id, user_id=current_user.id))
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="Already attending") from exc
+
+    count_result = await db.execute(
+        sa_select(func.count()).select_from(EventAttendee).where(EventAttendee.event_id == event_id)
+    )
+    return AttendEventResponse(attendeeCount=count_result.scalar() or 0, autoJoined=auto_joined)
 
 
 async def build_event_response(

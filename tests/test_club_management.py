@@ -106,7 +106,7 @@ async def test_reschedule_club(async_client, register_user, auth_headers):
     resp = await async_client.patch(
         f"/api/v1/clubs/{club_id}/reschedule",
         headers=headers,
-        json={"newDate": "2026-09-01T18:00:00"},
+        json={"newDate": "2026-09-01T18:00:00+00:00"},
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "active"
@@ -123,7 +123,7 @@ async def test_reschedule_club_not_organizer(async_client, register_user, auth_h
     resp = await async_client.patch(
         f"/api/v1/clubs/{club_id}/reschedule",
         headers=headers2,
-        json={"newDate": "2026-09-01T18:00:00"},
+        json={"newDate": "2026-09-01T18:00:00+00:00"},
     )
     assert resp.status_code == 403
 

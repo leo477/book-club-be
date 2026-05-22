@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from app.schemas.events import AfterMeetingVenueSchema
 
@@ -53,7 +53,7 @@ class UpdateClubRequest(BaseModel):
 
 
 class RescheduleMeetingRequest(BaseModel):
-    newDate: str
+    newDate: AwareDatetime
 
 
 class BanRequest(BaseModel):
