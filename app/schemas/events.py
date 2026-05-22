@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 
 class AfterMeetingVenueSchema(BaseModel):
@@ -67,7 +67,7 @@ class EventUpdatePayload(BaseModel):
 
 
 class RescheduleEventRequest(BaseModel):
-    newDate: str
+    newDate: AwareDatetime
     newAddress: str | None = None
     newCity: str | None = None
 

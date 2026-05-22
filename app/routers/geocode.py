@@ -11,7 +11,7 @@ from app.services.geocoding_service import photon_autocomplete
 router = APIRouter(prefix="/api/v1/geocode", tags=["geocode"])
 
 
-@router.get("/autocomplete", response_model=list[GeocodeSuggestion])
+@router.get("/autocomplete")
 async def autocomplete(
     settings: Annotated[Settings, Depends(get_settings_dep)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],

@@ -36,7 +36,7 @@ _JOIN_DB_TIMEOUT_SECONDS = 8.0
 router = APIRouter(prefix="/api/v1/clubs", tags=["clubs"])
 
 
-@router.get("", response_model=list[ClubResponse])
+@router.get("")
 async def list_clubs(
     current_user: Annotated[User | None, Depends(get_optional_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -65,7 +65,7 @@ async def list_clubs(
     return await build_club_responses_bulk(list(clubs), db)
 
 
-@router.get("/my", response_model=list[ClubResponse])
+@router.get("/my")
 async def list_my_clubs(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
@@ -83,7 +83,7 @@ async def list_my_clubs(
     return await build_club_responses_bulk(list(clubs), db)
 
 
-@router.get("/{club_id}", response_model=ClubResponse)
+@router.get("/{club_id}")
 async def get_club(
     club_id: uuid.UUID,
     _current_user: Annotated[User | None, Depends(get_optional_user)],
@@ -93,7 +93,7 @@ async def get_club(
     return await build_club_response(club, db)
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, response_model=ClubResponse)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_club(
     body: CreateClubRequest,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -134,7 +134,7 @@ async def create_club(
     return await build_club_response(club, db)
 
 
-@router.patch("/{club_id}", response_model=ClubResponse)
+@router.patch("/{club_id}")
 async def update_club(
     club_id: uuid.UUID,
     body: UpdateClubRequest,
@@ -161,7 +161,7 @@ async def update_club(
     return await build_club_response(club, db)
 
 
-@router.patch("/{club_id}/pause", response_model=ClubResponse)
+@router.patch("/{club_id}/pause")
 async def pause_club(
     club_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -175,7 +175,7 @@ async def pause_club(
     return await build_club_response(club, db)
 
 
-@router.patch("/{club_id}/cancel", response_model=ClubResponse)
+@router.patch("/{club_id}/cancel")
 async def cancel_club(
     club_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -190,7 +190,7 @@ async def cancel_club(
     return await build_club_response(club, db)
 
 
-@router.patch("/{club_id}/reschedule", response_model=ClubResponse)
+@router.patch("/{club_id}/reschedule")
 async def reschedule_club(
     club_id: uuid.UUID,
     body: RescheduleMeetingRequest,
@@ -199,7 +199,7 @@ async def reschedule_club(
 ) -> ClubResponse:
     await require_club_organizer(club_id, current_user, db)
     club = await get_club_or_404(club_id, db)
-    club.next_meeting_date = datetime.fromisoformat(body.newDate)
+    club.next_meeting_date = body.newDate
     club.status = "active"
     await db.commit()
     await db.refresh(club)
@@ -325,7 +325,7 @@ async def leave_club(
     await db.commit()
 
 
-@router.get("/{club_id}/events", response_model=list[EventResponse])
+@router.get("/{club_id}/events")
 async def list_club_events(
     club_id: uuid.UUID,
     current_user: Annotated[User | None, Depends(get_optional_user)],
@@ -352,7 +352,7 @@ async def list_club_events(
     )
 
 
-@router.post("/{club_id}/events", status_code=status.HTTP_201_CREATED, response_model=EventResponse)
+@router.post("/{club_id}/events", status_code=status.HTTP_201_CREATED)
 async def create_event(
     club_id: uuid.UUID,
     body: CreateEventRequest,

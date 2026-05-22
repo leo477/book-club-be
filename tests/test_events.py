@@ -9,8 +9,8 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
-FUTURE_DATE = "2099-12-31T10:00:00"
-FUTURE_DATE_2 = "2099-11-15T14:00:00"
+FUTURE_DATE = "2099-12-31T10:00:00+00:00"
+FUTURE_DATE_2 = "2099-11-15T14:00:00+00:00"
 
 EVENT_PAYLOAD = {
     "title": "Book Night",
