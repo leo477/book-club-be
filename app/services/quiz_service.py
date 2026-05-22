@@ -51,9 +51,7 @@ async def submit_quiz_attempt(
     questions_db = questions_result.scalars().all()
     total = len(questions_db)
 
-    score = sum(
-        1 for i, q in enumerate(questions_db) if i < len(body.answers) and body.answers[i] == q.correct_index
-    )
+    score = sum(1 for i, q in enumerate(questions_db) if i < len(body.answers) and body.answers[i] == q.correct_index)
 
     attempt = QuizAttempt(
         id=uuid.uuid4(),
