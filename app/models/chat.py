@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -11,6 +11,7 @@ from app.models.base import AppBase
 
 class ChatRoom(AppBase):
     __tablename__ = "chat_rooms"
+    __table_args__ = (UniqueConstraint("club_id", "name", name="uq_chat_rooms_club_name"),)
 
     club_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clubs.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)

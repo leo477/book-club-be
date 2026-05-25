@@ -197,6 +197,9 @@ async def override_get_db(test_engine):
     with (
         patch("app.routers.auth.get_supabase_client", new=AsyncMock(return_value=fake_client)),
         patch("app.services.auth_service.decode_access_token", side_effect=_fake_decode_access_token),
+        # chat.py binds decode_access_token at import time; patch the local name so
+        # WS handshake uses the same fake decoder as REST endpoints.
+        patch("app.routers.chat.decode_access_token", side_effect=_fake_decode_access_token),
     ):
         yield
 

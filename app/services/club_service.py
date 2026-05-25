@@ -60,6 +60,7 @@ async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
 async def get_user_stats(user_id: uuid.UUID, db: AsyncSession) -> UserStatsResponse:
     from sqlalchemy import case
 
+    db.expire_all()
     clubs_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.user_id == user_id))
 
     quiz_result = await db.execute(

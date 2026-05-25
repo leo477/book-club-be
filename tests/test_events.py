@@ -267,37 +267,40 @@ async def test_attend_event_registration_closed(async_client, register_user, aut
 
 
 @pytest.mark.asyncio
-async def test_attend_event_auto_joins_club(async_client, register_user, auth_headers):
-    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_att_autojoin@example.com")
-    club_id = await _create_club(async_client, org_headers, "AutoJoinClub")
+async def test_attend_event_does_not_auto_join_club(async_client, register_user, auth_headers):
+    """Regression: POST /events/{id}/attend must NOT add the user to clubs/my.
+
+    The user is a non-member before attending. After a successful RSVP the user
+    should still not appear as a club member — the response must not contain an
+    `autoJoined` field, and GET /clubs/my must not include the club.
+    """
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_att_nojoin_reg@example.com")
+    club_id = await _create_club(async_client, org_headers, "NoAutoJoinClub")
     event = await _create_event(async_client, org_headers, club_id)
 
-    await register_user(email="ev_att_autojoin_m@example.com")
-    member_headers = await auth_headers(email="ev_att_autojoin_m@example.com")
+    await register_user(email="ev_att_nojoin_reg_m@example.com")
+    member_headers = await auth_headers(email="ev_att_nojoin_reg_m@example.com")
 
+    # RSVP succeeds
     resp = await async_client.post(f"/api/v1/events/{event['id']}/attend", headers=member_headers)
     assert resp.status_code == 201
     data = resp.json()
-    assert data["autoJoined"] is True
+    assert data["attendeeCount"] >= 1
+    # autoJoined must be False — RSVP does not auto-join the club
+    assert data.get("autoJoined") is False
 
+    # User must NOT appear in club membership
+    my_clubs_resp = await async_client.get("/api/v1/clubs/my", headers=member_headers)
+    assert my_clubs_resp.status_code == 200
+    my_club_ids = [c["id"] for c in my_clubs_resp.json()]
+    assert club_id not in my_club_ids
+
+    # Club member list must only contain the organizer
     members_resp = await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=org_headers)
     assert members_resp.status_code == 200
-    assert len(members_resp.json()) >= 2
-
-
-@pytest.mark.asyncio
-async def test_attend_event_no_auto_join_when_already_member(async_client, register_user, auth_headers):
-    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_att_nojoin@example.com")
-    club_id = await _create_club(async_client, org_headers, "NoJoinClub")
-    event = await _create_event(async_client, org_headers, club_id)
-
-    await register_user(email="ev_att_nojoin_m@example.com")
-    member_headers = await auth_headers(email="ev_att_nojoin_m@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=member_headers)
-
-    resp = await async_client.post(f"/api/v1/events/{event['id']}/attend", headers=member_headers)
-    assert resp.status_code == 201
-    assert resp.json()["autoJoined"] is False
+    member_user_ids = [m["userId"] for m in members_resp.json()]
+    # Organizer is the only member; the attendee must not be listed
+    assert len(member_user_ids) == 1
 
 
 # ---------------------------------------------------------------------------

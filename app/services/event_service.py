@@ -12,7 +12,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import AppError
-from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.schemas.events import AfterMeetingVenueSchema, AttendEventResponse, EventResponse
@@ -190,13 +189,6 @@ async def attend_event_service(
     if event_date - datetime.now(tz=UTC) < timedelta(days=3):
         raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Registration closed")
 
-    member_result = await db.execute(
-        sa_select(ClubMember.id).where(and_(ClubMember.club_id == event.club_id, ClubMember.user_id == current_user.id))
-    )
-    auto_joined = member_result.scalar_one_or_none() is None
-    if auto_joined:
-        db.add(ClubMember(id=uuid.uuid4(), club_id=event.club_id, user_id=current_user.id, role="member"))
-
     existing = await db.execute(
         sa_select(EventAttendee).where(
             and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id)
@@ -215,7 +207,7 @@ async def attend_event_service(
     count_result = await db.execute(
         sa_select(func.count()).select_from(EventAttendee).where(EventAttendee.event_id == event_id)
     )
-    return AttendEventResponse(attendeeCount=count_result.scalar() or 0, autoJoined=auto_joined)
+    return AttendEventResponse(attendeeCount=count_result.scalar() or 0)
 
 
 async def build_event_response(

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatRoomResponse(BaseModel):
@@ -22,7 +22,7 @@ class SendMessageRequest(BaseModel):
 
 
 class CreateChatRoomRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=3, max_length=40)
 
 
 class BanFromRoomRequest(BaseModel):
