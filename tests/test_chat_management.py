@@ -196,6 +196,54 @@ async def test_ban_room_not_found(async_client, register_user, auth_headers):
     assert resp.status_code == 404
 
 
+# --- Name validation & deduplication ---
+
+
+@pytest.mark.asyncio
+async def test_create_chat_room_duplicate_name_returns_409(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="dup_name_org@example.com"
+    )
+    await async_client.post(
+        f"/api/v1/clubs/{club_id}/chat/rooms",
+        headers=headers,
+        json={"name": "General"},
+    )
+    resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/chat/rooms",
+        headers=headers,
+        json={"name": "General"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "ROOM_NAME_DUPLICATE"
+
+
+@pytest.mark.asyncio
+async def test_create_chat_room_name_too_short_returns_422(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="short_name_org@example.com"
+    )
+    resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/chat/rooms",
+        headers=headers,
+        json={"name": "ab"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_chat_room_name_too_long_returns_422(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="long_name_org@example.com"
+    )
+    resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/chat/rooms",
+        headers=headers,
+        json={"name": "A" * 41},
+    )
+    assert resp.status_code == 422
+
+
 @pytest.mark.asyncio
 async def test_ban_permanent(async_client, register_user, auth_headers):
     headers, club_id = await create_organizer_with_club(

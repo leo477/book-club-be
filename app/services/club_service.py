@@ -60,6 +60,7 @@ async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
 async def get_user_stats(user_id: uuid.UUID, db: AsyncSession) -> UserStatsResponse:
     from sqlalchemy import case
 
+    db.expire_all()
     clubs_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.user_id == user_id))
 
     quiz_result = await db.execute(
@@ -322,7 +323,7 @@ async def create_event_service(
 ) -> EventResponse:
     """Create an event for a club (organizer only)."""
     from app.dependencies import require_club_organizer
-    from app.models.event import Event
+    from app.models.event import Event, EventAttendee
     from app.services.event_service import build_event_response
 
     await require_club_organizer(club_id, current_user, db)
@@ -345,6 +346,7 @@ async def create_event_service(
         status="scheduled",
     )
     db.add(event)
+    db.add(EventAttendee(event_id=event.id, user_id=current_user.id))
     await db.commit()
     await db.refresh(event)
     return await build_event_response(event, db, current_user.id, club_name=club.name, organizer_id=club.organizer_id)
