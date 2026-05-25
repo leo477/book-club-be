@@ -141,5 +141,5 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
     handler_task.cancel()
     try:
         await asyncio.wait_for(handler_task, timeout=2)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
+    except (TimeoutError, asyncio.CancelledError):
         pass
