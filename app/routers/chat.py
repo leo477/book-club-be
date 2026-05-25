@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.dependencies import get_current_user, get_db_dep, is_club_organizer, require_club_organizer
-from app.models.club_member import ClubMember
 from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
+from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.schemas.chat import (
