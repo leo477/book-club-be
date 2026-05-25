@@ -74,4 +74,4 @@ class RescheduleEventRequest(BaseModel):
 
 class AttendEventResponse(BaseModel):
     attendeeCount: int
-    autoJoined: bool
+    autoJoined: bool = False

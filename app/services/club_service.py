@@ -60,6 +60,7 @@ async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
 async def get_user_stats(user_id: uuid.UUID, db: AsyncSession) -> UserStatsResponse:
     from sqlalchemy import case
 
+    db.expire_all()
     clubs_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.user_id == user_id))
 
     quiz_result = await db.execute(
@@ -189,6 +190,13 @@ async def create_club_service(
         role="organizer",
     )
     db.add(membership)
+
+    general_room = ChatRoom(
+        id=uuid.uuid4(),
+        club_id=club.id,
+        name=f"{club.name} · General",
+    )
+    db.add(general_room)
     await db.commit()
     await db.refresh(club)
     return await build_club_response(club, db)

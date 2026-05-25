@@ -8,10 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
-from app.dependencies import get_current_user, get_db_dep, is_club_organizer, require_club_organizer
+from app.config import Settings
+from app.dependencies import get_current_user, get_db_dep, get_settings_dep, is_club_organizer, require_club_organizer
 from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
+from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.schemas.chat import (
@@ -62,8 +63,8 @@ async def get_chat_rooms(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[ChatRoomResponse]:
-    result = await db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id))
-    rooms = result.scalars().all()
+    result = await db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id).distinct())
+    rooms = result.scalars().unique().all()
     return [ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms]
 
 
@@ -75,6 +76,10 @@ async def create_chat_room(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatRoomResponse:
     await require_club_organizer(club_id, current_user, db)
+
+    existing = await db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id, ChatRoom.name == body.name))
+    if existing.scalar_one_or_none() is not None:
+        raise AppError(409, "A room with this name already exists in the club", "ROOM_NAME_DUPLICATE")
 
     room = ChatRoom(id=uuid.uuid4(), club_id=club_id, name=body.name)
     db.add(room)
@@ -234,18 +239,41 @@ async def websocket_endpoint(
     room_id: str,
     token: str,  # query parameter: ws://...?token=<jwt>
     db: Annotated[AsyncSession, Depends(get_db_dep)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> None:
-    settings = get_settings()
     try:
         token_data = decode_access_token(token, settings)
     except HTTPException:
         await websocket.close(code=1008)
         return
 
+    # Expire any stale transaction snapshot that may have been inherited from the
+    # connection pool (e.g. via pool_pre_ping).  Rolling back here guarantees the
+    # next statement opens a brand-new READ-COMMITTED snapshot and therefore sees
+    # any ClubMember row that was committed by a preceding POST /join request —
+    # this is the root-cause fix for the WS-403-after-join bug.
+    await db.rollback()
+
     user_id = token_data.get("sub")
-    user_result = await db.execute(select(User).where(User.id == uuid.UUID(str(user_id))))
+    user_result = await db.execute(select(User).where(User.supabase_user_id == uuid.UUID(str(user_id))))
     user = user_result.scalar_one_or_none()
     if not user:
+        await websocket.close(code=1008)
+        return
+
+    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == uuid.UUID(room_id)))
+    room = room_result.scalar_one_or_none()
+    if not room:
+        await websocket.close(code=1008)
+        return
+
+    member_result = await db.execute(
+        select(ClubMember).where(
+            ClubMember.club_id == room.club_id,
+            ClubMember.user_id == user.id,
+        )
+    )
+    if member_result.scalar_one_or_none() is None:
         await websocket.close(code=1008)
         return
 
