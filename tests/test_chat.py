@@ -13,11 +13,13 @@ async def create_organizer_with_club(async_client, register_user, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_list_chat_rooms_empty(async_client, register_user, auth_headers):
+async def test_list_chat_rooms_has_general(async_client, register_user, auth_headers):
     headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=headers)
     assert resp.status_code == 200
-    assert resp.json() == []
+    rooms = resp.json()
+    assert len(rooms) == 1
+    assert rooms[0]["name"].endswith("· General")
 
 
 @pytest.mark.asyncio
@@ -27,9 +29,7 @@ async def test_send_and_get_messages(async_client, register_user, auth_headers):
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=headers)
     assert resp.status_code == 200
     rooms = resp.json()
-    if not rooms:
-        # If no room, skip test
-        pytest.skip("No chat room available")
+    assert rooms, "Expected at least one room (General) after club creation"
     room_id = rooms[0]["id"]
     msg_payload = {"text": "Hello world!"}
     send_resp = await async_client.post(f"/api/v1/chat/rooms/{room_id}/messages", headers=headers, json=msg_payload)
