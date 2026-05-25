@@ -189,6 +189,13 @@ async def create_club_service(
         role="organizer",
     )
     db.add(membership)
+
+    general_room = ChatRoom(
+        id=uuid.uuid4(),
+        club_id=club.id,
+        name=f"{club.name} · General",
+    )
+    db.add(general_room)
     await db.commit()
     await db.refresh(club)
     return await build_club_response(club, db)
