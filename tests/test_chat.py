@@ -87,7 +87,7 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
     # --- Act: drive the WS ASGI endpoint directly inside the current event loop ---
     # We wire up two asyncio.Queue pairs to simulate the ASGI receive/send channels,
     # then run the app coroutine concurrently with our test interaction.
-    to_app: asyncio.Queue = asyncio.Queue()    # test → handler
+    to_app: asyncio.Queue = asyncio.Queue()  # test → handler
     from_app: asyncio.Queue = asyncio.Queue()  # handler → test
 
     ws_scope = {

@@ -47,9 +47,7 @@ async def test_clubs_joined_after_join(async_client, register_user, auth_headers
     stats_resp = await async_client.get("/api/v1/users/me/stats", headers=member_headers)
     assert stats_resp.status_code == 200, stats_resp.text
     data = stats_resp.json()
-    assert data["clubsJoined"] == 1, (
-        f"Expected clubsJoined == 1 after joining one club, got {data['clubsJoined']}"
-    )
+    assert data["clubsJoined"] == 1, f"Expected clubsJoined == 1 after joining one club, got {data['clubsJoined']}"
 
 
 @pytest.mark.asyncio

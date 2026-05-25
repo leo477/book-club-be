@@ -77,9 +77,7 @@ async def create_chat_room(
 ) -> ChatRoomResponse:
     await require_club_organizer(club_id, current_user, db)
 
-    existing = await db.execute(
-        select(ChatRoom).where(ChatRoom.club_id == club_id, ChatRoom.name == body.name)
-    )
+    existing = await db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id, ChatRoom.name == body.name))
     if existing.scalar_one_or_none() is not None:
         raise AppError(409, "A room with this name already exists in the club", "ROOM_NAME_DUPLICATE")
 

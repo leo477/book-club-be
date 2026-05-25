@@ -74,9 +74,7 @@ class _ChatMessage(_Base):
     __tablename__ = "mig_chat_messages"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    room_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("mig_chat_rooms.id"), nullable=False
-    )
+    room_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mig_chat_rooms.id"), nullable=False)
     sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mig_users.id"), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -119,9 +117,7 @@ async def _make_room(
     return room_id
 
 
-async def _make_message(
-    session: AsyncSession, room_id: uuid.UUID, sender_id: uuid.UUID
-) -> uuid.UUID:
+async def _make_message(session: AsyncSession, room_id: uuid.UUID, sender_id: uuid.UUID) -> uuid.UUID:
     msg_id = _uuid()
     session.add(_ChatMessage(id=msg_id, room_id=room_id, sender_id=sender_id, text="hi"))
     await session.flush()
@@ -254,9 +250,7 @@ async def test_dedup_keeps_oldest_room(mig_session: AsyncSession) -> None:
     await _run_dedup(mig_session)
     await mig_session.commit()
 
-    rows = (
-        await mig_session.execute(text("SELECT id FROM mig_chat_rooms WHERE name='igor'"))
-    ).fetchall()
+    rows = (await mig_session.execute(text("SELECT id FROM mig_chat_rooms WHERE name='igor'"))).fetchall()
     assert len(rows) == 1
     assert str(rows[0][0]).replace("-", "") == str(old_id).replace("-", "")
 
@@ -279,12 +273,12 @@ async def test_dedup_reassigns_messages_to_keeper(mig_session: AsyncSession) -> 
     await _run_dedup(mig_session)
     await mig_session.commit()
 
-    msg_rows = (
-        await mig_session.execute(text("SELECT room_id FROM mig_chat_messages"))
-    ).fetchall()
+    msg_rows = (await mig_session.execute(text("SELECT room_id FROM mig_chat_messages"))).fetchall()
     assert len(msg_rows) == 2
     for row in msg_rows:
-        assert str(row[0]).replace("-", "") == str(keeper_id).replace("-", ""), "All messages must be reassigned to the keeper room"
+        assert str(row[0]).replace("-", "") == str(keeper_id).replace("-", ""), (
+            "All messages must be reassigned to the keeper room"
+        )
 
 
 @pytest.mark.asyncio
@@ -300,9 +294,7 @@ async def test_dedup_leaves_unique_rooms_untouched(mig_session: AsyncSession) ->
     await _run_dedup(mig_session)
     await mig_session.commit()
 
-    rows = (
-        await mig_session.execute(text("SELECT name FROM mig_chat_rooms ORDER BY name"))
-    ).fetchall()
+    rows = (await mig_session.execute(text("SELECT name FROM mig_chat_rooms ORDER BY name"))).fetchall()
     names = [r[0] for r in rows]
     assert names == ["general", "news"]
 
@@ -339,9 +331,7 @@ async def test_cleanup_preserves_old_room_with_messages(mig_session: AsyncSessio
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=30)
 
-    old_room_id = await _make_room(
-        mig_session, club_id, "history", created_at=now - timedelta(days=60)
-    )
+    old_room_id = await _make_room(mig_session, club_id, "history", created_at=now - timedelta(days=60))
     await _make_message(mig_session, old_room_id, sender_id)
     await mig_session.commit()
 
