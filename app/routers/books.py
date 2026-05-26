@@ -22,7 +22,6 @@ _STORES = [
     {"name": "Yakaboo", "search": "https://www.yakaboo.ua/catalogsearch/result/?q={q}"},
 ]
 
-_cache: dict[str, tuple[list, float]] = {}
 _CACHE_TTL = 3600
 
 
@@ -32,7 +31,10 @@ class StoreResult(BaseModel):
     found: bool
 
 
-async def _check_store(client: httpx.AsyncClient, store: dict, title: str) -> StoreResult:
+_cache: dict[str, tuple[list[StoreResult], float]] = {}
+
+
+async def _check_store(client: httpx.AsyncClient, store: dict[str, str], title: str) -> StoreResult:
     q = quote(title)
     url = store["search"].format(q=q)
     try:
