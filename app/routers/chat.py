@@ -165,6 +165,21 @@ async def send_message(
     db.add(msg)
     await db.commit()
     await db.refresh(msg)
+
+    await manager.broadcast(
+        str(room_id),
+        {
+            "type": "message",
+            "payload": {
+                "id": str(msg.id),
+                "senderId": str(msg.sender_id),
+                "senderName": current_user.display_name,
+                "text": msg.text,
+                "timestamp": msg.timestamp.isoformat(),
+            },
+        },
+    )
+
     return ChatMessageResponse(
         id=str(msg.id),
         senderId=str(msg.sender_id),
