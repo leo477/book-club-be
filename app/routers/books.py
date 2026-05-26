@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1/books", tags=["books"])
 logger = logging.getLogger(__name__)
 
 _STORES = [
-    {"name": "Небо", "search": "https://nebo.ua/search?q={q}"},
+    {"name": "Небо", "search": "https://nebo.ua/search?q={q}"},  # noqa: RUF001
     {"name": "КСД", "search": "https://ksd.com.ua/search?query={q}"},
     {"name": "Букава", "search": "https://bukva.ua/search?q={q}"},
     {"name": "Vivat", "search": "https://vivat-publish.com/ua/search/?q={q}"},
