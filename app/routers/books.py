@@ -38,10 +38,19 @@ async def _check_store(client: httpx.AsyncClient, store: dict, title: str) -> St
     try:
         resp = await client.get(url, follow_redirects=True, timeout=8.0)
         text = resp.text.lower()
-        no_results = any(kw in text for kw in [
-            "нічого не знайдено", "не знайдено", "0 товарів", "товарів не знайдено",
-            "nothing found", "no results", "0 results", "no products",
-        ])
+        no_results = any(
+            kw in text
+            for kw in [
+                "нічого не знайдено",
+                "не знайдено",
+                "0 товарів",
+                "товарів не знайдено",
+                "nothing found",
+                "no results",
+                "0 results",
+                "no products",
+            ]
+        )
         found = resp.status_code == 200 and not no_results
     except Exception as exc:
         logger.warning("Store check failed for %s: %s", store["name"], exc)
