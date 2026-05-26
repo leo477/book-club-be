@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Annotated
 
@@ -8,6 +9,7 @@ from app.dependencies import get_current_user
 from app.models.user import User
 
 router = APIRouter(prefix="/api/v1/upload", tags=["upload"])
+logger = logging.getLogger(__name__)
 
 # S-4: allowlist of accepted MIME types and maximum file size
 _ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
@@ -41,9 +43,16 @@ async def upload_cover(
 
     from supabase import create_client
 
-    supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
-    ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg"
-    path = f"covers/{uuid.uuid4()}.{ext}"
-    supabase.storage.from_("covers").upload(path, contents, {"content-type": file.content_type or "image/jpeg"})
-    url: str = supabase.storage.from_("covers").get_public_url(path)
+    try:
+        supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+        ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg"
+        path = f"covers/{uuid.uuid4()}.{ext}"
+        supabase.storage.from_("covers").upload(path, contents, {"content-type": file.content_type or "image/jpeg"})
+        url: str = supabase.storage.from_("covers").get_public_url(path)
+    except Exception as exc:
+        logger.error("Supabase storage error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "Storage upload failed", "code": "STORAGE_ERROR"},
+        ) from exc
     return {"url": url}

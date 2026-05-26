@@ -152,3 +152,45 @@ async def test_upload_cover_webp(async_client, register_user, auth_headers):
         )
 
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_upload_cover_storage_not_configured(async_client, register_user, auth_headers):
+    """Missing Supabase credentials → 503."""
+    await register_user(email="upload_503@example.com")
+    headers = await auth_headers(email="upload_503@example.com")
+
+    empty_settings = MagicMock()
+    empty_settings.SUPABASE_URL = ""
+    empty_settings.SUPABASE_ANON_KEY = ""
+
+    with patch("app.routers.upload.get_settings", return_value=empty_settings):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("photo.jpg", io.BytesIO(b"fake-image-data"), "image/jpeg")},
+        )
+
+    assert resp.status_code == 503
+    assert "Storage not configured" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_upload_cover_supabase_error(async_client, register_user, auth_headers):
+    """Supabase upload raises → 502 with STORAGE_ERROR code."""
+    await register_user(email="upload_502@example.com")
+    headers = await auth_headers(email="upload_502@example.com")
+
+    broken_supabase = MagicMock()
+    broken_supabase.storage.from_.return_value.upload.side_effect = RuntimeError("bucket not found")
+
+    with _supabase_patches(broken_supabase):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("photo.jpg", io.BytesIO(b"fake-image-data"), "image/jpeg")},
+        )
+
+    assert resp.status_code == 502
+    detail = resp.json()["detail"]
+    assert detail["code"] == "STORAGE_ERROR"
