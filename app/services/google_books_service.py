@@ -1,28 +1,31 @@
 import re
 import time
+from typing import Any
 from urllib.parse import quote
 
 import httpx
 
-CACHE: dict[str, tuple] = {}
+# Values are (payload, expiry_ts) where payload is list[dict] for search
+# and dict for single-item lookups — use Any to avoid a union cache type.
+CACHE: dict[str, tuple[Any, float]] = {}
 CACHE_TTL = 3600
 
 _FIELDS = "items(id,volumeInfo(title,authors,description,imageLinks,publishedDate,publisher))"
 _BOOK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
-def _map_item(item: dict) -> dict:
-    info = item.get("volumeInfo", {})
-    image_links = info.get("imageLinks", {})
-    thumbnail = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+def _map_item(item: dict[str, Any]) -> dict[str, Any]:
+    info: dict[str, Any] = item.get("volumeInfo") or {}
+    image_links: dict[str, Any] = info.get("imageLinks") or {}
+    thumbnail: str | None = image_links.get("thumbnail") or image_links.get("smallThumbnail")
     if thumbnail:
         thumbnail = thumbnail.replace("http://", "https://")
-    description = info.get("description")
+    description: str | None = info.get("description")
     if description:
         description = description[:800]
     return {
-        "id": item.get("id", ""),
-        "title": info.get("title", ""),
+        "id": item.get("id") or "",
+        "title": info.get("title") or "",
         "authors": info.get("authors") or [],
         "description": description,
         "thumbnail": thumbnail,
@@ -31,12 +34,12 @@ def _map_item(item: dict) -> dict:
     }
 
 
-async def search_books(query: str, limit: int = 5, api_key: str = "") -> list[dict]:
+async def search_books(query: str, limit: int = 5, api_key: str = "") -> list[dict[str, Any]]:
     cache_key = f"search:{query}:{limit}"
     now = time.time()
     cached = CACHE.get(cache_key)
     if cached and now < cached[1]:
-        return cached[0]
+        return cached[0]  # type: ignore[no-any-return]
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(
@@ -46,13 +49,13 @@ async def search_books(query: str, limit: int = 5, api_key: str = "") -> list[di
         )
         resp.raise_for_status()
 
-    data = resp.json()
-    result = [_map_item(item) for item in data.get("items") or []]
+    data: dict[str, Any] = resp.json()
+    result: list[dict[str, Any]] = [_map_item(item) for item in data.get("items") or []]
     CACHE[cache_key] = (result, now + CACHE_TTL)
     return result
 
 
-async def get_book_by_id(book_id: str, api_key: str = "") -> dict | None:
+async def get_book_by_id(book_id: str, api_key: str = "") -> dict[str, Any] | None:
     if not _BOOK_ID_RE.fullmatch(book_id):
         return None
 
@@ -60,7 +63,7 @@ async def get_book_by_id(book_id: str, api_key: str = "") -> dict | None:
     now = time.time()
     cached = CACHE.get(cache_key)
     if cached and now < cached[1]:
-        return cached[0]
+        return cached[0]  # type: ignore[no-any-return]
 
     safe_book_id = quote(book_id, safe="")
 
@@ -74,7 +77,7 @@ async def get_book_by_id(book_id: str, api_key: str = "") -> dict | None:
             return None
         resp.raise_for_status()
 
-    item = resp.json()
+    item: dict[str, Any] = resp.json()
     if not item or "id" not in item:
         return None
     result = _map_item(item)

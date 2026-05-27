@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
@@ -30,7 +30,7 @@ class ClubResponse(BaseModel):
     meetingDurationMinutes: int | None = None
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
     cancelledAt: datetime | str | None = None
-    currentChampion: dict | None = None
+    currentChampion: dict[str, Any] | None = None
 
 
 class MemberStatRow(BaseModel):

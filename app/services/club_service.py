@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, func, select
 from sqlalchemy import delete as sa_delete
@@ -82,7 +82,7 @@ async def get_user_stats(user_id: uuid.UUID, db: AsyncSession) -> UserStatsRespo
     )
 
 
-async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> dict | None:
+async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> dict[str, Any] | None:
     from app.models.event import Event
 
     result = await db.execute(
@@ -190,7 +190,7 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
             subq_rn.c.date,
         ).where(subq_rn.c.rn == 1)
     )
-    champion_map: dict[uuid.UUID, dict] = {}
+    champion_map: dict[uuid.UUID, dict[str, Any]] = {}
     for row in champions_result.all():
         champion_map[row.club_id] = {
             "userId": str(row.winner_id),
@@ -421,7 +421,7 @@ async def create_event_service(
 
 
 def _assemble_club_response(
-    club: Club, member_count: int, previews: list[str], champion: dict | None = None
+    club: Club, member_count: int, previews: list[str], champion: dict[str, Any] | None = None
 ) -> ClubResponse:
     return ClubResponse(
         id=str(club.id),
