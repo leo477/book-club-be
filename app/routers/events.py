@@ -174,9 +174,7 @@ async def set_event_winner(
         raise AppError(400, "Event must be held to set a winner", "EVENT_NOT_HELD")
 
     attendee = await db.execute(
-        select(EventAttendee).where(
-            and_(EventAttendee.event_id == event_id, EventAttendee.user_id == body.winner_id)
-        )
+        select(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == body.winner_id))
     )
     if not attendee.scalar_one_or_none():
         raise AppError(400, "Winner must be an attendee of this event", "WINNER_NOT_ATTENDEE")

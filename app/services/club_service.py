@@ -171,9 +171,7 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
             Event.winner_name,
             Event.title,
             Event.date,
-            func.row_number()
-            .over(partition_by=Event.club_id, order_by=Event.date.desc())
-            .label("rn"),
+            func.row_number().over(partition_by=Event.club_id, order_by=Event.date.desc()).label("rn"),
         )
         .where(
             Event.club_id.in_(club_ids),

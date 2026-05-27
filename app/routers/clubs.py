@@ -313,10 +313,7 @@ async def get_club_stats(
     ]
 
     attendee_count_sq = (
-        select(func.count())
-        .where(EventAttendee.event_id == Event.id)
-        .correlate(Event)
-        .scalar_subquery()
+        select(func.count()).where(EventAttendee.event_id == Event.id).correlate(Event).scalar_subquery()
     )
     recent_result = await db.execute(
         select(Event.id, Event.title, Event.date, attendee_count_sq.label("attendee_count"))
