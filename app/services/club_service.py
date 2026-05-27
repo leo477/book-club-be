@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, func, select
 from sqlalchemy import delete as sa_delete
@@ -82,6 +82,31 @@ async def get_user_stats(user_id: uuid.UUID, db: AsyncSession) -> UserStatsRespo
     )
 
 
+async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> dict[str, Any] | None:
+    from app.models.event import Event
+
+    result = await db.execute(
+        select(Event)
+        .where(
+            Event.club_id == club_id,
+            Event.status == "held",
+            Event.has_winner.is_(True),
+            Event.winner_id.isnot(None),
+        )
+        .order_by(Event.date.desc())
+        .limit(1)
+    )
+    event = result.scalar_one_or_none()
+    if not event:
+        return None
+    return {
+        "userId": str(event.winner_id),
+        "displayName": event.winner_name,
+        "eventTitle": event.title,
+        "eventDate": event.date.isoformat(),
+    }
+
+
 async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
     count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club.id))
     member_count = count_result.scalar() or 0
@@ -93,7 +118,8 @@ async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
         .limit(5)
     )
     previews = [r for r in members_result.scalars() if r]
-    return _assemble_club_response(club, member_count, previews)
+    champion = await _get_current_champion(club.id, db)
+    return _assemble_club_response(club, member_count, previews, champion)
 
 
 async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list[ClubResponse]:
@@ -134,12 +160,53 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
         if url:
             previews_map.setdefault(cid, []).append(url)
 
-    # 3. Збираємо фінальний список за допомогою вашої функції _assemble_club_response
+    from app.models.event import Event
+
+    # Bulk-load current champions: one latest held+winner event per club
+    subq_rn = (
+        select(
+            Event.id,
+            Event.club_id,
+            Event.winner_id,
+            Event.winner_name,
+            Event.title,
+            Event.date,
+            func.row_number().over(partition_by=Event.club_id, order_by=Event.date.desc()).label("rn"),
+        )
+        .where(
+            Event.club_id.in_(club_ids),
+            Event.status == "held",
+            Event.has_winner.is_(True),
+            Event.winner_id.isnot(None),
+        )
+        .subquery()
+    )
+    champions_result = await db.execute(
+        select(
+            subq_rn.c.club_id,
+            subq_rn.c.winner_id,
+            subq_rn.c.winner_name,
+            subq_rn.c.title,
+            subq_rn.c.date,
+        ).where(subq_rn.c.rn == 1)
+    )
+    champion_map: dict[uuid.UUID, dict[str, Any]] = {}
+    for row in champions_result.all():
+        champion_map[row.club_id] = {
+            "userId": str(row.winner_id),
+            "displayName": row.winner_name,
+            "eventTitle": row.title,
+            "eventDate": row.date.isoformat(),
+        }
+
     responses = []
     for club in clubs:
         responses.append(
             _assemble_club_response(
-                club=club, member_count=counts_map.get(club.id, 0), previews=previews_map.get(club.id, [])
+                club=club,
+                member_count=counts_map.get(club.id, 0),
+                previews=previews_map.get(club.id, []),
+                champion=champion_map.get(club.id),
             )
         )
 
@@ -343,6 +410,7 @@ async def create_event_service(
         after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
         cover_url=body.coverUrl,
         book_title=body.bookTitle,
+        google_book_id=body.googleBookId,
         status="scheduled",
     )
     db.add(event)
@@ -352,7 +420,9 @@ async def create_event_service(
     return await build_event_response(event, db, current_user.id, club_name=club.name, organizer_id=club.organizer_id)
 
 
-def _assemble_club_response(club: Club, member_count: int, previews: list[str]) -> ClubResponse:
+def _assemble_club_response(
+    club: Club, member_count: int, previews: list[str], champion: dict[str, Any] | None = None
+) -> ClubResponse:
     return ClubResponse(
         id=str(club.id),
         name=club.name,
@@ -377,4 +447,5 @@ def _assemble_club_response(club: Club, member_count: int, previews: list[str]) 
         if club.after_meeting_venue
         else None,
         cancelledAt=club.cancelled_at,
+        currentChampion=champion,
     )
