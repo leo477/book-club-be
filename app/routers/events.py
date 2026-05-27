@@ -12,7 +12,13 @@ from app.dependencies import get_current_user, get_db_dep, get_optional_user, re
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
-from app.schemas.events import AttendEventResponse, EventResponse, EventUpdatePayload, RescheduleEventRequest, SetWinnerRequest
+from app.schemas.events import (
+    AttendEventResponse,
+    EventResponse,
+    EventUpdatePayload,
+    RescheduleEventRequest,
+    SetWinnerRequest,
+)
 from app.services.event_service import (
     attend_event_service,
     build_event_response,

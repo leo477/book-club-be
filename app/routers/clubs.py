@@ -15,7 +15,13 @@ from app.exceptions import AppError
 from app.models.club import Club
 from app.models.club_member import ClubMember
 from app.models.user import User
-from app.schemas.clubs import ClubResponse, ClubStatsResponse, CreateClubRequest, RescheduleMeetingRequest, UpdateClubRequest
+from app.schemas.clubs import (
+    ClubResponse,
+    ClubStatsResponse,
+    CreateClubRequest,
+    RescheduleMeetingRequest,
+    UpdateClubRequest,
+)
 from app.schemas.events import CreateEventRequest, EventResponse
 from app.services.club_service import (
     build_club_response,
