@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, PrimaryKeyConstraint, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, PrimaryKeyConstraint, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,6 +33,12 @@ class Event(AppBase):
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), server_default=text("'{}'"))
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     after_meeting_venue: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    has_winner: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    winner_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    winner_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    google_book_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     club = relationship("Club", back_populates="events")
     attendees = relationship("EventAttendee", back_populates="event")

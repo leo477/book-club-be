@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
@@ -35,6 +36,10 @@ class EventResponse(BaseModel):
     afterMeetingVenue: AfterMeetingVenueSchema | None
     attendeeCount: int
     isAttending: bool
+    hasWinner: bool = False
+    winnerId: str | None = None
+    winnerName: str | None = None
+    googleBookId: str | None = None
 
 
 class CreateEventRequest(BaseModel):
@@ -49,6 +54,7 @@ class CreateEventRequest(BaseModel):
     tags: list[str] = []
     durationMinutes: int | None = None
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
+    googleBookId: str | None = None
 
 
 class EventUpdatePayload(BaseModel):
@@ -64,6 +70,12 @@ class EventUpdatePayload(BaseModel):
     cover_url: str | None = None
     duration_minutes: int | None = None
     after_meeting_venue: AfterMeetingVenueSchema | None = None
+    has_winner: bool | None = None
+    google_book_id: str | None = None
+
+
+class SetWinnerRequest(BaseModel):
+    winner_id: UUID
 
 
 class RescheduleEventRequest(BaseModel):

@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_JWT_SECRET: str = ""
 
+    GOOGLE_BOOKS_API_KEY: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
     @property

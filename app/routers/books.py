@@ -5,11 +5,15 @@ from typing import Annotated
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.dependencies import get_current_user
 from app.models.user import User
+from app.services import google_books_service
+
+settings = get_settings()
 
 router = APIRouter(prefix="/api/v1/books", tags=["books"])
 logger = logging.getLogger(__name__)
@@ -23,6 +27,20 @@ _STORES = [
 ]
 
 _CACHE_TTL = 3600
+
+
+class BookSuggestion(BaseModel):
+    id: str
+    title: str
+    authors: list[str]
+    description: str | None = None
+    thumbnail: str | None = None
+    publishedDate: str | None = None
+    publisher: str | None = None
+
+
+class BookDetails(BookSuggestion):
+    pass
 
 
 class StoreResult(BaseModel):
@@ -58,6 +76,27 @@ async def _check_store(client: httpx.AsyncClient, store: dict[str, str], title: 
         logger.warning("Store check failed for %s: %s", store["name"], exc)
         found = False
     return StoreResult(name=store["name"], url=url, found=found)
+
+
+@router.get("/search", response_model=list[BookSuggestion])
+async def search_books(
+    q: Annotated[str, Query(min_length=2)],
+    _current_user: Annotated[User, Depends(get_current_user)],
+    limit: Annotated[int, Query(ge=1, le=10)] = 5,
+) -> list[BookSuggestion]:
+    results = await google_books_service.search_books(q, limit, settings.GOOGLE_BOOKS_API_KEY)
+    return [BookSuggestion.model_validate(item) for item in results]
+
+
+@router.get("/details/{book_id}", response_model=BookDetails, responses={404: {"description": "Book not found"}})
+async def get_book_details(
+    book_id: str,
+    _current_user: Annotated[User, Depends(get_current_user)],
+) -> BookDetails:
+    item = await google_books_service.get_book_by_id(book_id, settings.GOOGLE_BOOKS_API_KEY)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return BookDetails.model_validate(item)
 
 
 @router.get("/stores", response_model=list[StoreResult])
