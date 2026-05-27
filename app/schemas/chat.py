@@ -28,3 +28,16 @@ class CreateChatRoomRequest(BaseModel):
 class BanFromRoomRequest(BaseModel):
     user_id: str
     duration_seconds: int
+
+
+# ── Feature 5: read/unread tracking ──────────────────────────────────────────
+
+
+class MarkReadRequest(BaseModel):
+    last_read_message_id: str
+
+
+class UnreadCountResponse(BaseModel):
+    room_id: str
+    unread_count: int
+    last_read_message_id: str | None = None
