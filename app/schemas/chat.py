@@ -32,6 +32,7 @@ class BanFromRoomRequest(BaseModel):
 
 # ── Feature 5: read/unread tracking ──────────────────────────────────────────
 
+
 class MarkReadRequest(BaseModel):
     last_read_message_id: str
 

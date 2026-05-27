@@ -50,10 +50,7 @@ class ConnectionManager:
         # Only remove from presence if this user has no remaining connections in the room.
         uid: str | None = getattr(websocket, "_user_id", None)
         if uid:
-            still_connected = any(
-                getattr(ws, "_user_id", None) == uid
-                for ws in self.active_connections[room_id]
-            )
+            still_connected = any(getattr(ws, "_user_id", None) == uid for ws in self.active_connections[room_id])
             if not still_connected:
                 self.room_presence[room_id].discard(uid)
 
@@ -274,6 +271,7 @@ async def ban_from_room(
 
 # ── Feature 5: read/unread tracking ──────────────────────────────────────────
 
+
 @router.post("/chat/rooms/{room_id}/read", status_code=status.HTTP_204_NO_CONTENT)
 async def mark_room_as_read(
     room_id: uuid.UUID,
@@ -310,6 +308,7 @@ async def mark_room_as_read(
     else:
         read_row.last_read_message_id = uuid.UUID(body.last_read_message_id)
         from sqlalchemy.sql import func as sqlfunc
+
         read_row.updated_at = sqlfunc.now()
     await db.commit()
 
@@ -334,9 +333,7 @@ async def get_unread_count(
 
     if read_row is None or read_row.last_read_message_id is None:
         # No read pointer → all messages are unread.
-        total = await db.scalar(
-            select(sqlfunc.count()).where(ChatMessage.room_id == room_id)
-        )
+        total = await db.scalar(select(sqlfunc.count()).where(ChatMessage.room_id == room_id))
         return UnreadCountResponse(
             room_id=str(room_id),
             unread_count=int(total or 0),
@@ -345,9 +342,7 @@ async def get_unread_count(
 
     # Count messages with a timestamp strictly after the last-read message.
     last_ts_subq = (
-        select(ChatMessage.timestamp)
-        .where(ChatMessage.id == read_row.last_read_message_id)
-        .scalar_subquery()
+        select(ChatMessage.timestamp).where(ChatMessage.id == read_row.last_read_message_id).scalar_subquery()
     )
     count = await db.scalar(
         select(sqlfunc.count()).where(
@@ -409,10 +404,12 @@ async def websocket_endpoint(
     await manager.connect(room_id, websocket, str(user.id))
 
     # Feature 4: send current presence snapshot to the newly connected user.
-    await websocket.send_json({
-        "type": "presence_snapshot",
-        "payload": manager.get_presence_snapshot(room_id),
-    })
+    await websocket.send_json(
+        {
+            "type": "presence_snapshot",
+            "payload": manager.get_presence_snapshot(room_id),
+        }
+    )
     # Broadcast that this user is now online to everyone else in the room.
     await manager.broadcast_presence(room_id, str(user.id), "online")
 
@@ -474,9 +471,7 @@ async def websocket_endpoint(
     finally:
         # Feature 4: broadcast offline status before removing from connection list.
         will_go_offline = str(user.id) not in {
-            getattr(ws, "_user_id", None)
-            for ws in manager.active_connections[room_id]
-            if ws is not websocket
+            getattr(ws, "_user_id", None) for ws in manager.active_connections[room_id] if ws is not websocket
         }
         manager.disconnect(room_id, websocket)
         if will_go_offline:
