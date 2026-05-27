@@ -128,6 +128,25 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
         "membership check after join is still failing (403 bug not fixed)"
     )
 
+    # After accept, the server sends a presence_snapshot and an online presence
+    # broadcast before waiting for messages from the client.  Drain those first.
+    async def drain_non_message_frames(n: int = 3) -> None:
+        """Consume up to `n` non-'message' WS frames sent right after connect."""
+        for _ in range(n):
+            try:
+                frame = await asyncio.wait_for(from_app.get(), timeout=1)
+                if frame.get("type") != "websocket.send":
+                    break
+                envelope = json.loads(frame["text"])
+                if envelope.get("type") == "message":
+                    # Put it back — shouldn't happen here but be safe
+                    await from_app.put(frame)  # type: ignore[attr-defined]
+                    break
+            except TimeoutError:
+                break
+
+    await drain_non_message_frames()
+
     # Send a chat message and expect it broadcast back
     await to_app.put({"type": "websocket.receive", "text": json.dumps({"text": "hello from member"}), "bytes": None})
     broadcast = await asyncio.wait_for(from_app.get(), timeout=5)
