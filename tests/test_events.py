@@ -595,3 +595,135 @@ async def test_update_event_not_found(async_client, register_user, auth_headers)
         json={"title": "Ghost"},
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/v1/events/{event_id}/winner  (set event winner)
+# ---------------------------------------------------------------------------
+
+
+async def _mark_event_held(db_session, event_id: str) -> None:
+    """Directly set an event's status to 'held' in the DB (bypasses router logic)."""
+    from sqlalchemy import update
+
+    from app.models.event import Event
+
+    await db_session.execute(update(Event).where(Event.id == uuid.UUID(event_id)).values(status="held"))
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_set_event_winner_happy_path(async_client, register_user, auth_headers, db_session):
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_winner1@example.com")
+    club_id = await _create_club(async_client, org_headers, "WinnerClub1")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    # Add a regular attendee
+    await register_user(email="ev_winner1_m@example.com", displayName="Champion User")
+    member_headers = await auth_headers(email="ev_winner1_m@example.com")
+    await async_client.post(f"/api/v1/events/{event['id']}/attend", headers=member_headers)
+    me_resp = await async_client.get("/api/v1/users/me", headers=member_headers)
+    winner_user_id = me_resp.json()["id"]
+
+    # Mark event as held directly in DB
+    await _mark_event_held(db_session, event["id"])
+
+    resp = await async_client.patch(
+        f"/api/v1/events/{event['id']}/winner",
+        headers=org_headers,
+        json={"winner_id": winner_user_id},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["hasWinner"] is True
+    assert data["winnerId"] == winner_user_id
+    assert data["winnerName"] == "Champion User"
+
+
+@pytest.mark.asyncio
+async def test_set_event_winner_event_not_held(async_client, register_user, auth_headers):
+    """Returns 400 EVENT_NOT_HELD when event status is not 'held'."""
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_winner_notheld@example.com")
+    club_id = await _create_club(async_client, org_headers, "WinnerClub2")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    await register_user(email="ev_winner_notheld_m@example.com")
+    member_headers = await auth_headers(email="ev_winner_notheld_m@example.com")
+    me_resp = await async_client.get("/api/v1/users/me", headers=member_headers)
+    some_user_id = me_resp.json()["id"]
+
+    resp = await async_client.patch(
+        f"/api/v1/events/{event['id']}/winner",
+        headers=org_headers,
+        json={"winner_id": some_user_id},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "EVENT_NOT_HELD"
+
+
+@pytest.mark.asyncio
+async def test_set_event_winner_winner_not_attendee(async_client, register_user, auth_headers, db_session):
+    """Returns 400 WINNER_NOT_ATTENDEE when winner_id did not attend the event."""
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_winner_noatt@example.com")
+    club_id = await _create_club(async_client, org_headers, "WinnerClub3")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    await register_user(email="ev_winner_noatt_m@example.com")
+    member_headers = await auth_headers(email="ev_winner_noatt_m@example.com")
+    me_resp = await async_client.get("/api/v1/users/me", headers=member_headers)
+    non_attendee_id = me_resp.json()["id"]
+
+    await _mark_event_held(db_session, event["id"])
+
+    resp = await async_client.patch(
+        f"/api/v1/events/{event['id']}/winner",
+        headers=org_headers,
+        json={"winner_id": non_attendee_id},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "WINNER_NOT_ATTENDEE"
+
+
+@pytest.mark.asyncio
+async def test_set_event_winner_event_not_found(async_client, register_user, auth_headers):
+    """Returns 404 when event does not exist."""
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_winner_nf@example.com")
+    resp = await async_client.patch(
+        f"/api/v1/events/{uuid.uuid4()}/winner",
+        headers=org_headers,
+        json={"winner_id": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_set_event_winner_unauthenticated(async_client):
+    """Returns 401 when no token is provided."""
+    resp = await async_client.patch(
+        f"/api/v1/events/{uuid.uuid4()}/winner",
+        json={"winner_id": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_set_event_winner_non_organizer_forbidden(async_client, register_user, auth_headers, db_session):
+    """Returns 403 when a regular member tries to set a winner."""
+    org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_winner_forbid@example.com")
+    club_id = await _create_club(async_client, org_headers, "WinnerClub4")
+    event = await _create_event(async_client, org_headers, club_id)
+
+    await register_user(email="ev_winner_forbid_m@example.com")
+    member_headers = await auth_headers(email="ev_winner_forbid_m@example.com")
+    await async_client.post(f"/api/v1/events/{event['id']}/attend", headers=member_headers)
+    me_resp = await async_client.get("/api/v1/users/me", headers=member_headers)
+    member_id = me_resp.json()["id"]
+
+    await _mark_event_held(db_session, event["id"])
+
+    resp = await async_client.patch(
+        f"/api/v1/events/{event['id']}/winner",
+        headers=member_headers,
+        json={"winner_id": member_id},
+    )
+    assert resp.status_code == 403

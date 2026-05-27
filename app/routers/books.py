@@ -88,7 +88,7 @@ async def search_books(
     return [BookSuggestion.model_validate(item) for item in results]
 
 
-@router.get("/details/{book_id}", response_model=BookDetails)
+@router.get("/details/{book_id}", response_model=BookDetails, responses={404: {"description": "Book not found"}})
 async def get_book_details(
     book_id: str,
     _current_user: Annotated[User, Depends(get_current_user)],

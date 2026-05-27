@@ -1,7 +1,7 @@
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.models.user import User
 
@@ -528,3 +528,180 @@ async def test_create_second_club_returns_409(async_client, register_user, auth_
     )
     assert second_resp.status_code == 409
     assert second_resp.json()["detail"]["code"] == "ORGANIZER_ALREADY_HAS_CLUB"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/clubs/{club_id}/stats
+# ---------------------------------------------------------------------------
+
+FUTURE_DATE = "2099-12-31T10:00:00+00:00"
+
+
+async def _setup_organizer_club(
+    async_client, register_user, auth_headers, email: str, club_name: str
+) -> tuple[dict, str]:
+    """Register+promote an organizer and create a club. Returns (headers, club_id)."""
+    await register_user(email=email)
+    headers = await auth_headers(email=email)
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+    resp = await async_client.post(
+        "/api/v1/clubs",
+        headers=headers,
+        json={"name": club_name, "description": "Desc", "city": "Kyiv"},
+    )
+    assert resp.status_code == 201
+    return headers, resp.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_get_club_stats_empty(async_client, register_user, auth_headers):
+    """Club with no events returns empty lists for all stat categories."""
+    headers, club_id = await _setup_organizer_club(
+        async_client, register_user, auth_headers, "stats_empty_org@example.com", "StatsEmptyClub"
+    )
+
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/stats", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["topActive"] == []
+    assert data["topWinners"] == []
+    assert data["recentAttendance"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_club_stats_unauthenticated(async_client, register_user, auth_headers):
+    """Stats endpoint requires authentication → 401."""
+    headers, club_id = await _setup_organizer_club(
+        async_client, register_user, auth_headers, "stats_unauth_org@example.com", "StatsUnauthClub"
+    )
+
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/stats")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_club_stats_non_organizer_forbidden(async_client, register_user, auth_headers):
+    """A regular member cannot view club stats → 403."""
+    org_headers, club_id = await _setup_organizer_club(
+        async_client, register_user, auth_headers, "stats_forbid_org@example.com", "StatsForbidClub"
+    )
+
+    await register_user(email="stats_forbid_m@example.com")
+    member_headers = await auth_headers(email="stats_forbid_m@example.com")
+    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=member_headers)
+
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/stats", headers=member_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_club_stats_club_not_found(async_client, register_user, auth_headers):
+    """Returns 403/404 when club does not exist (require_club_organizer fires first → 403)."""
+    await register_user(email="stats_nf_org@example.com")
+    headers = await auth_headers(email="stats_nf_org@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+
+    resp = await async_client.get(f"/api/v1/clubs/{uuid.uuid4()}/stats", headers=headers)
+    # require_club_organizer checks membership before the handler calls get_club_or_404,
+    # so a non-existent club returns 403 (not a member) rather than 404.
+    assert resp.status_code in (403, 404)
+
+
+@pytest.mark.asyncio
+async def test_get_club_stats_with_attendees(async_client, register_user, auth_headers, db_session):
+    """Stats returns topActive populated after a held event with attendees."""
+    from app.models.event import Event
+
+    org_headers, club_id = await _setup_organizer_club(
+        async_client, register_user, auth_headers, "stats_att_org@example.com", "StatsAttClub"
+    )
+
+    # Create an event
+    ev_resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/events",
+        headers=org_headers,
+        json={"title": "Stats Event", "date": FUTURE_DATE, "city": "Kyiv", "description": "Test"},
+    )
+    assert ev_resp.status_code == 201
+    event_id = ev_resp.json()["id"]
+
+    # A member attends
+    await register_user(email="stats_att_m@example.com")
+    member_headers = await auth_headers(email="stats_att_m@example.com")
+    await async_client.post(f"/api/v1/events/{event_id}/attend", headers=member_headers)
+
+    # Mark event as held
+    await db_session.execute(update(Event).where(Event.id == uuid.UUID(event_id)).values(status="held"))
+    await db_session.commit()
+
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/stats", headers=org_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    # The organizer attended (auto-added on creation) + the member who joined
+    assert len(data["topActive"]) >= 1
+    assert "userId" in data["topActive"][0]
+    assert "count" in data["topActive"][0]
+    # recentAttendance should include our held event
+    event_ids_in_stats = [e["eventId"] for e in data["recentAttendance"]]
+    assert event_id in event_ids_in_stats
+
+
+# ---------------------------------------------------------------------------
+# club_service._get_current_champion — via GET /clubs/{id} (build_club_response)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_club_shows_current_champion(async_client, register_user, auth_headers, db_session):
+    """After setting a winner on a held event, GET /clubs/{id} returns currentChampion."""
+    from app.models.event import Event
+
+    org_headers, club_id = await _setup_organizer_club(
+        async_client, register_user, auth_headers, "champ_org@example.com", "ChampionClub"
+    )
+
+    ev_resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/events",
+        headers=org_headers,
+        json={"title": "Champion Event", "date": FUTURE_DATE, "city": "Kyiv", "description": "Test"},
+    )
+    assert ev_resp.status_code == 201
+    event_id = ev_resp.json()["id"]
+
+    await register_user(email="champ_m@example.com", displayName="The Champion")
+    member_headers = await auth_headers(email="champ_m@example.com")
+    await async_client.post(f"/api/v1/events/{event_id}/attend", headers=member_headers)
+    me_resp = await async_client.get("/api/v1/users/me", headers=member_headers)
+    winner_id = me_resp.json()["id"]
+
+    # Mark event as held then set winner via API
+    await db_session.execute(update(Event).where(Event.id == uuid.UUID(event_id)).values(status="held"))
+    await db_session.commit()
+
+    win_resp = await async_client.patch(
+        f"/api/v1/events/{event_id}/winner",
+        headers=org_headers,
+        json={"winner_id": winner_id},
+    )
+    assert win_resp.status_code == 200
+
+    # GET /clubs/{club_id} should now return currentChampion
+    club_resp = await async_client.get(f"/api/v1/clubs/{club_id}")
+    assert club_resp.status_code == 200
+    champion = club_resp.json().get("currentChampion")
+    assert champion is not None
+    assert champion["userId"] == winner_id
+    assert champion["displayName"] == "The Champion"
+    assert champion["eventTitle"] == "Champion Event"
+
+
+@pytest.mark.asyncio
+async def test_get_club_no_champion_when_no_held_events(async_client, register_user, auth_headers):
+    """A brand-new club with no held events returns null currentChampion."""
+    org_headers, club_id = await _setup_organizer_club(
+        async_client, register_user, auth_headers, "nochamp_org@example.com", "NoChampClub"
+    )
+
+    club_resp = await async_client.get(f"/api/v1/clubs/{club_id}")
+    assert club_resp.status_code == 200
+    assert club_resp.json()["currentChampion"] is None
