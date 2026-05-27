@@ -1,4 +1,6 @@
+import re
 import time
+from urllib.parse import quote
 
 import httpx
 
@@ -6,6 +8,7 @@ CACHE: dict[str, tuple] = {}
 CACHE_TTL = 3600
 
 _FIELDS = "items(id,volumeInfo(title,authors,description,imageLinks,publishedDate,publisher))"
+_BOOK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _map_item(item: dict) -> dict:
@@ -50,15 +53,20 @@ async def search_books(query: str, limit: int = 5, api_key: str = "") -> list[di
 
 
 async def get_book_by_id(book_id: str, api_key: str = "") -> dict | None:
+    if not _BOOK_ID_RE.fullmatch(book_id):
+        return None
+
     cache_key = f"id:{book_id}"
     now = time.time()
     cached = CACHE.get(cache_key)
     if cached and now < cached[1]:
         return cached[0]
 
+    safe_book_id = quote(book_id, safe="")
+
     async with httpx.AsyncClient() as client:
         resp = await client.get(
-            f"https://www.googleapis.com/books/v1/volumes/{book_id}",
+            f"https://www.googleapis.com/books/v1/volumes/{safe_book_id}",
             params={"key": api_key},
             timeout=10.0,
         )
