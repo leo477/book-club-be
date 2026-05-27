@@ -46,6 +46,10 @@ def _assemble_event_response(
         afterMeetingVenue=(AfterMeetingVenueSchema(**event.after_meeting_venue) if event.after_meeting_venue else None),
         attendeeCount=attendee_count,
         isAttending=is_attending,
+        hasWinner=event.has_winner,
+        winnerId=str(event.winner_id) if event.winner_id else None,
+        winnerName=event.winner_name,
+        googleBookId=event.google_book_id,
     )
 
 

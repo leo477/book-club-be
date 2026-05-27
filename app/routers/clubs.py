@@ -6,7 +6,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +15,7 @@ from app.exceptions import AppError
 from app.models.club import Club
 from app.models.club_member import ClubMember
 from app.models.user import User
-from app.schemas.clubs import ClubResponse, CreateClubRequest, RescheduleMeetingRequest, UpdateClubRequest
+from app.schemas.clubs import ClubResponse, ClubStatsResponse, CreateClubRequest, RescheduleMeetingRequest, UpdateClubRequest
 from app.schemas.events import CreateEventRequest, EventResponse
 from app.services.club_service import (
     build_club_response,
@@ -263,3 +263,64 @@ async def create_event(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> EventResponse:
     return await create_event_service(body, club_id, current_user, db)
+
+
+@router.get("/{club_id}/stats")
+async def get_club_stats(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _auth: Annotated[None, Depends(require_club_organizer)],
+) -> ClubStatsResponse:
+    from app.models.event import Event, EventAttendee
+    from app.models.quiz import Quiz, QuizAttempt
+    from app.schemas.clubs import EventAttendanceStat, MemberStatRow
+
+    await get_club_or_404(club_id, db)
+
+    top_active_result = await db.execute(
+        select(User.id, User.display_name, User.avatar_url, func.count(EventAttendee.event_id).label("cnt"))
+        .join(EventAttendee, EventAttendee.user_id == User.id)
+        .join(Event, Event.id == EventAttendee.event_id)
+        .where(Event.club_id == club_id)
+        .group_by(User.id, User.display_name, User.avatar_url)
+        .order_by(func.count(EventAttendee.event_id).desc())
+        .limit(3)
+    )
+    top_active = [
+        MemberStatRow(userId=str(r.id), displayName=r.display_name, avatarUrl=r.avatar_url, count=r.cnt)
+        for r in top_active_result.all()
+    ]
+
+    top_winners_result = await db.execute(
+        select(User.id, User.display_name, User.avatar_url, func.count(QuizAttempt.id).label("cnt"))
+        .join(QuizAttempt, QuizAttempt.user_id == User.id)
+        .join(Quiz, Quiz.id == QuizAttempt.quiz_id)
+        .where(Quiz.club_id == club_id, QuizAttempt.score == QuizAttempt.total)
+        .group_by(User.id, User.display_name, User.avatar_url)
+        .order_by(func.count(QuizAttempt.id).desc())
+        .limit(3)
+    )
+    top_winners = [
+        MemberStatRow(userId=str(r.id), displayName=r.display_name, avatarUrl=r.avatar_url, count=r.cnt)
+        for r in top_winners_result.all()
+    ]
+
+    attendee_count_sq = (
+        select(func.count())
+        .where(EventAttendee.event_id == Event.id)
+        .correlate(Event)
+        .scalar_subquery()
+    )
+    recent_result = await db.execute(
+        select(Event.id, Event.title, Event.date, attendee_count_sq.label("attendee_count"))
+        .where(Event.club_id == club_id, Event.status == "held")
+        .order_by(Event.date.desc())
+        .limit(10)
+    )
+    recent_attendance = [
+        EventAttendanceStat(eventId=str(r.id), title=r.title, date=r.date, attendeeCount=r.attendee_count)
+        for r in recent_result.all()
+    ]
+
+    return ClubStatsResponse(topActive=top_active, topWinners=top_winners, recentAttendance=recent_attendance)

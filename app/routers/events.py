@@ -12,7 +12,7 @@ from app.dependencies import get_current_user, get_db_dep, get_optional_user, re
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
-from app.schemas.events import AttendEventResponse, EventResponse, EventUpdatePayload, RescheduleEventRequest
+from app.schemas.events import AttendEventResponse, EventResponse, EventUpdatePayload, RescheduleEventRequest, SetWinnerRequest
 from app.services.event_service import (
     attend_event_service,
     build_event_response,
@@ -147,6 +147,42 @@ async def cancel_event(
     event = await get_event_or_404(event_id, db)
     event.status = "cancelled"
     event.cancelled_at = datetime.now(tz=UTC)
+    await db.commit()
+    await db.refresh(event)
+    return await build_event_response(event, db, current_user.id)
+
+
+@router.patch("/{event_id}/winner")
+async def set_event_winner(
+    event_id: uuid.UUID,
+    body: SetWinnerRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
+) -> EventResponse:
+    from app.exceptions import AppError
+    from app.models.user import User as UserModel
+
+    event = await get_event_or_404(event_id, db)
+    if event.status != "held":
+        raise AppError(400, "Event must be held to set a winner", "EVENT_NOT_HELD")
+
+    attendee = await db.execute(
+        select(EventAttendee).where(
+            and_(EventAttendee.event_id == event_id, EventAttendee.user_id == body.winner_id)
+        )
+    )
+    if not attendee.scalar_one_or_none():
+        raise AppError(400, "Winner must be an attendee of this event", "WINNER_NOT_ATTENDEE")
+
+    winner_result = await db.execute(select(UserModel).where(UserModel.id == body.winner_id))
+    winner = winner_result.scalar_one_or_none()
+    if not winner:
+        raise AppError(404, "User not found", "USER_NOT_FOUND")
+
+    event.has_winner = True
+    event.winner_id = body.winner_id
+    event.winner_name = winner.display_name
     await db.commit()
     await db.refresh(event)
     return await build_event_response(event, db, current_user.id)
