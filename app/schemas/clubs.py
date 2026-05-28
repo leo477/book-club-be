@@ -47,10 +47,23 @@ class EventAttendanceStat(BaseModel):
     attendeeCount: int
 
 
+class MonthlyStatRow(BaseModel):
+    month: str  # "YYYY-MM"
+    count: int
+
+
 class ClubStatsResponse(BaseModel):
     topActive: list[MemberStatRow]
     topWinners: list[MemberStatRow]
     recentAttendance: list[EventAttendanceStat]
+    # Extended fields (Feature 7)
+    totalMembers: int
+    totalEvents: int
+    totalMessages: int
+    memberGrowth: list[MonthlyStatRow]
+    eventFrequency: list[MonthlyStatRow]
+    bannedUsersCount: int
+    upcomingEventsCount: int
 
 
 class CreateClubRequest(BaseModel):

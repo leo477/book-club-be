@@ -478,6 +478,32 @@ async def websocket_endpoint(
             await manager.broadcast_presence(room_id, str(user.id), "offline")
 
 
+@router.delete("/chat/rooms/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat_room(
+    room_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    """Delete a chat room. Only the club organizer may do this."""
+    from sqlalchemy import delete as sa_delete
+
+    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
+    room = room_result.scalar_one_or_none()
+    if room is None:
+        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
+
+    await require_club_organizer(room.club_id, current_user, db)
+
+    # Delete child records that may not have CASCADE FK constraints.
+    # MessageRead and ChatRoomBan reference chat_rooms.id; ChatMessage also does.
+    # We delete them explicitly to be safe regardless of migration history.
+    await db.execute(sa_delete(MessageRead).where(MessageRead.room_id == room_id))
+    await db.execute(sa_delete(ChatRoomBan).where(ChatRoomBan.room_id == room_id))
+    await db.execute(sa_delete(ChatMessage).where(ChatMessage.room_id == room_id))
+    await db.delete(room)
+    await db.commit()
+
+
 @router.post("/events/{event_id}/chat/room", status_code=status.HTTP_201_CREATED)
 async def create_event_chat_room(
     event_id: uuid.UUID,
