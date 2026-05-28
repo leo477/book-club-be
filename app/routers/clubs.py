@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -329,22 +330,52 @@ async def get_club_stats(
 
     # ── Feature 7: extended statistics ───────────────────────────────────────
 
-    total_members: int = await db.scalar(
-        select(func.count(ClubMember.user_id)).where(ClubMember.club_id == club_id)
-    ) or 0
-
-    total_events: int = await db.scalar(
-        select(func.count(Event.id)).where(Event.club_id == club_id)
-    ) or 0
-
-    # Total messages across all rooms that belong to this club.
     club_room_ids_sq = select(ChatRoom.id).where(ChatRoom.club_id == club_id).scalar_subquery()
-    total_messages: int = await db.scalar(
-        select(func.count(ChatMessage.id)).where(ChatMessage.room_id.in_(club_room_ids_sq))
-    ) or 0
+    six_months_ago = datetime.now(UTC) - timedelta(days=183)
+    now = datetime.now(UTC)
+
+    (
+        total_members_raw,
+        total_events_raw,
+        total_messages_raw,
+        banned_users_count_raw,
+        upcoming_events_count_raw,
+    ) = await asyncio.gather(
+        db.scalar(select(func.count(ClubMember.user_id)).where(ClubMember.club_id == club_id)),
+        db.scalar(select(func.count(Event.id)).where(Event.club_id == club_id)),
+        db.scalar(select(func.count(ChatMessage.id)).where(ChatMessage.room_id.in_(club_room_ids_sq))),
+        db.scalar(
+            select(func.count(ChatRoomBan.id))
+            .join(ChatRoom, ChatRoom.id == ChatRoomBan.room_id)
+            .where(
+                ChatRoom.club_id == club_id,
+                or_(
+                    ChatRoomBan.banned_until.is_(None),
+                    ChatRoomBan.banned_until > now,
+                ),
+            )
+        ),
+        db.scalar(
+            select(func.count(Event.id)).where(
+                Event.club_id == club_id,
+                or_(
+                    Event.status == "upcoming",
+                    and_(
+                        Event.date > now,
+                        Event.status.in_(["scheduled", "active", "rescheduled"]),
+                    ),
+                ),
+            )
+        ),
+    )
+
+    total_members: int = total_members_raw or 0
+    total_events: int = total_events_raw or 0
+    total_messages: int = total_messages_raw or 0
+    banned_users_count: int = banned_users_count_raw or 0
+    upcoming_events_count: int = upcoming_events_count_raw or 0
 
     # Member growth: new members per calendar month for the last 6 months.
-    six_months_ago = datetime.now(UTC) - timedelta(days=183)
     growth_rows = await db.execute(
         select(
             func.to_char(ClubMember.joined_at, "YYYY-MM").label("month"),
@@ -367,34 +398,6 @@ async def get_club_stats(
         .order_by(text("month"))
     )
     event_frequency = [MonthlyStatRow(month=r.month, count=r.cnt) for r in event_freq_rows.all()]
-
-    # Banned users count: active bans across all rooms in this club.
-    now = datetime.now(UTC)
-    banned_users_count: int = await db.scalar(
-        select(func.count(ChatRoomBan.id))
-        .join(ChatRoom, ChatRoom.id == ChatRoomBan.room_id)
-        .where(
-            ChatRoom.club_id == club_id,
-            or_(
-                ChatRoomBan.banned_until.is_(None),
-                ChatRoomBan.banned_until > now,
-            ),
-        )
-    ) or 0
-
-    # Upcoming events count: status "upcoming" or date in the future with active statuses.
-    upcoming_events_count: int = await db.scalar(
-        select(func.count(Event.id)).where(
-            Event.club_id == club_id,
-            or_(
-                Event.status == "upcoming",
-                and_(
-                    Event.date > now,
-                    Event.status.in_(["scheduled", "active", "rescheduled"]),
-                ),
-            ),
-        )
-    ) or 0
 
     return ClubStatsResponse(
         topActive=top_active,

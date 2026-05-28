@@ -3,7 +3,7 @@ import logging
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
@@ -26,10 +26,22 @@ from app.schemas.chat import (
     UnreadCountResponse,
 )
 from app.services.auth_service import decode_access_token
+from app.services.chat_service import check_user_ban, get_room_or_404
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
-_ROOM_NOT_FOUND = "Room not found"
+
+class MessagePayload(TypedDict):
+    id: str
+    senderId: str
+    senderName: str
+    text: str
+    timestamp: str
+
+
+class BroadcastMessage(TypedDict):
+    type: str
+    payload: MessagePayload
 
 
 class ConnectionManager:
@@ -57,7 +69,7 @@ class ConnectionManager:
         """Return current online users for the room as a list of presence payloads."""
         return [{"userId": uid, "status": "online"} for uid in self.room_presence[room_id]]
 
-    async def broadcast(self, room_id: str, message: dict[str, object]) -> None:
+    async def broadcast(self, room_id: str, message: BroadcastMessage) -> None:
         for connection in self.active_connections[room_id].copy():
             try:
                 await connection.send_json(message)
@@ -116,10 +128,7 @@ async def get_messages(
     before_id: str | None = None,
     limit: int = 50,
 ) -> list[ChatMessageResponse]:
-    # MN-5: verify room exists
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-    if room_result.scalar_one_or_none() is None:
-        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
+    await get_room_or_404(room_id, db)
 
     query = (
         select(ChatMessage, User.display_name)
@@ -163,22 +172,10 @@ async def send_message(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatMessageResponse:
-    # MN-5: verify room exists
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-    room = room_result.scalar_one_or_none()
-    if room is None:
-        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
+    await get_room_or_404(room_id, db)
 
     # MN-4: check if user is banned from this room
-    now = datetime.now(UTC)
-    ban_result = await db.execute(
-        select(ChatRoomBan).where(
-            ChatRoomBan.room_id == room_id,
-            ChatRoomBan.user_id == current_user.id,
-            (ChatRoomBan.banned_until.is_(None)) | (ChatRoomBan.banned_until > now),
-        )
-    )
-    if ban_result.scalar_one_or_none() is not None:
+    if await check_user_ban(room_id, current_user.id, db):
         raise AppError(403, "You are banned from this room", "ROOM_BANNED")
 
     msg = ChatMessage(room_id=room_id, sender_id=current_user.id, text=body.text)
@@ -186,19 +183,14 @@ async def send_message(
     await db.commit()
     await db.refresh(msg)
 
-    await manager.broadcast(
-        str(room_id),
-        {
-            "type": "message",
-            "payload": {
-                "id": str(msg.id),
-                "senderId": str(msg.sender_id),
-                "senderName": current_user.display_name,
-                "text": msg.text,
-                "timestamp": msg.timestamp.isoformat(),
-            },
-        },
-    )
+    payload: MessagePayload = {
+        "id": str(msg.id),
+        "senderId": str(msg.sender_id),
+        "senderName": current_user.display_name,
+        "text": msg.text,
+        "timestamp": msg.timestamp.isoformat(),
+    }
+    await manager.broadcast(str(room_id), BroadcastMessage(type="message", payload=payload))
 
     return ChatMessageResponse(
         id=str(msg.id),
@@ -221,19 +213,12 @@ async def delete_message(
     )
     msg = msg_result.scalar_one_or_none()
     if msg is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Message not found", "code": "MESSAGE_NOT_FOUND"},
-        )
+        raise AppError(status.HTTP_404_NOT_FOUND, "Message not found", "MESSAGE_NOT_FOUND")
 
     if msg.sender_id != current_user.id:
-        room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-        room = room_result.scalar_one_or_none()
-        if room is None or not await is_club_organizer(room.club_id, current_user.id, db):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": "Not authorized to delete this message", "code": "FORBIDDEN"},
-            )
+        room = await get_room_or_404(room_id, db)
+        if not await is_club_organizer(room.club_id, current_user.id, db):
+            raise AppError(status.HTTP_403_FORBIDDEN, "Not authorized to delete this message", "FORBIDDEN")
 
     await db.delete(msg)
     await db.commit()
@@ -246,11 +231,7 @@ async def ban_from_room(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-    room = room_result.scalar_one_or_none()
-    if room is None:
-        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
-
+    room = await get_room_or_404(room_id, db)
     await require_club_organizer(room.club_id, current_user, db)
 
     banned_until = None
@@ -366,7 +347,7 @@ async def websocket_endpoint(
     await websocket.accept()
     try:
         raw = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
-    except (asyncio.TimeoutError, Exception):
+    except (TimeoutError, Exception):
         await websocket.close(code=1008)
         return
     if not isinstance(raw, dict) or raw.get("type") != "auth" or not raw.get("token"):
@@ -495,11 +476,7 @@ async def delete_chat_room(
     """Delete a chat room. Only the club organizer may do this."""
     from sqlalchemy import delete as sa_delete
 
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-    room = room_result.scalar_one_or_none()
-    if room is None:
-        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
-
+    room = await get_room_or_404(room_id, db)
     await require_club_organizer(room.club_id, current_user, db)
 
     # Delete child records that may not have CASCADE FK constraints.
