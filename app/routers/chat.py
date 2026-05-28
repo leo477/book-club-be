@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from collections import defaultdict
@@ -38,8 +39,6 @@ class ConnectionManager:
         self.room_presence: dict[str, set[str]] = defaultdict(set)
 
     async def connect(self, room_id: str, websocket: WebSocket, user_id: str) -> None:
-        await websocket.accept()
-        # Store user_id on the websocket object for multi-tab detection on disconnect.
         websocket._user_id = user_id  # type: ignore[attr-defined]
         self.active_connections[room_id].append(websocket)
         self.room_presence[room_id].add(user_id)
@@ -361,10 +360,19 @@ async def get_unread_count(
 async def websocket_endpoint(
     websocket: WebSocket,
     room_id: str,
-    token: str,  # query parameter: ws://...?token=<jwt>
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> None:
+    await websocket.accept()
+    try:
+        raw = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
+        await websocket.close(code=1008)
+        return
+    if not isinstance(raw, dict) or raw.get("type") != "auth" or not raw.get("token"):
+        await websocket.close(code=1008)
+        return
+    token = raw["token"]
     try:
         token_data = decode_access_token(token, settings)
     except HTTPException:

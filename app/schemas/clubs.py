@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.schemas.events import AfterMeetingVenueSchema
 
@@ -67,23 +67,23 @@ class ClubStatsResponse(BaseModel):
 
 
 class CreateClubRequest(BaseModel):
-    name: str
-    description: str | None = None
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
     isPublic: bool = True
-    coverUrl: str | None = None
-    city: str | None = None
-    tags: list[str] = []
-    meetingDurationMinutes: int | None = None
+    coverUrl: str | None = Field(default=None, max_length=500)
+    city: str | None = Field(default=None, max_length=100)
+    tags: list[Annotated[str, Field(max_length=50)]] = Field(default=[], max_length=20)
+    meetingDurationMinutes: int | None = Field(default=None, ge=1, le=480)
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
 
 
 class UpdateClubRequest(BaseModel):
     # M-8: all fields optional so exclude_unset=True gives true PATCH semantics
-    name: str | None = None
-    description: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
     isPublic: bool | None = None
-    city: str | None = None
-    coverUrl: str | None = None
+    city: str | None = Field(default=None, max_length=100)
+    coverUrl: str | None = Field(default=None, max_length=500)
 
 
 class RescheduleMeetingRequest(BaseModel):

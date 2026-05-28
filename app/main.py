@@ -12,8 +12,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
+from app.limiter import limiter
 from app.routers import clubs, health, members
 from app.routers.auth import router as auth_router
 from app.routers.books import router as books_router
@@ -168,6 +171,8 @@ def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
 # noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
+    limiter.storage_uri = settings.REDIS_URL
+
     logger.info("CORS allowed origins", origins=settings.ALLOWED_ORIGINS)
 
     app = FastAPI(
@@ -190,6 +195,9 @@ def create_app() -> FastAPI:
         redoc_url=None,
         lifespan=lifespan,
     )
+
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     @app.get("/docs", include_in_schema=False)
     async def scalar_docs() -> HTMLResponse:
@@ -237,6 +245,17 @@ def create_app() -> FastAPI:
         bound_logger.info("Request completed", status_code=response.status_code)
         return response  # type: ignore[no-any-return]
 
+    @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        if settings.ENV == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
@@ -253,6 +272,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ValidationError)
     async def validation_exception_handler(_request: Request, exc: ValidationError) -> JSONResponse:
+        if settings.ENV == "production":
+            return JSONResponse(status_code=422, content={"detail": "Invalid request data"})
         return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
     @app.exception_handler(Exception)

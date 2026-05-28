@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
+from app.dependencies import get_current_user, get_db_dep, require_club_organizer
 from app.exceptions import AppError
 from app.models.club import Club
 from app.models.club_ban import ClubBan
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 @router.get("/members")
 async def list_members(
     club_id: uuid.UUID,
-    _current_user: Annotated[User | None, Depends(get_optional_user)],
+    _current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> list[MemberResponse]:
     result = await db.execute(
