@@ -161,4 +161,6 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
     try:
         await asyncio.wait_for(handler_task, timeout=2)
     except (TimeoutError, asyncio.CancelledError):
+        # Expected during test teardown after cancelling the websocket handler task.
+        # Intentionally ignored to avoid masking the functional assertions above.
         pass
