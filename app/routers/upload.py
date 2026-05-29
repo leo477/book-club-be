@@ -1,4 +1,4 @@
-import logging
+import structlog
 import uuid
 from typing import Annotated
 
@@ -9,7 +9,7 @@ from app.dependencies import get_current_user
 from app.models.user import User
 
 router = APIRouter(prefix="/api/v1/upload", tags=["upload"])
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # S-4: allowlist of accepted MIME types and maximum file size
 _ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})

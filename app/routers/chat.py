@@ -1,10 +1,11 @@
 import asyncio
-import logging
+import time as _time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, TypedDict
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,7 +86,7 @@ class ConnectionManager:
         await self.broadcast(room_id, {"type": "presence", "payload": {"userId": user_id, "status": status}})
 
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 manager = ConnectionManager()
 
 
@@ -402,9 +403,10 @@ async def websocket_endpoint(
     # Broadcast that this user is now online to everyone else in the room.
     await manager.broadcast_presence(room_id, str(user.id), "online")
 
-    _ban_cache_ttl = 30  # seconds
+    _ban_cache_ttl = 5  # seconds
     ban_cache_result: bool | None = None
     ban_cache_expires: datetime = datetime.now(UTC)
+    _msg_timestamps: deque[float] = deque(maxlen=10)
 
     async def check_ban_cached() -> bool:
         nonlocal ban_cache_result, ban_cache_expires
@@ -427,6 +429,12 @@ async def websocket_endpoint(
             data = await websocket.receive_json()
             text = data.get("text", "")
             if not text:
+                continue
+
+            _now = _time.monotonic()
+            _msg_timestamps.append(_now)
+            if len(_msg_timestamps) == 10 and (_now - _msg_timestamps[0]) < 10.0:
+                await websocket.send_json({"type": "error", "payload": {"code": "RATE_LIMITED", "message": "Too many messages"}})
                 continue
 
             if await check_ban_cached():

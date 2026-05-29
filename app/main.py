@@ -1,4 +1,5 @@
 import asyncio
+import uuid as _uuid
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -261,10 +262,22 @@ def create_app() -> FastAPI:
         allow_origins=settings.ALLOWED_ORIGINS,
         allow_origin_regex=settings.CORS_ORIGIN_REGEX,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
         expose_headers=["X-Request-ID", "X-Total-Count"],
     )
+
+    @app.middleware("http")
+    async def correlation_id_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
+        correlation_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+        request.state.correlation_id = correlation_id
+        structlog.contextvars.bind_contextvars(request_id=correlation_id)
+        try:
+            response = await call_next(request)
+        finally:
+            structlog.contextvars.clear_contextvars()
+        response.headers["X-Request-ID"] = correlation_id
+        return response
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:

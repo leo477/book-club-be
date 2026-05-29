@@ -7,6 +7,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
 class AfterMeetingVenueSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     address: str = Field(min_length=1, max_length=300)
     description: str | None = Field(default=None, max_length=1000)
@@ -45,6 +47,8 @@ class EventResponse(BaseModel):
 
 
 class CreateEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
     date: datetime
@@ -60,6 +64,8 @@ class CreateEventRequest(BaseModel):
 
 
 class EventUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
     date: datetime | None = None
@@ -77,10 +83,14 @@ class EventUpdatePayload(BaseModel):
 
 
 class SetWinnerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     winner_id: UUID
 
 
 class RescheduleEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     newDate: AwareDatetime
     newAddress: str | None = None
     newCity: str | None = None

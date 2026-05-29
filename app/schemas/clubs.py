@@ -1,9 +1,16 @@
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.schemas.events import AfterMeetingVenueSchema
+
+
+class ChampionInfo(BaseModel):
+    userId: str
+    displayName: str
+    avatarUrl: str | None = None
+    wins: int
 
 
 class ClubResponse(BaseModel):
@@ -30,7 +37,7 @@ class ClubResponse(BaseModel):
     meetingDurationMinutes: int | None = None
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
     cancelledAt: datetime | str | None = None
-    currentChampion: dict[str, Any] | None = None
+    currentChampion: ChampionInfo | None = None
 
 
 class MemberStatRow(BaseModel):
@@ -67,6 +74,8 @@ class ClubStatsResponse(BaseModel):
 
 
 class CreateClubRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=2000)
     isPublic: bool = True
@@ -78,6 +87,8 @@ class CreateClubRequest(BaseModel):
 
 
 class UpdateClubRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     # M-8: all fields optional so exclude_unset=True gives true PATCH semantics
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=2000)
@@ -87,10 +98,14 @@ class UpdateClubRequest(BaseModel):
 
 
 class RescheduleMeetingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     newDate: AwareDatetime
 
 
 class BanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     duration: Literal[1, 3, 5, "permanent"]
 
 

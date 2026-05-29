@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class CandidateSchema(BaseModel):
@@ -18,6 +18,8 @@ class RandomizerSessionResponse(BaseModel):
 
 
 class CreateRandomizerSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     purpose: str
     candidates: list[CandidateSchema]
     result: CandidateSchema | None = None
