@@ -8,6 +8,9 @@ from sqlalchemy.sql import func
 
 from app.models.base import AppBase
 
+_USERS_FK = "users.id"
+_CHAT_ROOMS_FK = "chat_rooms.id"
+
 
 class ChatRoom(AppBase):
     __tablename__ = "chat_rooms"
@@ -24,8 +27,8 @@ class ChatMessage(AppBase):
     __tablename__ = "chat_messages"
     __table_args__ = (Index("ix_chat_messages_room_timestamp", "room_id", "timestamp"),)
 
-    room_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("chat_rooms.id"), nullable=False)
-    sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    room_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_CHAT_ROOMS_FK), nullable=False)
+    sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_USERS_FK), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -34,9 +37,9 @@ class ChatRoomBan(AppBase):
     __tablename__ = "chat_room_bans"
     __table_args__ = (Index("ix_chat_room_bans_room_user", "room_id", "user_id"),)
 
-    room_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("chat_rooms.id"), nullable=False)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    banned_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    room_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_CHAT_ROOMS_FK), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_USERS_FK), nullable=False)
+    banned_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_USERS_FK), nullable=False)
     banned_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -50,10 +53,10 @@ class MessageRead(AppBase):
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey(_USERS_FK, ondelete="CASCADE"), nullable=False
     )
     room_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey(_CHAT_ROOMS_FK, ondelete="CASCADE"), nullable=False
     )
     last_read_message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True

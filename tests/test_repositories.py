@@ -210,7 +210,7 @@ async def test_club_repo_membership(db_session):
     assert await repo.get_membership(club.id, user.id) is None
 
     member = ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=user.id, role="member")
-    await repo.add_member(member)
+    repo.add_member(member)
     await db_session.commit()
 
     assert await repo.get_membership(club.id, user.id) is not None
@@ -342,7 +342,7 @@ async def test_event_repo_attendees(db_session):
     assert await repo.get_attendance(event.id, user.id) is None
 
     attendee = EventAttendee(event_id=event.id, user_id=user.id)
-    await repo.add_attendee(attendee)
+    repo.add_attendee(attendee)
     await db_session.commit()
 
     assert await repo.count_attendees(event.id) == 1

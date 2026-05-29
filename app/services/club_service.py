@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, select
 from sqlalchemy import delete as sa_delete
@@ -19,9 +18,6 @@ from app.models.user import User
 from app.schemas.clubs import BanRequest, BanResponse, ChampionInfo, ClubResponse, CreateClubRequest
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
 from app.schemas.users import UserStatsResponse
-
-if TYPE_CHECKING:
-    pass
 
 
 async def delete_club_cascade(club_id: uuid.UUID, db: AsyncSession) -> None:

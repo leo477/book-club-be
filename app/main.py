@@ -1,9 +1,8 @@
 import asyncio
 import uuid as _uuid
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import sentry_sdk
 import structlog
@@ -14,7 +13,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
@@ -109,8 +107,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _app.state.redis_pool = redis_pool
     logger.info("Redis pool created", url=settings.REDIS_URL)
 
-    import asyncio
-
     proc = await asyncio.create_subprocess_exec(
         "/app/.venv/bin/alembic",
         "upgrade",
@@ -163,6 +159,10 @@ def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
                     operation["security"] = [{"BearerAuth": []}]
     app.openapi_schema = schema
     return app.openapi_schema
+
+
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 
 # noinspection PyShadowingNames
@@ -227,7 +227,7 @@ def create_app() -> FastAPI:
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
     @app.middleware("http")
-    async def logging_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
+    async def logging_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         bound_logger = logger.bind(
             method=request.method,
             url=str(request.url),
@@ -240,11 +240,13 @@ def create_app() -> FastAPI:
             bound_logger.exception("Unhandled exception", exc_info=exc)
             return JSONResponse(status_code=500, content={"detail": "Internal server error"})
         bound_logger.info("Request completed", status_code=response.status_code)
-        return response  # type: ignore[no-any-return]
+        return response
 
     @app.middleware("http")
-    async def security_headers_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
-        response = cast(Response, await call_next(request))
+    async def security_headers_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -264,12 +266,14 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def correlation_id_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
+    async def correlation_id_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         correlation_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
         request.state.correlation_id = correlation_id
         structlog.contextvars.bind_contextvars(request_id=correlation_id)
         try:
-            response = cast(Response, await call_next(request))
+            response = await call_next(request)
         finally:
             structlog.contextvars.clear_contextvars()
         response.headers["X-Request-ID"] = correlation_id

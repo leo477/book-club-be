@@ -51,7 +51,7 @@ class ConnectionManager:
         # room_id → set of user_id strings currently connected (Feature 4: presence)
         self.room_presence: dict[str, set[str]] = defaultdict(set)
 
-    async def connect(self, room_id: str, websocket: WebSocket, user_id: str) -> None:
+    def connect(self, room_id: str, websocket: WebSocket, user_id: str) -> None:
         websocket._user_id = user_id  # type: ignore[attr-defined]
         self.active_connections[room_id].append(websocket)
         self.room_presence[room_id].add(user_id)
@@ -338,49 +338,42 @@ async def get_unread_count(
     )
 
 
-@router.websocket("/chat/rooms/{room_id}")
-async def websocket_endpoint(
+async def _ws_authenticate(
     websocket: WebSocket,
+    db: AsyncSession,
+    settings: Settings,
     room_id: str,
-    db: Annotated[AsyncSession, Depends(get_db_dep)],
-    settings: Annotated[Settings, Depends(get_settings_dep)],
-) -> None:
-    await websocket.accept()
+) -> tuple[User, ChatRoom] | None:
     try:
         raw = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
-    except (TimeoutError, Exception):
+    except Exception:
         await websocket.close(code=1008)
-        return
+        return None
     if not isinstance(raw, dict) or raw.get("type") != "auth" or not raw.get("token"):
         await websocket.close(code=1008)
-        return
-    token = raw["token"]
+        return None
     try:
-        token_data = decode_access_token(token, settings)
+        token_data = decode_access_token(raw["token"], settings)
     except HTTPException:
         await websocket.close(code=1008)
-        return
-
+        return None
     # Expire any stale transaction snapshot that may have been inherited from the
     # connection pool (e.g. via pool_pre_ping).  Rolling back here guarantees the
     # next statement opens a brand-new READ-COMMITTED snapshot and therefore sees
     # any ClubMember row that was committed by a preceding POST /join request —
     # this is the root-cause fix for the WS-403-after-join bug.
     await db.rollback()
-
     user_id = token_data.get("sub")
     user_result = await db.execute(select(User).where(User.supabase_user_id == uuid.UUID(str(user_id))))
     user = user_result.scalar_one_or_none()
     if not user:
         await websocket.close(code=1008)
-        return
-
+        return None
     room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == uuid.UUID(room_id)))
     room = room_result.scalar_one_or_none()
     if not room:
         await websocket.close(code=1008)
-        return
-
+        return None
     member_result = await db.execute(
         select(ClubMember).where(
             ClubMember.club_id == room.club_id,
@@ -389,9 +382,24 @@ async def websocket_endpoint(
     )
     if member_result.scalar_one_or_none() is None:
         await websocket.close(code=1008)
-        return
+        return None
+    return user, room
 
-    await manager.connect(room_id, websocket, str(user.id))
+
+@router.websocket("/chat/rooms/{room_id}")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    room_id: str,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -> None:
+    await websocket.accept()
+    result = await _ws_authenticate(websocket, db, settings, room_id)
+    if result is None:
+        return
+    user, _room = result
+
+    manager.connect(room_id, websocket, str(user.id))
 
     # Feature 4: send current presence snapshot to the newly connected user.
     await websocket.send_json(
