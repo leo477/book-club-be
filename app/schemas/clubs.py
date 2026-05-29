@@ -1,9 +1,17 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.schemas.events import AfterMeetingVenueSchema
+
+
+class ChampionInfo(BaseModel):
+    userId: str
+    displayName: str
+    avatarUrl: str | None = None
+    wins: int
+    eventTitle: str | None = None
 
 
 class ClubResponse(BaseModel):
@@ -30,7 +38,7 @@ class ClubResponse(BaseModel):
     meetingDurationMinutes: int | None = None
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
     cancelledAt: datetime | str | None = None
-    currentChampion: dict[str, Any] | None = None
+    currentChampion: ChampionInfo | None = None
 
 
 class MemberStatRow(BaseModel):
@@ -47,37 +55,58 @@ class EventAttendanceStat(BaseModel):
     attendeeCount: int
 
 
+class MonthlyStatRow(BaseModel):
+    month: str  # "YYYY-MM"
+    count: int
+
+
 class ClubStatsResponse(BaseModel):
     topActive: list[MemberStatRow]
     topWinners: list[MemberStatRow]
     recentAttendance: list[EventAttendanceStat]
+    # Extended fields (Feature 7)
+    totalMembers: int
+    totalEvents: int
+    totalMessages: int
+    memberGrowth: list[MonthlyStatRow]
+    eventFrequency: list[MonthlyStatRow]
+    bannedUsersCount: int
+    upcomingEventsCount: int
 
 
 class CreateClubRequest(BaseModel):
-    name: str
-    description: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
     isPublic: bool = True
-    coverUrl: str | None = None
-    city: str | None = None
-    tags: list[str] = []
-    meetingDurationMinutes: int | None = None
+    coverUrl: str | None = Field(default=None, max_length=500)
+    city: str | None = Field(default=None, max_length=100)
+    tags: list[Annotated[str, Field(max_length=50)]] = Field(default=[], max_length=20)
+    meetingDurationMinutes: int | None = Field(default=None, ge=1, le=480)
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
 
 
 class UpdateClubRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     # M-8: all fields optional so exclude_unset=True gives true PATCH semantics
-    name: str | None = None
-    description: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
     isPublic: bool | None = None
-    city: str | None = None
-    coverUrl: str | None = None
+    city: str | None = Field(default=None, max_length=100)
+    coverUrl: str | None = Field(default=None, max_length=500)
 
 
 class RescheduleMeetingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     newDate: AwareDatetime
 
 
 class BanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     duration: Literal[1, 3, 5, "permanent"]
 
 

@@ -263,7 +263,10 @@ async def test_attend_event_registration_closed(async_client, register_user, aut
 
     resp = await async_client.post(f"/api/v1/events/{event['id']}/attend", headers=member_headers)
     assert resp.status_code == 400
-    assert "Registration closed" in resp.json()["detail"]
+    body = resp.json()
+    detail = body.get("detail", body)
+    error_msg = detail.get("error", "") if isinstance(detail, dict) else str(detail)
+    assert "Registration closed" in error_msg
 
 
 @pytest.mark.asyncio

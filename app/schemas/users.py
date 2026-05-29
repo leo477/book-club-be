@@ -1,17 +1,23 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class UpdateProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     displayName: str | None = None
 
 
 class UpdateRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     role: Literal["user", "organizer"]
 
 
 class UpdateSocialsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     telegram: str | None = None
     instagram: str | None = None
     twitter: str | None = None
@@ -21,6 +27,8 @@ class UpdateSocialsRequest(BaseModel):
 
 
 class UpdateSocialsVisibilityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     socialsPublic: bool
 
 

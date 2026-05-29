@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatRoomResponse(BaseModel):
@@ -18,14 +18,20 @@ class ChatMessageResponse(BaseModel):
 
 
 class SendMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     text: str
 
 
 class CreateChatRoomRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=3, max_length=40)
 
 
 class BanFromRoomRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     user_id: str
     duration_seconds: int
 
@@ -34,6 +40,8 @@ class BanFromRoomRequest(BaseModel):
 
 
 class MarkReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     last_read_message_id: str
 
 

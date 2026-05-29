@@ -1,10 +1,10 @@
 import asyncio
-import logging
 import time
 from typing import Annotated
 from urllib.parse import quote
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -16,7 +16,7 @@ from app.services import google_books_service
 settings = get_settings()
 
 router = APIRouter(prefix="/api/v1/books", tags=["books"])
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _STORES = [
     {"name": "Небо", "search": "https://nebo.ua/search?q={q}"},  # noqa: RUF001

@@ -3,7 +3,7 @@ import string
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import EmailStr
 from sqlalchemy import select
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.dependencies import get_current_user, get_db_dep, get_settings_dep
+from app.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import AuthResponse, RefreshResponse, UserProfileResponse
 from app.services.auth_service import get_supabase_client, supabase_refresh, supabase_sign_in, supabase_sign_up
@@ -63,7 +64,9 @@ def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=None)
+@limiter.limit("5/minute")
 async def register(
+    request: Request,
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
@@ -122,7 +125,9 @@ async def register(
 
 
 @router.post("/login", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")
 async def login(
+    request: Request,
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],

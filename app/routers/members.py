@@ -3,11 +3,11 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
-from sqlalchemy import and_, delete, select
+from fastapi import APIRouter, Depends, Query, Response, status
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
+from app.dependencies import get_current_user, get_db_dep, require_club_organizer
 from app.exceptions import AppError
 from app.models.club import Club
 from app.models.club_ban import ClubBan
@@ -23,11 +23,22 @@ router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 @router.get("/members")
 async def list_members(
     club_id: uuid.UUID,
-    _current_user: Annotated[User | None, Depends(get_optional_user)],
+    response: Response,
+    _current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[MemberResponse]:
+    total_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
+    total = total_result.scalar_one()
+    response.headers["X-Total-Count"] = str(total)
+
     result = await db.execute(
-        select(ClubMember, User).join(User, ClubMember.user_id == User.id).where(ClubMember.club_id == club_id)
+        select(ClubMember, User)
+        .join(User, ClubMember.user_id == User.id)
+        .where(ClubMember.club_id == club_id)
+        .offset(skip)
+        .limit(limit)
     )
     rows = result.all()
 
@@ -80,8 +91,11 @@ async def ban_member(
 @router.get("/bans")
 async def list_bans(
     club_id: uuid.UUID,
+    response: Response,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[BanResponse]:
     # L6: require_club_organizer checks club_members for role="organizer", but a
     # brand-new club's organizer_id in the clubs table is the authoritative source.
@@ -100,7 +114,11 @@ async def list_bans(
         except AppError:
             raise AppError(403, "Not authorized", "FORBIDDEN") from None
 
-    result = await db.execute(select(ClubBan).where(ClubBan.club_id == club_id))
+    total_result = await db.execute(select(func.count()).select_from(ClubBan).where(ClubBan.club_id == club_id))
+    total = total_result.scalar_one()
+    response.headers["X-Total-Count"] = str(total)
+
+    result = await db.execute(select(ClubBan).where(ClubBan.club_id == club_id).offset(skip).limit(limit))
     bans = result.scalars().all()
 
     return [

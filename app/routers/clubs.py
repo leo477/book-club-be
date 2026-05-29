@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, extract, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -278,9 +279,10 @@ async def get_club_stats(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _auth: Annotated[None, Depends(require_club_organizer)],
 ) -> ClubStatsResponse:
+    from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
     from app.models.event import Event, EventAttendee
     from app.models.quiz import Quiz, QuizAttempt
-    from app.schemas.clubs import EventAttendanceStat, MemberStatRow
+    from app.schemas.clubs import EventAttendanceStat, MemberStatRow, MonthlyStatRow
 
     await get_club_or_404(club_id, db)
 
@@ -326,4 +328,86 @@ async def get_club_stats(
         for r in recent_result.all()
     ]
 
-    return ClubStatsResponse(topActive=top_active, topWinners=top_winners, recentAttendance=recent_attendance)
+    # ── Feature 7: extended statistics ───────────────────────────────────────
+
+    club_room_ids_sq = select(ChatRoom.id).where(ChatRoom.club_id == club_id).scalar_subquery()
+    six_months_ago = datetime.now(UTC) - timedelta(days=183)
+    now = datetime.now(UTC)
+
+    (
+        total_members_raw,
+        total_events_raw,
+        total_messages_raw,
+        banned_users_count_raw,
+        upcoming_events_count_raw,
+    ) = await asyncio.gather(
+        db.scalar(select(func.count(ClubMember.user_id)).where(ClubMember.club_id == club_id)),
+        db.scalar(select(func.count(Event.id)).where(Event.club_id == club_id)),
+        db.scalar(select(func.count(ChatMessage.id)).where(ChatMessage.room_id.in_(club_room_ids_sq))),
+        db.scalar(
+            select(func.count(ChatRoomBan.id))
+            .join(ChatRoom, ChatRoom.id == ChatRoomBan.room_id)
+            .where(
+                ChatRoom.club_id == club_id,
+                or_(
+                    ChatRoomBan.banned_until.is_(None),
+                    ChatRoomBan.banned_until > now,
+                ),
+            )
+        ),
+        db.scalar(
+            select(func.count(Event.id)).where(
+                Event.club_id == club_id,
+                or_(
+                    Event.status == "upcoming",
+                    and_(
+                        Event.date > now,
+                        Event.status.in_(["scheduled", "active", "rescheduled"]),
+                    ),
+                ),
+            )
+        ),
+    )
+
+    total_members: int = total_members_raw or 0
+    total_events: int = total_events_raw or 0
+    total_messages: int = total_messages_raw or 0
+    banned_users_count: int = banned_users_count_raw or 0
+    upcoming_events_count: int = upcoming_events_count_raw or 0
+
+    # Member growth: new members per calendar month for the last 6 months.
+    _yr_m = extract("year", ClubMember.joined_at).label("yr")
+    _mo_m = extract("month", ClubMember.joined_at).label("mo")
+    growth_rows = await db.execute(
+        select(_yr_m, _mo_m, func.count(ClubMember.user_id).label("cnt"))
+        .where(ClubMember.club_id == club_id, ClubMember.joined_at >= six_months_ago)
+        .group_by(_yr_m, _mo_m)
+        .order_by(_yr_m, _mo_m)
+    )
+    member_growth = [MonthlyStatRow(month=f"{int(r.yr):04d}-{int(r.mo):02d}", count=r.cnt) for r in growth_rows.all()]
+
+    # Event frequency: events per calendar month for the last 6 months.
+    _yr_e = extract("year", Event.date).label("yr")
+    _mo_e = extract("month", Event.date).label("mo")
+    event_freq_rows = await db.execute(
+        select(_yr_e, _mo_e, func.count(Event.id).label("cnt"))
+        .where(Event.club_id == club_id, Event.date >= six_months_ago)
+        .group_by(_yr_e, _mo_e)
+        .order_by(_yr_e, _mo_e)
+    )
+    event_frequency = [
+        MonthlyStatRow(month=f"{int(r.yr):04d}-{int(r.mo):02d}", count=r.cnt) for r in event_freq_rows.all()
+    ]
+
+    return ClubStatsResponse(
+        topActive=top_active,
+        topWinners=top_winners,
+        recentAttendance=recent_attendance,
+        totalMembers=total_members,
+        totalEvents=total_events,
+        totalMessages=total_messages,
+        memberGrowth=member_growth,
+        eventFrequency=event_frequency,
+        bannedUsersCount=banned_users_count,
+        upcomingEventsCount=upcoming_events_count,
+    )

@@ -4,7 +4,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import HTTPException
 from fastapi import status as http_status
 from sqlalchemy import and_, func, select
 from sqlalchemy import select as sa_select
@@ -187,11 +186,11 @@ async def attend_event_service(
     event = await get_event_or_404(event_id, db)
 
     if event.status == "cancelled":
-        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Cannot attend a cancelled event")
+        raise AppError(http_status.HTTP_400_BAD_REQUEST, "Cannot attend a cancelled event", "EVENT_CANCELLED")
 
     event_date = event.date if event.date.tzinfo is not None else event.date.replace(tzinfo=UTC)
     if event_date - datetime.now(tz=UTC) < timedelta(days=3):
-        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Registration closed")
+        raise AppError(http_status.HTTP_400_BAD_REQUEST, "Registration closed", "REGISTRATION_CLOSED")
 
     existing = await db.execute(
         sa_select(EventAttendee).where(
@@ -199,14 +198,14 @@ async def attend_event_service(
         )
     )
     if existing.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="Already attending")
+        raise AppError(http_status.HTTP_409_CONFLICT, "Already attending", "ALREADY_ATTENDING")
 
     db.add(EventAttendee(event_id=event_id, user_id=current_user.id))
     try:
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="Already attending") from exc
+        raise AppError(http_status.HTTP_409_CONFLICT, "Already attending", "ALREADY_ATTENDING") from exc
 
     count_result = await db.execute(
         sa_select(func.count()).select_from(EventAttendee).where(EventAttendee.event_id == event_id)

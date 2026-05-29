@@ -128,6 +128,11 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
         "membership check after join is still failing (403 bug not fixed)"
     )
 
+    # The handler now requires an auth frame immediately after accept.
+    await to_app.put(
+        {"type": "websocket.receive", "text": json.dumps({"type": "auth", "token": member_token}), "bytes": None}
+    )
+
     # After accept, the server sends a presence_snapshot and an online presence
     # broadcast before waiting for messages from the client.  Drain those first.
     async def drain_non_message_frames(n: int = 3) -> None:
