@@ -29,9 +29,7 @@ async def list_members(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[MemberResponse]:
-    total_result = await db.execute(
-        select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id)
-    )
+    total_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
     total = total_result.scalar_one()
     response.headers["X-Total-Count"] = str(total)
 
@@ -116,9 +114,7 @@ async def list_bans(
         except AppError:
             raise AppError(403, "Not authorized", "FORBIDDEN") from None
 
-    total_result = await db.execute(
-        select(func.count()).select_from(ClubBan).where(ClubBan.club_id == club_id)
-    )
+    total_result = await db.execute(select(func.count()).select_from(ClubBan).where(ClubBan.club_id == club_id))
     total = total_result.scalar_one()
     response.headers["X-Total-Count"] = str(total)
 

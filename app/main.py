@@ -47,10 +47,7 @@ async def _cleanup_inactive_chat_rooms() -> None:
             async with AsyncSessionLocal() as db:
                 # Find stale rooms: no event_id, created > 30 days ago, no recent messages.
                 recent_msg_subq = (
-                    select(ChatMessage.room_id)
-                    .where(ChatMessage.timestamp >= cutoff)
-                    .distinct()
-                    .scalar_subquery()
+                    select(ChatMessage.room_id).where(ChatMessage.timestamp >= cutoff).distinct().scalar_subquery()
                 )
                 stale_rooms_result = await db.execute(
                     select(ChatRoom.id).where(
@@ -75,6 +72,7 @@ async def _cleanup_inactive_chat_rooms() -> None:
             break
         except Exception as exc:
             logger.exception("cleanup_inactive_chat_rooms: unexpected error", exc_info=exc)
+
 
 _API_DESCRIPTION = (
     "## Book Club REST API\n\n"
