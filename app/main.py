@@ -3,6 +3,7 @@ import uuid as _uuid
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import sentry_sdk
 import structlog
@@ -170,7 +171,7 @@ def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
 # noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
-    limiter.storage_uri = settings.REDIS_URL
+    limiter.storage_uri = settings.REDIS_URL  # type: ignore[attr-defined]
 
     logger.info("CORS allowed origins", origins=settings.ALLOWED_ORIGINS)
 
@@ -196,7 +197,7 @@ def create_app() -> FastAPI:
     )
 
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
     @app.get("/docs", include_in_schema=False)
     async def scalar_docs() -> HTMLResponse:
@@ -246,7 +247,7 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def security_headers_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
-        response = await call_next(request)
+        response = cast(Response, await call_next(request))
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -271,7 +272,7 @@ def create_app() -> FastAPI:
         request.state.correlation_id = correlation_id
         structlog.contextvars.bind_contextvars(request_id=correlation_id)
         try:
-            response = await call_next(request)
+            response = cast(Response, await call_next(request))
         finally:
             structlog.contextvars.clear_contextvars()
         response.headers["X-Request-ID"] = correlation_id

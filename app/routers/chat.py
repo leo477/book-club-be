@@ -3,7 +3,7 @@ import time as _time
 import uuid
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -70,7 +70,7 @@ class ConnectionManager:
         """Return current online users for the room as a list of presence payloads."""
         return [{"userId": uid, "status": "online"} for uid in self.room_presence[room_id]]
 
-    async def broadcast(self, room_id: str, message: BroadcastMessage) -> None:
+    async def broadcast(self, room_id: str, message: dict[str, Any]) -> None:
         for connection in self.active_connections[room_id].copy():
             try:
                 await connection.send_json(message)
@@ -191,7 +191,7 @@ async def send_message(
         "text": msg.text,
         "timestamp": msg.timestamp.isoformat(),
     }
-    await manager.broadcast(str(room_id), BroadcastMessage(type="message", payload=payload))
+    await manager.broadcast(str(room_id), {"type": "message", "payload": payload})
 
     return ChatMessageResponse(
         id=str(msg.id),
