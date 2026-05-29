@@ -7,7 +7,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import and_, delete, func, or_, select, text
+from sqlalchemy import and_, delete, extract, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -376,28 +376,28 @@ async def get_club_stats(
     upcoming_events_count: int = upcoming_events_count_raw or 0
 
     # Member growth: new members per calendar month for the last 6 months.
+    _yr_m = extract("year", ClubMember.joined_at).label("yr")
+    _mo_m = extract("month", ClubMember.joined_at).label("mo")
     growth_rows = await db.execute(
-        select(
-            func.to_char(ClubMember.joined_at, "YYYY-MM").label("month"),
-            func.count(ClubMember.user_id).label("cnt"),
-        )
+        select(_yr_m, _mo_m, func.count(ClubMember.user_id).label("cnt"))
         .where(ClubMember.club_id == club_id, ClubMember.joined_at >= six_months_ago)
-        .group_by(text("month"))
-        .order_by(text("month"))
+        .group_by(_yr_m, _mo_m)
+        .order_by(_yr_m, _mo_m)
     )
-    member_growth = [MonthlyStatRow(month=r.month, count=r.cnt) for r in growth_rows.all()]
+    member_growth = [MonthlyStatRow(month=f"{int(r.yr):04d}-{int(r.mo):02d}", count=r.cnt) for r in growth_rows.all()]
 
     # Event frequency: events per calendar month for the last 6 months.
+    _yr_e = extract("year", Event.date).label("yr")
+    _mo_e = extract("month", Event.date).label("mo")
     event_freq_rows = await db.execute(
-        select(
-            func.to_char(Event.date, "YYYY-MM").label("month"),
-            func.count(Event.id).label("cnt"),
-        )
+        select(_yr_e, _mo_e, func.count(Event.id).label("cnt"))
         .where(Event.club_id == club_id, Event.date >= six_months_ago)
-        .group_by(text("month"))
-        .order_by(text("month"))
+        .group_by(_yr_e, _mo_e)
+        .order_by(_yr_e, _mo_e)
     )
-    event_frequency = [MonthlyStatRow(month=r.month, count=r.cnt) for r in event_freq_rows.all()]
+    event_frequency = [
+        MonthlyStatRow(month=f"{int(r.yr):04d}-{int(r.mo):02d}", count=r.cnt) for r in event_freq_rows.all()
+    ]
 
     return ClubStatsResponse(
         topActive=top_active,

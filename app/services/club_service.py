@@ -104,6 +104,7 @@ async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> Champio
         displayName=event.winner_name or "",
         avatarUrl=None,
         wins=1,
+        eventTitle=event.title,
     )
 
 
@@ -197,6 +198,7 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
             displayName=row.winner_name or "",
             avatarUrl=None,
             wins=1,
+            eventTitle=row.title,
         )
 
     responses = []

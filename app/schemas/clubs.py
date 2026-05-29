@@ -11,6 +11,7 @@ class ChampionInfo(BaseModel):
     displayName: str
     avatarUrl: str | None = None
     wins: int
+    eventTitle: str | None = None
 
 
 class ClubResponse(BaseModel):
