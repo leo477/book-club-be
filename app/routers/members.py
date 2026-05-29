@@ -36,7 +36,11 @@ async def list_members(
     response.headers["X-Total-Count"] = str(total)
 
     result = await db.execute(
-        select(ClubMember, User).join(User, ClubMember.user_id == User.id).where(ClubMember.club_id == club_id).offset(skip).limit(limit)
+        select(ClubMember, User)
+        .join(User, ClubMember.user_id == User.id)
+        .where(ClubMember.club_id == club_id)
+        .offset(skip)
+        .limit(limit)
     )
     rows = result.all()
 

@@ -434,7 +434,9 @@ async def websocket_endpoint(
             _now = _time.monotonic()
             _msg_timestamps.append(_now)
             if len(_msg_timestamps) == 10 and (_now - _msg_timestamps[0]) < 10.0:
-                await websocket.send_json({"type": "error", "payload": {"code": "RATE_LIMITED", "message": "Too many messages"}})
+                await websocket.send_json(
+                    {"type": "error", "payload": {"code": "RATE_LIMITED", "message": "Too many messages"}}
+                )
                 continue
 
             if await check_ban_cached():

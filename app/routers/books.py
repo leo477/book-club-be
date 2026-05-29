@@ -1,10 +1,10 @@
 import asyncio
-import structlog
 import time
 from typing import Annotated
 from urllib.parse import quote
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 

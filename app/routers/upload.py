@@ -1,7 +1,7 @@
-import structlog
 import uuid
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.config import get_settings
