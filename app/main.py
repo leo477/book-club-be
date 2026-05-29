@@ -70,7 +70,7 @@ async def _cleanup_inactive_chat_rooms() -> None:
                 await db.commit()
                 logger.info("cleanup_inactive_chat_rooms: deleted stale rooms", count=len(stale_ids))
         except asyncio.CancelledError:
-            break
+            raise
         except Exception as exc:
             logger.exception("cleanup_inactive_chat_rooms: unexpected error", exc_info=exc)
 
@@ -130,10 +130,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+    await asyncio.gather(cleanup_task, return_exceptions=True)
 
     await redis_pool.aclose()
     logger.info("Redis pool closed")
