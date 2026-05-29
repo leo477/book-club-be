@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, select
 from sqlalchemy import delete as sa_delete
@@ -16,7 +16,7 @@ from app.models.club_ban import ClubBan
 from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
 from app.models.user import User
-from app.schemas.clubs import BanRequest, BanResponse, ClubResponse, CreateClubRequest
+from app.schemas.clubs import BanRequest, BanResponse, ChampionInfo, ClubResponse, CreateClubRequest
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
 from app.schemas.users import UserStatsResponse
 
@@ -82,7 +82,7 @@ async def get_user_stats(user_id: uuid.UUID, db: AsyncSession) -> UserStatsRespo
     )
 
 
-async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> dict[str, Any] | None:
+async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> ChampionInfo | None:
     from app.models.event import Event
 
     result = await db.execute(
@@ -99,12 +99,13 @@ async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> dict[st
     event = result.scalar_one_or_none()
     if not event:
         return None
-    return {
-        "userId": str(event.winner_id),
-        "displayName": event.winner_name,
-        "eventTitle": event.title,
-        "eventDate": event.date.isoformat(),
-    }
+    return ChampionInfo(
+        userId=str(event.winner_id),
+        displayName=event.winner_name or "",
+        avatarUrl=None,
+        wins=1,
+        eventTitle=event.title,
+    )
 
 
 async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
@@ -190,14 +191,15 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
             subq_rn.c.date,
         ).where(subq_rn.c.rn == 1)
     )
-    champion_map: dict[uuid.UUID, dict[str, Any]] = {}
+    champion_map: dict[uuid.UUID, ChampionInfo] = {}
     for row in champions_result.all():
-        champion_map[row.club_id] = {
-            "userId": str(row.winner_id),
-            "displayName": row.winner_name,
-            "eventTitle": row.title,
-            "eventDate": row.date.isoformat(),
-        }
+        champion_map[row.club_id] = ChampionInfo(
+            userId=str(row.winner_id),
+            displayName=row.winner_name or "",
+            avatarUrl=None,
+            wins=1,
+            eventTitle=row.title,
+        )
 
     responses = []
     for club in clubs:
@@ -421,7 +423,7 @@ async def create_event_service(
 
 
 def _assemble_club_response(
-    club: Club, member_count: int, previews: list[str], champion: dict[str, Any] | None = None
+    club: Club, member_count: int, previews: list[str], champion: ChampionInfo | None = None
 ) -> ClubResponse:
     return ClubResponse(
         id=str(club.id),

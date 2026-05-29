@@ -1,9 +1,11 @@
-import logging
+import asyncio
+import time as _time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any, TypedDict
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,10 +27,22 @@ from app.schemas.chat import (
     UnreadCountResponse,
 )
 from app.services.auth_service import decode_access_token
+from app.services.chat_service import check_user_ban, get_room_or_404
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
-_ROOM_NOT_FOUND = "Room not found"
+
+class MessagePayload(TypedDict):
+    id: str
+    senderId: str
+    senderName: str
+    text: str
+    timestamp: str
+
+
+class BroadcastMessage(TypedDict):
+    type: str
+    payload: MessagePayload
 
 
 class ConnectionManager:
@@ -38,8 +52,6 @@ class ConnectionManager:
         self.room_presence: dict[str, set[str]] = defaultdict(set)
 
     async def connect(self, room_id: str, websocket: WebSocket, user_id: str) -> None:
-        await websocket.accept()
-        # Store user_id on the websocket object for multi-tab detection on disconnect.
         websocket._user_id = user_id  # type: ignore[attr-defined]
         self.active_connections[room_id].append(websocket)
         self.room_presence[room_id].add(user_id)
@@ -58,7 +70,7 @@ class ConnectionManager:
         """Return current online users for the room as a list of presence payloads."""
         return [{"userId": uid, "status": "online"} for uid in self.room_presence[room_id]]
 
-    async def broadcast(self, room_id: str, message: dict[str, object]) -> None:
+    async def broadcast(self, room_id: str, message: dict[str, Any]) -> None:
         for connection in self.active_connections[room_id].copy():
             try:
                 await connection.send_json(message)
@@ -74,7 +86,7 @@ class ConnectionManager:
         await self.broadcast(room_id, {"type": "presence", "payload": {"userId": user_id, "status": status}})
 
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 manager = ConnectionManager()
 
 
@@ -117,10 +129,7 @@ async def get_messages(
     before_id: str | None = None,
     limit: int = 50,
 ) -> list[ChatMessageResponse]:
-    # MN-5: verify room exists
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-    if room_result.scalar_one_or_none() is None:
-        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
+    await get_room_or_404(room_id, db)
 
     query = (
         select(ChatMessage, User.display_name)
@@ -164,22 +173,10 @@ async def send_message(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatMessageResponse:
-    # MN-5: verify room exists
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-    room = room_result.scalar_one_or_none()
-    if room is None:
-        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
+    await get_room_or_404(room_id, db)
 
     # MN-4: check if user is banned from this room
-    now = datetime.now(UTC)
-    ban_result = await db.execute(
-        select(ChatRoomBan).where(
-            ChatRoomBan.room_id == room_id,
-            ChatRoomBan.user_id == current_user.id,
-            (ChatRoomBan.banned_until.is_(None)) | (ChatRoomBan.banned_until > now),
-        )
-    )
-    if ban_result.scalar_one_or_none() is not None:
+    if await check_user_ban(room_id, current_user.id, db):
         raise AppError(403, "You are banned from this room", "ROOM_BANNED")
 
     msg = ChatMessage(room_id=room_id, sender_id=current_user.id, text=body.text)
@@ -187,19 +184,14 @@ async def send_message(
     await db.commit()
     await db.refresh(msg)
 
-    await manager.broadcast(
-        str(room_id),
-        {
-            "type": "message",
-            "payload": {
-                "id": str(msg.id),
-                "senderId": str(msg.sender_id),
-                "senderName": current_user.display_name,
-                "text": msg.text,
-                "timestamp": msg.timestamp.isoformat(),
-            },
-        },
-    )
+    payload: MessagePayload = {
+        "id": str(msg.id),
+        "senderId": str(msg.sender_id),
+        "senderName": current_user.display_name,
+        "text": msg.text,
+        "timestamp": msg.timestamp.isoformat(),
+    }
+    await manager.broadcast(str(room_id), {"type": "message", "payload": payload})
 
     return ChatMessageResponse(
         id=str(msg.id),
@@ -222,19 +214,12 @@ async def delete_message(
     )
     msg = msg_result.scalar_one_or_none()
     if msg is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": "Message not found", "code": "MESSAGE_NOT_FOUND"},
-        )
+        raise AppError(status.HTTP_404_NOT_FOUND, "Message not found", "MESSAGE_NOT_FOUND")
 
     if msg.sender_id != current_user.id:
-        room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-        room = room_result.scalar_one_or_none()
-        if room is None or not await is_club_organizer(room.club_id, current_user.id, db):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": "Not authorized to delete this message", "code": "FORBIDDEN"},
-            )
+        room = await get_room_or_404(room_id, db)
+        if not await is_club_organizer(room.club_id, current_user.id, db):
+            raise AppError(status.HTTP_403_FORBIDDEN, "Not authorized to delete this message", "FORBIDDEN")
 
     await db.delete(msg)
     await db.commit()
@@ -247,11 +232,7 @@ async def ban_from_room(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))
-    room = room_result.scalar_one_or_none()
-    if room is None:
-        raise AppError(404, _ROOM_NOT_FOUND, "ROOM_NOT_FOUND")
-
+    room = await get_room_or_404(room_id, db)
     await require_club_organizer(room.club_id, current_user, db)
 
     banned_until = None
@@ -361,10 +342,19 @@ async def get_unread_count(
 async def websocket_endpoint(
     websocket: WebSocket,
     room_id: str,
-    token: str,  # query parameter: ws://...?token=<jwt>
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> None:
+    await websocket.accept()
+    try:
+        raw = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+    except (TimeoutError, Exception):
+        await websocket.close(code=1008)
+        return
+    if not isinstance(raw, dict) or raw.get("type") != "auth" or not raw.get("token"):
+        await websocket.close(code=1008)
+        return
+    token = raw["token"]
     try:
         token_data = decode_access_token(token, settings)
     except HTTPException:
@@ -413,9 +403,10 @@ async def websocket_endpoint(
     # Broadcast that this user is now online to everyone else in the room.
     await manager.broadcast_presence(room_id, str(user.id), "online")
 
-    _ban_cache_ttl = 30  # seconds
+    _ban_cache_ttl = 5  # seconds
     ban_cache_result: bool | None = None
     ban_cache_expires: datetime = datetime.now(UTC)
+    _msg_timestamps: deque[float] = deque(maxlen=10)
 
     async def check_ban_cached() -> bool:
         nonlocal ban_cache_result, ban_cache_expires
@@ -438,6 +429,14 @@ async def websocket_endpoint(
             data = await websocket.receive_json()
             text = data.get("text", "")
             if not text:
+                continue
+
+            _now = _time.monotonic()
+            _msg_timestamps.append(_now)
+            if len(_msg_timestamps) == 10 and (_now - _msg_timestamps[0]) < 10.0:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"code": "RATE_LIMITED", "message": "Too many messages"}}
+                )
                 continue
 
             if await check_ban_cached():
@@ -476,6 +475,28 @@ async def websocket_endpoint(
         manager.disconnect(room_id, websocket)
         if will_go_offline:
             await manager.broadcast_presence(room_id, str(user.id), "offline")
+
+
+@router.delete("/chat/rooms/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat_room(
+    room_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    """Delete a chat room. Only the club organizer may do this."""
+    from sqlalchemy import delete as sa_delete
+
+    room = await get_room_or_404(room_id, db)
+    await require_club_organizer(room.club_id, current_user, db)
+
+    # Delete child records that may not have CASCADE FK constraints.
+    # MessageRead and ChatRoomBan reference chat_rooms.id; ChatMessage also does.
+    # We delete them explicitly to be safe regardless of migration history.
+    await db.execute(sa_delete(MessageRead).where(MessageRead.room_id == room_id))
+    await db.execute(sa_delete(ChatRoomBan).where(ChatRoomBan.room_id == room_id))
+    await db.execute(sa_delete(ChatMessage).where(ChatMessage.room_id == room_id))
+    await db.delete(room)
+    await db.commit()
 
 
 @router.post("/events/{event_id}/chat/room", status_code=status.HTTP_201_CREATED)

@@ -2,11 +2,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, is_club_organizer, require_club_organizer
+from app.exceptions import AppError
 from app.models.quiz import Quiz, QuizAttempt, QuizQuestion, QuizSession
 from app.models.user import User
 from app.schemas.quizzes import (
@@ -61,10 +62,7 @@ async def _get_quiz_or_404(quiz_id: uuid.UUID, db: AsyncSession) -> Quiz:
     result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
     quiz = result.scalar_one_or_none()
     if quiz is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": QUIZ_NOT_FOUND, "code": "QUIZ_NOT_FOUND"},
-        )
+        raise AppError(status.HTTP_404_NOT_FOUND, QUIZ_NOT_FOUND, "QUIZ_NOT_FOUND")
     return quiz
 
 
@@ -219,10 +217,7 @@ async def update_question(
     )
     question = q_result.scalar_one_or_none()
     if question is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": QUESTION_NOT_FOUND, "code": "QUESTION_NOT_FOUND"},
-        )
+        raise AppError(status.HTTP_404_NOT_FOUND, QUESTION_NOT_FOUND, "QUESTION_NOT_FOUND")
 
     if req.question is not None:
         question.question = req.question
@@ -259,10 +254,7 @@ async def delete_question(
     )
     question = q_result.scalar_one_or_none()
     if question is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": QUESTION_NOT_FOUND, "code": "QUESTION_NOT_FOUND"},
-        )
+        raise AppError(status.HTTP_404_NOT_FOUND, QUESTION_NOT_FOUND, "QUESTION_NOT_FOUND")
 
     await db.delete(question)
     await db.commit()
@@ -361,10 +353,7 @@ async def get_active_session(
     )
     session = result.scalar_one_or_none()
     if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
-        )
+        raise AppError(status.HTTP_404_NOT_FOUND, SESSION_NOT_FOUND, "SESSION_NOT_FOUND")
 
     # M-3: scope participant count to this session only (attempts after session started)
     count_result = await db.execute(
@@ -405,10 +394,7 @@ async def close_session(
     )
     session = session_result.scalar_one_or_none()
     if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
-        )
+        raise AppError(status.HTTP_404_NOT_FOUND, SESSION_NOT_FOUND, "SESSION_NOT_FOUND")
 
     session.closed_at = datetime.now(UTC)
     await db.commit()

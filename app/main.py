@@ -1,5 +1,9 @@
+import asyncio
+import uuid as _uuid
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import sentry_sdk
 import structlog
@@ -10,8 +14,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
+from app.limiter import limiter
 from app.routers import clubs, health, members
 from app.routers.auth import router as auth_router
 from app.routers.books import router as books_router
@@ -24,6 +31,49 @@ from app.routers.upload import router as upload_router
 from app.routers.users import router as users_router
 
 logger = structlog.get_logger(__name__)
+
+
+async def _cleanup_inactive_chat_rooms() -> None:
+    """Feature 5: daily background task — deletes non-event chat rooms with no messages
+    in the last 30 days AND created more than 30 days ago."""
+    from sqlalchemy import delete, select
+
+    from app.database import AsyncSessionLocal
+    from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
+
+    while True:
+        try:
+            await asyncio.sleep(86400)  # wait 24 h between runs
+            cutoff = datetime.now(UTC) - timedelta(days=30)
+            async with AsyncSessionLocal() as db:
+                # Find stale rooms: no event_id, created > 30 days ago, no recent messages.
+                recent_msg_subq = (
+                    select(ChatMessage.room_id).where(ChatMessage.timestamp >= cutoff).distinct().scalar_subquery()
+                )
+                stale_rooms_result = await db.execute(
+                    select(ChatRoom.id).where(
+                        ChatRoom.event_id.is_(None),
+                        ChatRoom.created_at < cutoff,
+                        ChatRoom.id.not_in(recent_msg_subq),
+                    )
+                )
+                stale_ids = [row[0] for row in stale_rooms_result.all()]
+
+                if not stale_ids:
+                    logger.info("cleanup_inactive_chat_rooms: no stale rooms found")
+                    continue
+
+                await db.execute(delete(MessageRead).where(MessageRead.room_id.in_(stale_ids)))
+                await db.execute(delete(ChatRoomBan).where(ChatRoomBan.room_id.in_(stale_ids)))
+                await db.execute(delete(ChatMessage).where(ChatMessage.room_id.in_(stale_ids)))
+                await db.execute(delete(ChatRoom).where(ChatRoom.id.in_(stale_ids)))
+                await db.commit()
+                logger.info("cleanup_inactive_chat_rooms: deleted stale rooms", count=len(stale_ids))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("cleanup_inactive_chat_rooms: unexpected error", exc_info=exc)
+
 
 _API_DESCRIPTION = (
     "## Book Club REST API\n\n"
@@ -73,7 +123,14 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Database migrations applied")
 
     logger.info("Application starting", env=settings.ENV, version="1.0.0")
+
+    # Feature 5: start daily cleanup of inactive (non-event) chat rooms.
+    cleanup_task = asyncio.create_task(_cleanup_inactive_chat_rooms())
+
     yield
+
+    cleanup_task.cancel()
+    await asyncio.gather(cleanup_task, return_exceptions=True)
 
     await redis_pool.aclose()
     logger.info("Redis pool closed")
@@ -111,6 +168,8 @@ def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
 # noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
+    limiter.storage_uri = settings.REDIS_URL  # type: ignore[attr-defined]
+
     logger.info("CORS allowed origins", origins=settings.ALLOWED_ORIGINS)
 
     app = FastAPI(
@@ -133,6 +192,9 @@ def create_app() -> FastAPI:
         redoc_url=None,
         lifespan=lifespan,
     )
+
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
     @app.get("/docs", include_in_schema=False)
     async def scalar_docs() -> HTMLResponse:
@@ -180,15 +242,38 @@ def create_app() -> FastAPI:
         bound_logger.info("Request completed", status_code=response.status_code)
         return response  # type: ignore[no-any-return]
 
+    @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
+        response = cast(Response, await call_next(request))
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        if settings.ENV == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
         allow_origin_regex=settings.CORS_ORIGIN_REGEX,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
         expose_headers=["X-Request-ID", "X-Total-Count"],
     )
+
+    @app.middleware("http")
+    async def correlation_id_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
+        correlation_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+        request.state.correlation_id = correlation_id
+        structlog.contextvars.bind_contextvars(request_id=correlation_id)
+        try:
+            response = cast(Response, await call_next(request))
+        finally:
+            structlog.contextvars.clear_contextvars()
+        response.headers["X-Request-ID"] = correlation_id
+        return response
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
@@ -196,6 +281,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ValidationError)
     async def validation_exception_handler(_request: Request, exc: ValidationError) -> JSONResponse:
+        if settings.ENV == "production":
+            return JSONResponse(status_code=422, content={"detail": "Invalid request data"})
         return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
     @app.exception_handler(Exception)

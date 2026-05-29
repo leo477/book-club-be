@@ -1,7 +1,7 @@
 import datetime
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MeetingResponse(BaseModel):
@@ -23,11 +23,15 @@ class QuizResponse(BaseModel):
 
 
 class CreateQuizRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(max_length=200)
     description: str | None = Field(default=None, max_length=2000)
 
 
 class UpdateQuizRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(max_length=200)
     description: str | None = Field(default=None, max_length=2000)
 
@@ -42,26 +46,36 @@ class QuizQuestionResponse(BaseModel):
 
 
 class AddQuestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str = Field(max_length=1000)
     options: list[str]
     correctIndex: int
 
 
 class UpdateQuestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str | None = Field(default=None, max_length=1000)
     options: list[str] | None = None
     correctIndex: int | None = None
 
 
 class ReorderQuestionsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     order: list[str]  # ordered question UUIDs
 
 
 class SetActiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     isActive: bool
 
 
 class SubmitAttemptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     answers: list[int]
 
 
@@ -75,6 +89,8 @@ class AttemptResponse(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     eventId: uuid.UUID | None = None
 
 

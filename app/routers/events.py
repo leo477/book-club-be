@@ -9,6 +9,7 @@ from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_event_club_organizer
+from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
@@ -27,6 +28,19 @@ from app.services.event_service import (
 )
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
+
+
+async def _delete_event_chat_room(event_id: uuid.UUID, db: AsyncSession) -> None:
+    """Delete the chat room linked to this event (if any), including all child records."""
+    room_result = await db.execute(select(ChatRoom).where(ChatRoom.event_id == event_id))
+    room = room_result.scalar_one_or_none()
+    if room is None:
+        return
+    room_id = room.id
+    await db.execute(delete(MessageRead).where(MessageRead.room_id == room_id))
+    await db.execute(delete(ChatRoomBan).where(ChatRoomBan.room_id == room_id))
+    await db.execute(delete(ChatMessage).where(ChatMessage.room_id == room_id))
+    await db.delete(room)
 
 
 @router.get("")
@@ -108,7 +122,8 @@ async def update_event(
     _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
 ) -> EventResponse:
     event = await get_event_or_404(event_id, db)
-    for field, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    for field, value in updates.items():
         if field == "after_meeting_venue":
             if value is None:
                 setattr(event, field, None)
@@ -118,6 +133,9 @@ async def update_event(
                 setattr(event, field, value.model_dump())
         else:
             setattr(event, field, value)
+    # Feature 4: delete the associated event chat room when the event ends.
+    if updates.get("status") in ("held", "cancelled"):
+        await _delete_event_chat_room(event_id, db)
     await db.commit()
     await db.refresh(event)
     return await build_event_response(event, db, current_user.id)
@@ -153,6 +171,7 @@ async def cancel_event(
     event = await get_event_or_404(event_id, db)
     event.status = "cancelled"
     event.cancelled_at = datetime.now(tz=UTC)
+    await _delete_event_chat_room(event_id, db)
     await db.commit()
     await db.refresh(event)
     return await build_event_response(event, db, current_user.id)

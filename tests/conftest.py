@@ -153,6 +153,9 @@ async def clean_db(test_engine):
     async with test_engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             await conn.execute(table.delete())
+    from app.limiter import limiter
+
+    limiter._limiter.storage.reset()
 
 
 @pytest_asyncio.fixture
