@@ -119,9 +119,7 @@ async def google_places_autocomplete(
     return suggestions
 
 
-async def google_place_details(
-    place_id: str, session_token: str, settings: Settings
-) -> GeocodeSuggestion:
+async def google_place_details(place_id: str, session_token: str, settings: Settings) -> GeocodeSuggestion:
     from fastapi import HTTPException, status
 
     try:
