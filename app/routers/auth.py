@@ -66,7 +66,7 @@ def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=None)
 @limiter.limit("5/minute")
 async def register(
-    request: Request,  # slowapi requires this name
+    request: Request,  # slowapi requires this exact parameter name
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
@@ -127,7 +127,7 @@ async def register(
 @router.post("/login", status_code=status.HTTP_200_OK)
 @limiter.limit("10/minute")
 async def login(
-    request: Request,  # slowapi requires this name
+    request: Request,  # slowapi requires this exact parameter name
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],

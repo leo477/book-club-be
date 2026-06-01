@@ -18,7 +18,7 @@ _MAX_FILE_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
 
 @router.post("/cover", responses={503: {"description": "Storage not configured"}})
 async def upload_cover(
-    file: Annotated[UploadFile, File(...)],
+    file: Annotated[UploadFile, File()],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, str]:
     # S-4: validate content-type
@@ -50,7 +50,7 @@ async def upload_cover(
         supabase.storage.from_("covers").upload(path, contents, {"content-type": file.content_type or "image/jpeg"})
         url: str = supabase.storage.from_("covers").get_public_url(path)
     except Exception as exc:
-        logger.exception("Supabase storage error", exc_info=exc)
+        logger.exception("Supabase storage error", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"error": "Storage upload failed", "code": "STORAGE_ERROR"},

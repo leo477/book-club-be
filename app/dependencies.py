@@ -117,6 +117,7 @@ async def get_optional_user(
     try:
         return await get_current_user(request=request, db=db, settings=settings)
     except HTTPException:
+        # Unauthenticated access is permitted for optional-auth endpoints.
         return None
 
 

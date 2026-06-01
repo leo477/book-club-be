@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
@@ -120,8 +121,14 @@ async def google_places_autocomplete(
     return suggestions
 
 
+_PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-:+]{1,500}$")
+
+
 async def google_place_details(place_id: str, session_token: str, settings: Settings) -> GeocodeSuggestion:
     from fastapi import HTTPException, status
+
+    if not _PLACE_ID_RE.match(place_id):
+        raise HTTPException(status_code=400, detail="Invalid place_id format")
 
     try:
         async with aiohttp.ClientSession() as session:

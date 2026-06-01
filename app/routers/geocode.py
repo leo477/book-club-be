@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1/geocode", tags=["geocode"])
 @router.get("/autocomplete")
 @limiter.limit("30/minute")
 async def autocomplete(
-    request: Request,
+    request: Request,  # slowapi requires this exact parameter name
     settings: Annotated[Settings, Depends(get_settings_dep)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
     q: Annotated[str, Query(min_length=2, max_length=200)],
@@ -31,7 +31,7 @@ async def autocomplete(
 @router.get("/place-details")
 @limiter.limit("30/minute")
 async def place_details(
-    request: Request,
+    request: Request,  # slowapi requires this exact parameter name
     settings: Annotated[Settings, Depends(get_settings_dep)],
     place_id: Annotated[str, Query(min_length=1, max_length=500)],
     session_token: Annotated[str, Query(min_length=1, max_length=200)],
