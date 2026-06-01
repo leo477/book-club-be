@@ -285,13 +285,10 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     @app.exception_handler(RequestValidationError)
-    async def request_validation_exception_handler(
-        _request: Request, exc: RequestValidationError
-    ) -> JSONResponse:
+    async def request_validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
         errors = exc.errors()
         path_param_uuids_invalid = all(
-            e.get("type") in {"uuid_parsing", "uuid_type"} and e.get("loc", (None,))[0] == "path"
-            for e in errors
+            e.get("type") in {"uuid_parsing", "uuid_type"} and e.get("loc", (None,))[0] == "path" for e in errors
         )
         if path_param_uuids_invalid:
             return JSONResponse(status_code=404, content={"detail": "Not found"})
