@@ -275,7 +275,7 @@ async def create_event(
 @router.get("/{club_id}/stats")
 async def get_club_stats(
     club_id: uuid.UUID,
-    current_user: Annotated[User, Depends(get_current_user)],
+    _current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _auth: Annotated[None, Depends(require_club_organizer)],
 ) -> ClubStatsResponse:
