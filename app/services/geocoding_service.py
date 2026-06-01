@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 import aiohttp
 import structlog
@@ -125,7 +126,7 @@ async def google_place_details(place_id: str, session_token: str, settings: Sett
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f"https://places.googleapis.com/v1/places/{place_id}",
+                f"https://places.googleapis.com/v1/places/{quote(place_id, safe='')}",
                 headers={
                     "X-Goog-Api-Key": settings.MAPS_API_KEY,
                     "X-Goog-SessionToken": session_token,
