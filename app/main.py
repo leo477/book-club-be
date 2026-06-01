@@ -23,8 +23,8 @@ from app.routers import clubs, health, members
 from app.routers.auth import router as auth_router
 from app.routers.books import router as books_router
 from app.routers.chat import router as chat_router
-from app.routers.events import router as events_router
 from app.routers.config import router as config_router
+from app.routers.events import router as events_router
 from app.routers.geocode import router as geocode_router
 from app.routers.quizzes import router as quizzes_router
 from app.routers.randomizer import router as randomizer_router
