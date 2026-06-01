@@ -78,3 +78,83 @@ async def photon_autocomplete(
             logger.warning("Redis cache write failed", error=str(exc))
 
     return suggestions
+
+
+async def google_places_autocomplete(
+    q: str, lang: str, limit: int, session_token: str, settings: Settings
+) -> list[GeocodeSuggestion]:
+    from fastapi import HTTPException, status
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://places.googleapis.com/v1/places:autocomplete",
+                headers={
+                    "X-Goog-Api-Key": settings.MAPS_API_KEY,
+                    "X-Goog-SessionToken": session_token,
+                    "Content-Type": "application/json",
+                },
+                json={"input": q, "languageCode": lang},
+            ) as response:
+                response.raise_for_status()
+                data = await response.json()
+    except Exception as exc:
+        logger.error("Google Places autocomplete failed", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Geocoding service unavailable") from exc
+
+    suggestions: list[GeocodeSuggestion] = []
+    for item in data.get("suggestions", [])[:limit]:
+        pred = item.get("placePrediction", {})
+        structured = pred.get("structuredFormat", {})
+        main = structured.get("mainText", {}).get("text", "")
+        secondary = structured.get("secondaryText", {}).get("text", "")
+        label = f"{main}, {secondary}" if secondary else main
+        suggestions.append(
+            GeocodeSuggestion(
+                label=label or pred.get("text", {}).get("text", ""),
+                place_id=pred.get("placeId"),
+            )
+        )
+
+    return suggestions
+
+
+async def google_place_details(
+    place_id: str, session_token: str, settings: Settings
+) -> GeocodeSuggestion:
+    from fastapi import HTTPException, status
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://places.googleapis.com/v1/places/{place_id}",
+                headers={
+                    "X-Goog-Api-Key": settings.MAPS_API_KEY,
+                    "X-Goog-SessionToken": session_token,
+                    "X-Goog-FieldMask": "id,location,formattedAddress,addressComponents,shortFormattedAddress",
+                },
+            ) as response:
+                response.raise_for_status()
+                data = await response.json()
+    except Exception as exc:
+        logger.error("Google Place details failed", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Geocoding service unavailable") from exc
+
+    city: str | None = None
+    country: str | None = None
+    for component in data.get("addressComponents", []):
+        types = component.get("types", [])
+        if city is None and ("locality" in types or "administrative_area_level_2" in types):
+            city = component.get("longText")
+        if country is None and "country" in types:
+            country = component.get("longText")
+
+    location = data.get("location", {})
+    return GeocodeSuggestion(
+        label=data.get("formattedAddress", ""),
+        city=city,
+        country=country,
+        lat=location.get("latitude"),
+        lng=location.get("longitude"),
+        place_id=data.get("id", place_id),
+    )
