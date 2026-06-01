@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str = ""
 
     GOOGLE_BOOKS_API_KEY: str = ""
+    MAPS_API_KEY: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 

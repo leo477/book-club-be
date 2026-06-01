@@ -10,6 +10,8 @@ from app.models.base import AppBase
 
 _USERS_FK = "users.id"
 _CHAT_ROOMS_FK = "chat_rooms.id"
+_COL_ROOM_ID = "room_id"
+_COL_USER_ID = "user_id"
 
 
 class ChatRoom(AppBase):
@@ -25,7 +27,7 @@ class ChatRoom(AppBase):
 
 class ChatMessage(AppBase):
     __tablename__ = "chat_messages"
-    __table_args__ = (Index("ix_chat_messages_room_timestamp", "room_id", "timestamp"),)
+    __table_args__ = (Index("ix_chat_messages_room_timestamp", _COL_ROOM_ID, "timestamp"),)
 
     room_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_CHAT_ROOMS_FK), nullable=False)
     sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_USERS_FK), nullable=False)
@@ -35,7 +37,7 @@ class ChatMessage(AppBase):
 
 class ChatRoomBan(AppBase):
     __tablename__ = "chat_room_bans"
-    __table_args__ = (Index("ix_chat_room_bans_room_user", "room_id", "user_id"),)
+    __table_args__ = (Index("ix_chat_room_bans_room_user", _COL_ROOM_ID, _COL_USER_ID),)
 
     room_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_CHAT_ROOMS_FK), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(_USERS_FK), nullable=False)
@@ -48,8 +50,8 @@ class MessageRead(AppBase):
 
     __tablename__ = "message_reads"
     __table_args__ = (
-        UniqueConstraint("user_id", "room_id", name="uq_message_reads_user_room"),
-        Index("ix_message_reads_user_room", "user_id", "room_id"),
+        UniqueConstraint(_COL_USER_ID, _COL_ROOM_ID, name="uq_message_reads_user_room"),
+        Index("ix_message_reads_user_room", _COL_USER_ID, _COL_ROOM_ID),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(

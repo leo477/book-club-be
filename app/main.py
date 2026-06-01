@@ -1,9 +1,10 @@
 import asyncio
-import uuid as _uuid
+import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
+import redis.asyncio as aioredis
 import sentry_sdk
 import structlog
 from fastapi import FastAPI, HTTPException, Request
@@ -22,6 +23,7 @@ from app.routers import clubs, health, members
 from app.routers.auth import router as auth_router
 from app.routers.books import router as books_router
 from app.routers.chat import router as chat_router
+from app.routers.config import router as config_router
 from app.routers.events import router as events_router
 from app.routers.geocode import router as geocode_router
 from app.routers.quizzes import router as quizzes_router
@@ -30,6 +32,9 @@ from app.routers.upload import router as upload_router
 from app.routers.users import router as users_router
 
 logger = structlog.get_logger(__name__)
+
+# Type alias for FastAPI middleware call_next parameter — avoids repeated inline annotation.
+_CallNext = Callable[[Request], Awaitable[Response]]
 
 
 async def _cleanup_inactive_chat_rooms() -> None:
@@ -88,8 +93,6 @@ _API_DESCRIPTION = (
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    import redis.asyncio as aioredis
-
     settings = get_settings()
     if settings.SENTRY_DSN:
         sentry_sdk.init(
@@ -228,7 +231,7 @@ def create_app() -> FastAPI:
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
     @app.middleware("http")
-    async def logging_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    async def logging_middleware(request: Request, call_next: _CallNext) -> Response:
         bound_logger = logger.bind(
             method=request.method,
             url=str(request.url),
@@ -244,9 +247,7 @@ def create_app() -> FastAPI:
         return response
 
     @app.middleware("http")
-    async def security_headers_middleware(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
+    async def security_headers_middleware(request: Request, call_next: _CallNext) -> Response:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -267,10 +268,8 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def correlation_id_middleware(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        correlation_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+    async def correlation_id_middleware(request: Request, call_next: _CallNext) -> Response:
+        correlation_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         request.state.correlation_id = correlation_id
         structlog.contextvars.bind_contextvars(request_id=correlation_id)
         try:
@@ -317,6 +316,7 @@ def create_app() -> FastAPI:
     app.include_router(randomizer_router)
     app.include_router(chat_router)
     app.include_router(geocode_router)
+    app.include_router(config_router)
     app.include_router(upload_router)
     app.include_router(books_router)
 
