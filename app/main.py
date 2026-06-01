@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import sentry_sdk
 import structlog
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -282,6 +283,21 @@ def create_app() -> FastAPI:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_exception_handler(
+        _request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        errors = exc.errors()
+        path_param_uuids_invalid = all(
+            e.get("type") in {"uuid_parsing", "uuid_type"} and e.get("loc", (None,))[0] == "path"
+            for e in errors
+        )
+        if path_param_uuids_invalid:
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        if settings.ENV == "production":
+            return JSONResponse(status_code=422, content={"detail": "Invalid request data"})
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.exception_handler(ValidationError)
     async def validation_exception_handler(_request: Request, exc: ValidationError) -> JSONResponse:
