@@ -247,9 +247,7 @@ def create_app() -> FastAPI:
         return response
 
     @app.middleware("http")
-    async def security_headers_middleware(
-        request: Request, call_next: _CallNext
-    ) -> Response:
+    async def security_headers_middleware(request: Request, call_next: _CallNext) -> Response:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -270,9 +268,7 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def correlation_id_middleware(
-        request: Request, call_next: _CallNext
-    ) -> Response:
+    async def correlation_id_middleware(request: Request, call_next: _CallNext) -> Response:
         correlation_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         request.state.correlation_id = correlation_id
         structlog.contextvars.bind_contextvars(request_id=correlation_id)
