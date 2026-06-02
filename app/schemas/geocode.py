@@ -5,5 +5,6 @@ class GeocodeSuggestion(BaseModel):
     label: str
     city: str | None = None
     country: str | None = None
-    lat: float
-    lng: float
+    lat: float | None = None
+    lng: float | None = None
+    place_id: str | None = None
