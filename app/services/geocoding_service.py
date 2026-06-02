@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 import aiohttp
 import structlog
 from fastapi import HTTPException, status
+from yarl import URL
 
 if TYPE_CHECKING:
     import redis.asyncio as aioredis
@@ -126,10 +128,11 @@ async def google_place_details(place_id: str, session_token: str, settings: Sett
     if not _match:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid place_id format")
     safe_place_id = _match.group(0)
+    details_url = URL("https://places.googleapis.com/v1/places/") / quote(safe_place_id, safe="")
     try:
         async with aiohttp.ClientSession() as http:
             async with http.get(
-                f"https://places.googleapis.com/v1/places/{safe_place_id}",
+                details_url,
                 headers={
                     "X-Goog-Api-Key": settings.MAPS_API_KEY,
                     "X-Goog-SessionToken": session_token,
