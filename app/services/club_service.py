@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 
+import structlog
 from sqlalchemy import and_, func, select
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.exc import IntegrityError
@@ -20,8 +20,7 @@ from app.schemas.clubs import BanRequest, BanResponse, ChampionInfo, ClubRespons
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
 from app.schemas.users import UserStatsResponse
 
-if TYPE_CHECKING:
-    pass
+logger = structlog.get_logger(__name__)
 
 
 async def delete_club_cascade(club_id: uuid.UUID, db: AsyncSession) -> None:
@@ -31,6 +30,8 @@ async def delete_club_cascade(club_id: uuid.UUID, db: AsyncSession) -> None:
         await db.execute(sa_delete(ChatRoomBan).where(ChatRoomBan.room_id.in_(room_ids)))
         await db.execute(sa_delete(ChatMessage).where(ChatMessage.room_id.in_(room_ids)))
         await db.execute(sa_delete(ChatRoom).where(ChatRoom.club_id == club_id))
+    else:
+        logger.debug("delete_club_cascade: no chat rooms found for club", club_id=str(club_id))
     await db.execute(sa_delete(ClubBan).where(ClubBan.club_id == club_id))
     await db.execute(sa_delete(ClubMember).where(ClubMember.club_id == club_id))
 
@@ -41,6 +42,8 @@ async def delete_club_cascade(club_id: uuid.UUID, db: AsyncSession) -> None:
     if event_ids:
         await db.execute(sa_delete(EventAttendee).where(EventAttendee.event_id.in_(event_ids)))
         await db.execute(sa_delete(Event).where(Event.club_id == club_id))
+    else:
+        logger.debug("delete_club_cascade: no events found for club", club_id=str(club_id))
 
     club_result = await db.execute(select(Club).where(Club.id == club_id))
     club = club_result.scalar_one_or_none()

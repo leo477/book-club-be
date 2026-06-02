@@ -89,9 +89,11 @@ async def photon_autocomplete(
 async def google_places_autocomplete(
     q: str, lang: str, limit: int, session_token: str, settings: Settings
 ) -> list[GeocodeSuggestion]:
+    from fastapi import HTTPException, status
+
     try:
-        async with aiohttp.ClientSession() as http:
-            async with http.post(
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
                 "https://places.googleapis.com/v1/places:autocomplete",
                 headers={
                     "X-Goog-Api-Key": settings.MAPS_API_KEY,
@@ -123,16 +125,19 @@ async def google_places_autocomplete(
     return suggestions
 
 
+_PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-:+]{1,500}$")
+
+
 async def google_place_details(place_id: str, session_token: str, settings: Settings) -> GeocodeSuggestion:
-    _match = _PLACE_ID_RE.match(place_id)
-    if not _match:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid place_id format")
-    safe_place_id = _match.group(0)
-    details_url = URL("https://places.googleapis.com/v1/places/") / quote(safe_place_id, safe="")
+    from fastapi import HTTPException, status
+
+    if not _PLACE_ID_RE.match(place_id):
+        raise HTTPException(status_code=400, detail="Invalid place_id format")
+
     try:
-        async with aiohttp.ClientSession() as http:
-            async with http.get(
-                details_url,
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://places.googleapis.com/v1/places/{quote(place_id, safe='')}",
                 headers={
                     "X-Goog-Api-Key": settings.MAPS_API_KEY,
                     "X-Goog-SessionToken": session_token,

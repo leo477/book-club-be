@@ -141,6 +141,25 @@ FAKE_GOOGLE_PLACE_DETAILS_RESPONSE = {
 }
 
 
+def _make_aiohttp_post_mock(json_data: dict) -> MagicMock:
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = AsyncMock(return_value=json_data)
+
+    mock_ctx_response = AsyncMock()
+    mock_ctx_response.__aenter__ = AsyncMock(return_value=mock_response)
+    mock_ctx_response.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_ctx_response)
+
+    mock_ctx_session = AsyncMock()
+    mock_ctx_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_ctx_session.__aexit__ = AsyncMock(return_value=False)
+
+    return mock_ctx_session
+
+
 def _settings_with_maps_key(key: str = "test-maps-api-key") -> Settings:
     return Settings.model_construct(
         ENV="test",
@@ -163,7 +182,7 @@ async def test_autocomplete_google_places_with_session_token(async_client: Async
     settings = _settings_with_maps_key()
     app.dependency_overrides[get_settings_dep] = lambda: settings
 
-    mock_aiohttp_session = _make_aiohttp_mock(FAKE_GOOGLE_AUTOCOMPLETE_RESPONSE, method="post")
+    mock_aiohttp_session = _make_aiohttp_post_mock(FAKE_GOOGLE_AUTOCOMPLETE_RESPONSE)
 
     try:
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
@@ -272,5 +291,4 @@ async def test_get_maps_key(async_client: AsyncClient) -> None:
         del app.dependency_overrides[get_settings_dep]
 
     assert response.status_code == 200
-    data = response.json()
-    assert data["mapsApiKey"] == "my-api-key-abc"
+    assert response.json() == {"mapsApiKey": "my-api-key-abc"}

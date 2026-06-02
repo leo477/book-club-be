@@ -18,11 +18,10 @@ def _map_item(item: dict[str, Any]) -> dict[str, Any]:
     info: dict[str, Any] = item.get("volumeInfo") or {}
     image_links: dict[str, Any] = info.get("imageLinks") or {}
     thumbnail: str | None = image_links.get("thumbnail") or image_links.get("smallThumbnail")
-    if thumbnail:
-        if thumbnail[:5] == "http:":
-            thumbnail = "https:" + thumbnail[5:]
+    if thumbnail and thumbnail.startswith("http:"):
+        thumbnail = f"https:{thumbnail[5:]}"
     description: str | None = info.get("description")
-    if description:
+    if description is not None:
         description = description[:800]
     return {
         "id": item.get("id") or "",

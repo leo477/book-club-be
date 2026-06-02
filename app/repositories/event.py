@@ -95,7 +95,7 @@ class EventRepository:
         )
         return result.scalar_one_or_none()
 
-    async def add_attendee(self, attendee: EventAttendee) -> None:
+    def add_attendee(self, attendee: EventAttendee) -> None:
         self.db.add(attendee)
 
     async def remove_attendee(self, event_id: uuid.UUID, user_id: uuid.UUID) -> None:

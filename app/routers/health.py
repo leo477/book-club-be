@@ -19,7 +19,7 @@ async def health_check() -> dict[str, str]:
 @router.head("/health")
 async def health_check_head() -> None:
     # HEAD requests require no body; status 200 is implicit
-    ...
+    return
 
 
 @router.get("/ready")

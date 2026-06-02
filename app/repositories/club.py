@@ -81,7 +81,7 @@ class ClubRepository:
         )
         return result.scalar_one_or_none()
 
-    async def add_member(self, member: ClubMember) -> None:
+    def add_member(self, member: ClubMember) -> None:
         self.db.add(member)
 
     async def remove_member(self, club_id: uuid.UUID, user_id: uuid.UUID) -> None:

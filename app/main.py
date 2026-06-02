@@ -1,20 +1,20 @@
 import asyncio
-import uuid as _uuid
-from collections.abc import AsyncGenerator, Callable
+import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
+import redis.asyncio as aioredis
 import sentry_sdk
 import structlog
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
@@ -32,6 +32,9 @@ from app.routers.upload import router as upload_router
 from app.routers.users import router as users_router
 
 logger = structlog.get_logger(__name__)
+
+# Type alias for FastAPI middleware call_next parameter — avoids repeated inline annotation.
+_CallNext = Callable[[Request], Awaitable[Response]]
 
 
 async def _cleanup_inactive_chat_rooms() -> None:
@@ -90,8 +93,6 @@ _API_DESCRIPTION = (
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    import redis.asyncio as aioredis
-
     settings = get_settings()
     if settings.SENTRY_DSN:
         sentry_sdk.init(
@@ -109,8 +110,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     )
     _app.state.redis_pool = redis_pool
     logger.info("Redis pool created", url=settings.REDIS_URL)
-
-    import asyncio
 
     proc = await asyncio.create_subprocess_exec(
         "/app/.venv/bin/alembic",
@@ -164,6 +163,10 @@ def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
                     operation["security"] = [{"BearerAuth": []}]
     app.openapi_schema = schema
     return app.openapi_schema
+
+
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 
 # noinspection PyShadowingNames
@@ -228,7 +231,7 @@ def create_app() -> FastAPI:
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
     @app.middleware("http")
-    async def logging_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
+    async def logging_middleware(request: Request, call_next: _CallNext) -> Response:
         bound_logger = logger.bind(
             method=request.method,
             url=str(request.url),
@@ -241,7 +244,18 @@ def create_app() -> FastAPI:
             bound_logger.exception("Unhandled exception", exc_info=exc)
             return JSONResponse(status_code=500, content={"detail": "Internal server error"})
         bound_logger.info("Request completed", status_code=response.status_code)
-        return response  # type: ignore[no-any-return]
+        return response
+
+    @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next: _CallNext) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        if settings.ENV == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
     @app.middleware("http")
     async def security_headers_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
@@ -265,12 +279,12 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def correlation_id_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
-        correlation_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+    async def correlation_id_middleware(request: Request, call_next: _CallNext) -> Response:
+        correlation_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         request.state.correlation_id = correlation_id
         structlog.contextvars.bind_contextvars(request_id=correlation_id)
         try:
-            response = cast(Response, await call_next(request))
+            response = await call_next(request)
         finally:
             structlog.contextvars.clear_contextvars()
         response.headers["X-Request-ID"] = correlation_id
@@ -279,6 +293,18 @@ def create_app() -> FastAPI:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        errors = exc.errors()
+        path_param_uuids_invalid = all(
+            e.get("type") in {"uuid_parsing", "uuid_type"} and e.get("loc", (None,))[0] == "path" for e in errors
+        )
+        if path_param_uuids_invalid:
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        if settings.ENV == "production":
+            return JSONResponse(status_code=422, content={"detail": "Invalid request data"})
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.exception_handler(ValidationError)
     async def validation_exception_handler(_request: Request, exc: ValidationError) -> JSONResponse:
@@ -301,6 +327,7 @@ def create_app() -> FastAPI:
     app.include_router(randomizer_router)
     app.include_router(chat_router)
     app.include_router(geocode_router)
+    app.include_router(config_router)
     app.include_router(upload_router)
     app.include_router(books_router)
     app.include_router(config_router)

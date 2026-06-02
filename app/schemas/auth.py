@@ -27,6 +27,7 @@ class UserProfileResponse(BaseModel):
     socialsPublic: bool
     socials: dict[str, str | None]
 
+    # noinspection PyNestedDecoratorsInspection
     @model_validator(mode="before")  # NOSONAR
     @classmethod
     def build_from_orm(cls, v: Any) -> Any:

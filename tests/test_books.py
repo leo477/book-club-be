@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import app.routers.books as books_module
-import app.services.google_books_service as gbs_module
+from app.routers import books as books_module
+from app.services import google_books_service as gbs_module
 
 
 def _make_http_response(status_code: int = 200, text: str = "book page content") -> MagicMock:
@@ -132,10 +132,8 @@ async def test_get_stores_cache_expired(async_client, register_user, auth_header
     await register_user(email="books_expired@example.com")
     headers = await auth_headers(email="books_expired@example.com")
 
-    from app.routers.books import StoreResult
-
     # Seed an already-expired cache entry
-    stale = [StoreResult(name="Fake", url="http://x", found=False)]
+    stale = [books_module.StoreResult(name="Fake", url="http://x", found=False)]
     books_module._cache["ExpiredBook"] = (stale, time.time() - 1)
 
     mock_resp = _make_http_response(200, "fresh content")

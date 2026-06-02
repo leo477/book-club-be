@@ -117,10 +117,11 @@ async def get_optional_user(
     try:
         return await get_current_user(request=request, db=db, settings=settings)
     except HTTPException:
+        # Unauthenticated access is permitted for optional-auth endpoints.
         return None
 
 
-async def get_redis(request: Request) -> aioredis.Redis:
+def get_redis(request: Request) -> aioredis.Redis:
     """Return a Redis client backed by the shared connection pool from app state."""
     pool = request.app.state.redis_pool
     return aioredis.Redis(connection_pool=pool)
