@@ -4,7 +4,6 @@ services:
     env: docker
     dockerfilePath: Dockerfile
     plan: free
-    branch: main
     autoDeploy: true
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health
@@ -26,39 +25,11 @@ services:
       - key: SENTRY_DSN
         sync: false
 
-  - type: web
-    name: book-club-be-dev
-    env: docker
-    dockerfilePath: Dockerfile
-    plan: free
-    branch: develop
-    autoDeploy: true
-    preDeployCommand: alembic upgrade head
-    healthCheckPath: /health
-    envVars:
-      - key: ENV
-        value: development
-      - key: DATABASE_URL
-        sync: false
-      - key: SECRET_KEY
-        sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_JWT_SECRET
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      - key: SENTRY_DSN
-        sync: false
-
   - type: cron
     name: keep-alive
     env: docker
     dockerfilePath: Dockerfile
     plan: free
-    branch: main
     schedule: "*/10 * * * *"
     startCommand: "curl -sf https://book-club-be.onrender.com/health || true"
 
