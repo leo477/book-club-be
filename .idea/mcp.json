@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "book-club-agents": {
-      "command": "node",
-      "args": ["../book-club-mcp/dist/index.js"]
-    }
-  }
-}
