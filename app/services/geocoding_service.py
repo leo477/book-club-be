@@ -122,9 +122,10 @@ async def google_places_autocomplete(
 
 
 async def google_place_details(place_id: str, session_token: str, settings: Settings) -> GeocodeSuggestion:
-    if not _PLACE_ID_RE.match(place_id):
+    _match = _PLACE_ID_RE.match(place_id)
+    if not _match:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid place_id format")
-    safe_place_id = _PLACE_ID_RE.match(place_id).group(0)
+    safe_place_id = _match.group(0)
     try:
         async with aiohttp.ClientSession() as http:
             async with http.get(
