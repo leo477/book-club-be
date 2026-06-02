@@ -7,6 +7,8 @@ from urllib.parse import quote
 
 import aiohttp
 import structlog
+from fastapi import HTTPException, status
+from yarl import URL
 
 if TYPE_CHECKING:
     import redis.asyncio as aioredis
@@ -15,6 +17,8 @@ from app.config import Settings
 from app.schemas.geocode import GeocodeSuggestion
 
 logger = structlog.get_logger(__name__)
+
+_PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
 async def photon_autocomplete(
@@ -46,8 +50,8 @@ async def photon_autocomplete(
 
     try:
         timeout = aiohttp.ClientTimeout(total=settings.PHOTON_TIMEOUT)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.get(
                 f"{settings.PHOTON_URL}/api/",
                 params={"q": q, "limit": limit, "lang": photon_lang},
                 headers={"User-Agent": "BookClub/1.0"},

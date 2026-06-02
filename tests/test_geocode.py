@@ -18,7 +18,7 @@ FAKE_PHOTON_RESPONSE = {
 }
 
 
-def _make_aiohttp_mock(json_data: dict) -> MagicMock:
+def _make_aiohttp_mock(json_data: dict, method: str = "get") -> MagicMock:
     mock_response = AsyncMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json = AsyncMock(return_value=json_data)
@@ -28,7 +28,7 @@ def _make_aiohttp_mock(json_data: dict) -> MagicMock:
     mock_ctx_response.__aexit__ = AsyncMock(return_value=False)
 
     mock_session = MagicMock()
-    mock_session.get = MagicMock(return_value=mock_ctx_response)
+    setattr(mock_session, method, MagicMock(return_value=mock_ctx_response))
 
     mock_ctx_session = AsyncMock()
     mock_ctx_session.__aenter__ = AsyncMock(return_value=mock_session)
