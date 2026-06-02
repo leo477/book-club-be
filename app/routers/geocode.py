@@ -33,7 +33,7 @@ async def autocomplete(
 async def place_details(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings_dep)],
-    place_id: Annotated[str, Query(min_length=1, max_length=500)],
+    place_id: Annotated[str, Query(min_length=1, max_length=500, pattern=r"^[A-Za-z0-9_\-]+$")],
     session_token: Annotated[str, Query(min_length=1, max_length=200)],
 ) -> GeocodeSuggestion:
     if not settings.MAPS_API_KEY:
