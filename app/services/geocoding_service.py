@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
-from urllib.parse import quote
 
 import aiohttp
 import structlog
@@ -15,6 +15,8 @@ from app.config import Settings
 from app.schemas.geocode import GeocodeSuggestion
 
 logger = structlog.get_logger(__name__)
+
+_PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
 async def photon_autocomplete(
@@ -120,10 +122,13 @@ async def google_places_autocomplete(
 
 
 async def google_place_details(place_id: str, session_token: str, settings: Settings) -> GeocodeSuggestion:
+    if not _PLACE_ID_RE.match(place_id):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid place_id format")
+    safe_place_id = _PLACE_ID_RE.match(place_id).group(0)
     try:
         async with aiohttp.ClientSession() as http:
             async with http.get(
-                f"https://places.googleapis.com/v1/places/{quote(place_id, safe='')}",
+                f"https://places.googleapis.com/v1/places/{safe_place_id}",
                 headers={
                     "X-Goog-Api-Key": settings.MAPS_API_KEY,
                     "X-Goog-SessionToken": session_token,
