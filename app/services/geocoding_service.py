@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import aiohttp
 import structlog
+from fastapi import HTTPException, status
 
 if TYPE_CHECKING:
     import redis.asyncio as aioredis
@@ -45,8 +46,8 @@ async def photon_autocomplete(
 
     try:
         timeout = aiohttp.ClientTimeout(total=settings.PHOTON_TIMEOUT)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.get(
                 f"{settings.PHOTON_URL}/api/",
                 params={"q": q, "limit": limit, "lang": photon_lang},
                 headers={"User-Agent": "BookClub/1.0"},
@@ -84,11 +85,9 @@ async def photon_autocomplete(
 async def google_places_autocomplete(
     q: str, lang: str, limit: int, session_token: str, settings: Settings
 ) -> list[GeocodeSuggestion]:
-    from fastapi import HTTPException, status
-
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
+        async with aiohttp.ClientSession() as http:
+            async with http.post(
                 "https://places.googleapis.com/v1/places:autocomplete",
                 headers={
                     "X-Goog-Api-Key": settings.MAPS_API_KEY,
@@ -121,11 +120,9 @@ async def google_places_autocomplete(
 
 
 async def google_place_details(place_id: str, session_token: str, settings: Settings) -> GeocodeSuggestion:
-    from fastapi import HTTPException, status
-
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        async with aiohttp.ClientSession() as http:
+            async with http.get(
                 f"https://places.googleapis.com/v1/places/{quote(place_id, safe='')}",
                 headers={
                     "X-Goog-Api-Key": settings.MAPS_API_KEY,

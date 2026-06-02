@@ -302,7 +302,6 @@ def create_app() -> FastAPI:
     app.include_router(randomizer_router)
     app.include_router(chat_router)
     app.include_router(geocode_router)
-    app.include_router(config_router)
     app.include_router(upload_router)
     app.include_router(books_router)
     app.include_router(config_router)
