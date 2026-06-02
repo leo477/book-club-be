@@ -27,6 +27,7 @@ from app.routers.events import router as events_router
 from app.routers.geocode import router as geocode_router
 from app.routers.quizzes import router as quizzes_router
 from app.routers.randomizer import router as randomizer_router
+from app.routers.config import router as config_router
 from app.routers.upload import router as upload_router
 from app.routers.users import router as users_router
 
@@ -302,6 +303,7 @@ def create_app() -> FastAPI:
     app.include_router(geocode_router)
     app.include_router(upload_router)
     app.include_router(books_router)
+    app.include_router(config_router)
 
     return app
 
