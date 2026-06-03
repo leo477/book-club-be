@@ -35,7 +35,8 @@ async def place_details(
     settings: Annotated[Settings, Depends(get_settings_dep)],
     place_id: Annotated[str, Query(min_length=1, max_length=500)],
     session_token: Annotated[str, Query(min_length=1, max_length=200)],
+    lang: str = "uk",
 ) -> GeocodeSuggestion:
     if not settings.MAPS_API_KEY:
         raise HTTPException(status_code=503, detail="Maps API not configured")
-    return await google_place_details(place_id, session_token, settings)
+    return await google_place_details(place_id, session_token, settings, lang)

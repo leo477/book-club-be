@@ -126,7 +126,9 @@ async def google_places_autocomplete(
 _PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-:+]{1,500}$")
 
 
-async def google_place_details(place_id: str, session_token: str, settings: Settings) -> GeocodeSuggestion:
+async def google_place_details(
+    place_id: str, session_token: str, settings: Settings, lang: str = "uk"
+) -> GeocodeSuggestion:
     from fastapi import HTTPException, status
 
     if not _PLACE_ID_RE.match(place_id):
@@ -141,6 +143,7 @@ async def google_place_details(place_id: str, session_token: str, settings: Sett
                     "X-Goog-SessionToken": session_token,
                     "X-Goog-FieldMask": "id,location,formattedAddress,addressComponents,shortFormattedAddress",
                 },
+                params={"languageCode": lang},
             ) as response:
                 response.raise_for_status()
                 data = await response.json()
