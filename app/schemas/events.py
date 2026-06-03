@@ -53,6 +53,8 @@ class CreateEventRequest(BaseModel):
     date: datetime
     city: str = Field(min_length=1, max_length=100)
     address: str | None = Field(default=None, max_length=300)
+    lat: float | None = None
+    lng: float | None = None
     coverUrl: str | None = Field(default=None, max_length=500)
     bookTitle: str | None = Field(default=None, max_length=300)
     theme: str | None = Field(default=None, max_length=200)
