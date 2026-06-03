@@ -291,4 +291,4 @@ async def test_get_maps_key(async_client: AsyncClient) -> None:
         del app.dependency_overrides[get_settings_dep]
 
     assert response.status_code == 200
-    assert response.json() == {"mapsApiKey": "my-api-key-abc"}
+    assert response.json() == {"mapsApiKey": "my-api-key-abc", "mapsMapId": ""}

@@ -15,4 +15,4 @@ async def get_maps_key(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> dict[str, str]:
-    return {"mapsApiKey": settings.MAPS_API_KEY}
+    return {"mapsApiKey": settings.MAPS_API_KEY, "mapsMapId": settings.MAPS_MAP_ID}
