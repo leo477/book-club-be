@@ -248,6 +248,27 @@ async def test_place_details_returns_suggestion(async_client: AsyncClient) -> No
 
 
 @pytest.mark.asyncio
+async def test_place_details_forwards_language_code(async_client: AsyncClient) -> None:
+    settings = _settings_with_maps_key()
+    app.dependency_overrides[get_settings_dep] = lambda: settings
+
+    mock_ctx_session = _make_aiohttp_mock(FAKE_GOOGLE_PLACE_DETAILS_RESPONSE)
+    mock_session = mock_ctx_session.__aenter__.return_value
+
+    try:
+        with patch("aiohttp.ClientSession", return_value=mock_ctx_session):
+            response = await async_client.get(
+                "/api/v1/geocode/place-details"
+                "?place_id=ChIJBUVa4U7P0UARJ1P3MyBHQ7s&session_token=test-token-123&lang=en"
+            )
+    finally:
+        del app.dependency_overrides[get_settings_dep]
+
+    assert response.status_code == 200
+    assert mock_session.get.call_args.kwargs["params"] == {"languageCode": "en"}
+
+
+@pytest.mark.asyncio
 async def test_place_details_maps_not_configured(async_client: AsyncClient) -> None:
     response = await async_client.get("/api/v1/geocode/place-details?place_id=some-id&session_token=tok")
     assert response.status_code == 503
