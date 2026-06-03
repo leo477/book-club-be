@@ -41,12 +41,13 @@ def _sanitize_display_name(display_name: str) -> str:
 
 def _set_refresh_cookie(response: Response, token: str, settings: Settings) -> None:
     secure = settings.ENV == "production"
+    samesite: Literal["lax", "none"] = "none" if settings.ENV == "production" else "lax"
     response.set_cookie(
         key=_REFRESH_COOKIE,
         value=token,
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite=samesite,
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path=_AUTH_PREFIX,
     )
@@ -54,11 +55,12 @@ def _set_refresh_cookie(response: Response, token: str, settings: Settings) -> N
 
 def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
     secure = settings.ENV == "production"
+    samesite: Literal["lax", "none"] = "none" if settings.ENV == "production" else "lax"
     response.delete_cookie(
         key=_REFRESH_COOKIE,
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite=samesite,
         path=_AUTH_PREFIX,
     )
 
