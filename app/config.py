@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     GOOGLE_BOOKS_API_KEY: str = ""
     MAPS_API_KEY: str = ""
+    MAPS_MAP_ID: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
