@@ -409,6 +409,8 @@ async def create_event_service(
         date=body.date,
         city=body.city,
         address=body.address,
+        lat=body.lat,
+        lng=body.lng,
         theme=body.theme,
         tags=body.tags,
         duration_minutes=body.durationMinutes,
