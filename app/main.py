@@ -257,17 +257,6 @@ def create_app() -> FastAPI:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
-    @app.middleware("http")
-    async def security_headers_middleware(request: Request, call_next: Callable) -> Response:  # type: ignore[type-arg]
-        response = cast(Response, await call_next(request))
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-        if settings.ENV == "production":
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        return response
-
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
@@ -330,7 +319,6 @@ def create_app() -> FastAPI:
     app.include_router(config_router)
     app.include_router(upload_router)
     app.include_router(books_router)
-    app.include_router(config_router)
 
     return app
 

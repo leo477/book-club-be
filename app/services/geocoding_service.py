@@ -7,8 +7,6 @@ from urllib.parse import quote
 
 import aiohttp
 import structlog
-from fastapi import HTTPException, status
-from yarl import URL
 
 if TYPE_CHECKING:
     import redis.asyncio as aioredis
