@@ -69,6 +69,15 @@ async def test_list_events_returns_upcoming(async_client, register_user, auth_he
 
 
 @pytest.mark.asyncio
+async def test_create_event_with_lat_lng(async_client, register_user, auth_headers):
+    headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_coords@example.com")
+    club_id = await _create_club(async_client, headers, "CoordsClub")
+    event = await _create_event(async_client, headers, club_id, {**EVENT_PAYLOAD, "lat": 50.4501, "lng": 30.5234})
+    assert event["lat"] == 50.4501
+    assert event["lng"] == 30.5234
+
+
+@pytest.mark.asyncio
 async def test_list_events_filter_by_city(async_client, register_user, auth_headers):
     headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_city@example.com")
     club_id = await _create_club(async_client, headers, "CityClub")
