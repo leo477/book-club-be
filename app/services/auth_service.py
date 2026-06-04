@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 import jwt
 import structlog
@@ -7,7 +7,7 @@ from jwt import PyJWKClient
 from jwt.exceptions import PyJWTError
 from supabase import AsyncClient, acreate_client
 from supabase_auth.errors import AuthApiError
-from supabase_auth.types import AuthResponse
+from supabase_auth.types import AuthResponse, CodeExchangeParams, Provider
 
 from app.config import Settings
 
@@ -70,6 +70,40 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"},
+        ) from exc
+
+
+async def supabase_oauth_url(client: AsyncClient, provider: Provider, redirect_to: str) -> str:
+    """Return the provider authorize URL the browser should be redirected to.
+
+    The PKCE code_verifier generated here is stored on the cached AsyncClient and
+    consumed by supabase_exchange_code on the callback request.
+    """
+    try:
+        resp = await client.auth.sign_in_with_oauth({"provider": provider, "options": {"redirect_to": redirect_to}})
+    except AuthApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": str(exc), "code": "OAUTH_INIT_ERROR"},
+        ) from exc
+    if not resp.url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "OAuth provider unavailable", "code": "OAUTH_INIT_ERROR"},
+        )
+    return resp.url
+
+
+async def supabase_exchange_code(client: AsyncClient, code: str) -> AuthResponse:
+    # code_verifier/redirect_to are required by the TypedDict but are recovered
+    # from the client's PKCE storage at runtime, so only auth_code is supplied.
+    params = cast(CodeExchangeParams, {"auth_code": code})
+    try:
+        return await client.auth.exchange_code_for_session(params)
+    except AuthApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired authorization code", "code": "OAUTH_EXCHANGE_ERROR"},
         ) from exc
 
 
