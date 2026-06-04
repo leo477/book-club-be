@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 import jwt
 import structlog
@@ -7,7 +7,7 @@ from jwt import PyJWKClient
 from jwt.exceptions import PyJWTError
 from supabase import AsyncClient, acreate_client
 from supabase_auth.errors import AuthApiError
-from supabase_auth.types import AuthResponse
+from supabase_auth.types import AuthResponse, CodeExchangeParams, Provider
 
 from app.config import Settings
 
@@ -73,7 +73,7 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
         ) from exc
 
 
-async def supabase_oauth_url(client: AsyncClient, provider: str, redirect_to: str) -> str:
+async def supabase_oauth_url(client: AsyncClient, provider: Provider, redirect_to: str) -> str:
     """Return the provider authorize URL the browser should be redirected to.
 
     The PKCE code_verifier generated here is stored on the cached AsyncClient and
@@ -95,8 +95,11 @@ async def supabase_oauth_url(client: AsyncClient, provider: str, redirect_to: st
 
 
 async def supabase_exchange_code(client: AsyncClient, code: str) -> AuthResponse:
+    # code_verifier/redirect_to are required by the TypedDict but are recovered
+    # from the client's PKCE storage at runtime, so only auth_code is supplied.
+    params = cast(CodeExchangeParams, {"auth_code": code})
     try:
-        return await client.auth.exchange_code_for_session({"auth_code": code})
+        return await client.auth.exchange_code_for_session(params)
     except AuthApiError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
