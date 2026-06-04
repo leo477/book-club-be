@@ -3,18 +3,26 @@ import string
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from supabase_auth.types import User as SupabaseUser
 
 from app.config import Settings
 from app.dependencies import get_current_user, get_db_dep, get_settings_dep
 from app.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import AuthResponse, RefreshResponse, UserProfileResponse
-from app.services.auth_service import get_supabase_client, supabase_refresh, supabase_sign_in, supabase_sign_up
+from app.services.auth_service import (
+    get_supabase_client,
+    supabase_exchange_code,
+    supabase_oauth_url,
+    supabase_refresh,
+    supabase_sign_in,
+    supabase_sign_up,
+)
 
 _AUTH_PREFIX = "/api/v1/auth"
 router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
@@ -37,6 +45,40 @@ def _sanitize_display_name(display_name: str) -> str:
     if not display_name or _looks_like_email(display_name.strip()):
         return _random_display_name()
     return display_name
+
+
+async def _get_or_create_user(db: AsyncSession, sb_user: SupabaseUser, email: str) -> User:
+    """Find the local User for a Supabase auth user, creating one on first sign-in.
+
+    Display name and role are taken from Supabase user_metadata. OAuth providers
+    (e.g. Google) populate full_name/name rather than display_name, so all are tried.
+    """
+    supabase_user_id: uuid.UUID = uuid.UUID(str(sb_user.id))
+    result = await db.execute(select(User).where(User.supabase_user_id == supabase_user_id))
+    user = result.scalar_one_or_none()
+    if user is not None:
+        return user
+
+    metadata = sb_user.user_metadata or {}
+    raw_name = metadata.get("display_name") or metadata.get("full_name") or metadata.get("name") or email
+    display_name = _sanitize_display_name(str(raw_name))
+    role = str(metadata.get("role", "user"))
+    if role not in ("user", "organizer"):
+        role = "user"
+
+    user = User(
+        id=uuid.uuid4(),
+        supabase_user_id=supabase_user_id,
+        email=email,
+        display_name=display_name,
+        role=role,
+        socials_public=False,
+    )
+    db.add(user)
+    await db.flush()
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 def _set_refresh_cookie(response: Response, token: str, settings: Settings) -> None:
@@ -145,27 +187,7 @@ async def login(
             detail={"error": "Invalid credentials", "code": "INVALID_CREDENTIALS"},
         )
 
-    supabase_user_id: uuid.UUID = uuid.UUID(str(auth_response.user.id))
-
-    result = await db.execute(select(User).where(User.supabase_user_id == supabase_user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        sb_user = auth_response.user
-        raw_name = (sb_user.user_metadata or {}).get("display_name", sb_user.email or "")
-        display_name = _sanitize_display_name(str(raw_name))
-        role = (sb_user.user_metadata or {}).get("role", "user")
-        user = User(
-            id=uuid.uuid4(),
-            supabase_user_id=supabase_user_id,
-            email=str(email),
-            display_name=display_name,
-            role=str(role),
-            socials_public=False,
-        )
-        db.add(user)
-        await db.flush()
-        await db.commit()
-        await db.refresh(user)
+    user = await _get_or_create_user(db, auth_response.user, str(email))
 
     _set_refresh_cookie(response, auth_response.session.refresh_token, settings)
     return AuthResponse(
@@ -197,6 +219,42 @@ async def refresh_token(
     return RefreshResponse(
         accessToken=auth_response.session.access_token,
     )
+
+
+@router.get("/oauth/google")
+@limiter.limit("10/minute")
+async def oauth_google(
+    request: Request,  # slowapi requires this exact parameter name
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+) -> RedirectResponse:
+    client = await get_supabase_client(settings)
+    redirect_to = f"{settings.BACKEND_URL}{_AUTH_PREFIX}/callback"
+    url = await supabase_oauth_url(client, "google", redirect_to)
+    return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/callback")
+async def oauth_callback(
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    code: Annotated[str | None, Query()] = None,
+) -> RedirectResponse:
+    failure = RedirectResponse(f"{settings.FRONTEND_URL}/login?oauth=failed", status_code=status.HTTP_302_FOUND)
+    if not code:
+        return failure
+    client = await get_supabase_client(settings)
+    try:
+        auth_response = await supabase_exchange_code(client, code)
+    except HTTPException:
+        return failure
+    if auth_response.user is None or auth_response.session is None:
+        return failure
+
+    await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
+
+    redirect = RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback", status_code=status.HTTP_302_FOUND)
+    _set_refresh_cookie(redirect, auth_response.session.refresh_token, settings)
+    return redirect
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
