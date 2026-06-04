@@ -102,7 +102,9 @@ class _FakeSupabaseAuth:
         self._users[email] = ("", uid)
         return self._build_response(uid, email=email, metadata={"full_name": "OAuth User"})
 
-    def _build_response(self, uid: uuid.UUID, email: str = "test@example.com", metadata: dict | None = None) -> MagicMock:
+    def _build_response(
+        self, uid: uuid.UUID, email: str = "test@example.com", metadata: dict | None = None
+    ) -> MagicMock:
         mock_user = MagicMock()
         mock_user.id = uid
         mock_user.email = email

@@ -239,9 +239,7 @@ async def oauth_callback(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     code: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
-    failure = RedirectResponse(
-        f"{settings.FRONTEND_URL}/login?oauth=failed", status_code=status.HTTP_302_FOUND
-    )
+    failure = RedirectResponse(f"{settings.FRONTEND_URL}/login?oauth=failed", status_code=status.HTTP_302_FOUND)
     if not code:
         return failure
     client = await get_supabase_client(settings)
@@ -254,9 +252,7 @@ async def oauth_callback(
 
     await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
 
-    redirect = RedirectResponse(
-        f"{settings.FRONTEND_URL}/auth/callback", status_code=status.HTTP_302_FOUND
-    )
+    redirect = RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback", status_code=status.HTTP_302_FOUND)
     _set_refresh_cookie(redirect, auth_response.session.refresh_token, settings)
     return redirect
 

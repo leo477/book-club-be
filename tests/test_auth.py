@@ -8,9 +8,7 @@ from app.main import app
 @pytest_asyncio.fixture
 async def no_redirect_client(override_get_db):
     """Client that does not follow redirects, for asserting 302 Location/cookies."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False) as ac:
         yield ac
 
 

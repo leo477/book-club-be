@@ -80,9 +80,7 @@ async def supabase_oauth_url(client: AsyncClient, provider: str, redirect_to: st
     consumed by supabase_exchange_code on the callback request.
     """
     try:
-        resp = await client.auth.sign_in_with_oauth(
-            {"provider": provider, "options": {"redirect_to": redirect_to}}
-        )
+        resp = await client.auth.sign_in_with_oauth({"provider": provider, "options": {"redirect_to": redirect_to}})
     except AuthApiError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
