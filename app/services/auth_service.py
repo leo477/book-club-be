@@ -73,6 +73,39 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
         ) from exc
 
 
+async def supabase_oauth_url(client: AsyncClient, provider: str, redirect_to: str) -> str:
+    """Return the provider authorize URL the browser should be redirected to.
+
+    The PKCE code_verifier generated here is stored on the cached AsyncClient and
+    consumed by supabase_exchange_code on the callback request.
+    """
+    try:
+        resp = await client.auth.sign_in_with_oauth(
+            {"provider": provider, "options": {"redirect_to": redirect_to}}
+        )
+    except AuthApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": str(exc), "code": "OAUTH_INIT_ERROR"},
+        ) from exc
+    if not resp.url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "OAuth provider unavailable", "code": "OAUTH_INIT_ERROR"},
+        )
+    return resp.url
+
+
+async def supabase_exchange_code(client: AsyncClient, code: str) -> AuthResponse:
+    try:
+        return await client.auth.exchange_code_for_session({"auth_code": code})
+    except AuthApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired authorization code", "code": "OAUTH_EXCHANGE_ERROR"},
+        ) from exc
+
+
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
         if settings.SUPABASE_JWT_SECRET:

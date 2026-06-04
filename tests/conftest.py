@@ -73,7 +73,7 @@ class _FakeSupabaseAuth:
         password = credentials["password"]
         uid = uuid.uuid4()
         self._users[email] = (password, uid)
-        return self._build_response(uid)
+        return self._build_response(uid, email=email)
 
     async def sign_in_with_password(self, credentials: dict) -> MagicMock:
         email = credentials["email"]
@@ -81,7 +81,7 @@ class _FakeSupabaseAuth:
         entry = self._users.get(email)
         if entry is None or entry[0] != password:
             raise AuthApiError("Invalid login credentials", 400, "invalid_grant")
-        return self._build_response(entry[1])
+        return self._build_response(entry[1], email=email)
 
     async def refresh_session(self, refresh_token: str) -> MagicMock:
         if refresh_token != "fake-refresh-token":
@@ -89,9 +89,24 @@ class _FakeSupabaseAuth:
         uid = next(iter(self._users.values()))[1] if self._users else uuid.uuid4()
         return self._build_response(uid)
 
-    def _build_response(self, uid: uuid.UUID) -> MagicMock:
+    async def sign_in_with_oauth(self, params: dict) -> MagicMock:
+        resp = MagicMock()
+        resp.url = f"https://test.supabase.co/auth/v1/authorize?provider={params['provider']}"
+        return resp
+
+    async def exchange_code_for_session(self, params: dict) -> MagicMock:
+        if params.get("auth_code") != "good-code":
+            raise AuthApiError("Invalid authorization code", 400, "invalid_grant")
+        email = "oauth@example.com"
+        uid = uuid.uuid4()
+        self._users[email] = ("", uid)
+        return self._build_response(uid, email=email, metadata={"full_name": "OAuth User"})
+
+    def _build_response(self, uid: uuid.UUID, email: str = "test@example.com", metadata: dict | None = None) -> MagicMock:
         mock_user = MagicMock()
         mock_user.id = uid
+        mock_user.email = email
+        mock_user.user_metadata = metadata or {}
         mock_session = MagicMock()
         mock_session.access_token = _make_token(uid)
         mock_session.refresh_token = "fake-refresh-token"
