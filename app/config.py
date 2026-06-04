@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     ]
     CORS_ORIGIN_REGEX: str = r"^https://book-club-[a-z0-9-]+\.vercel\.app$"
     REDIS_URL: str = "redis://localhost:6379"
+    # Public origins used to build OAuth redirect targets. FRONTEND_URL is where
+    # the browser lands after login; BACKEND_URL is this API's public base URL.
+    FRONTEND_URL: str = "http://localhost:4200"
+    BACKEND_URL: str = "http://localhost:8000"
     PHOTON_URL: str = "https://photon.komoot.io"
     PHOTON_TIMEOUT: int = 8
     SENTRY_DSN: str = ""

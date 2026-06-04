@@ -1,4 +1,44 @@
 import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+from app.main import app
+
+
+@pytest_asyncio.fixture
+async def no_redirect_client(override_get_db):
+    """Client that does not follow redirects, for asserting 302 Location/cookies."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False) as ac:
+        yield ac
+
+
+@pytest.mark.asyncio
+async def test_oauth_google_redirects_to_provider(no_redirect_client):
+    resp = await no_redirect_client.get("/api/v1/auth/oauth/google")
+    assert resp.status_code == 302
+    assert "authorize?provider=google" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_missing_code(no_redirect_client):
+    resp = await no_redirect_client.get("/api/v1/auth/callback")
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/login?oauth=failed")
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_invalid_code(no_redirect_client):
+    resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "bad-code"})
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/login?oauth=failed")
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_success_sets_cookie_and_creates_user(no_redirect_client):
+    resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/auth/callback")
+    assert "refresh_token" in resp.cookies
 
 
 @pytest.mark.asyncio
