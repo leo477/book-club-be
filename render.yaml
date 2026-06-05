@@ -24,6 +24,10 @@ services:
         sync: false
       - key: SENTRY_DSN
         sync: false
+      - key: BACKEND_URL
+        value: https://book-club-be.onrender.com
+      - key: FRONTEND_URL
+        value: http://localhost:4200
 
   - type: cron
     name: keep-alive
