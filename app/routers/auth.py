@@ -4,7 +4,6 @@ import uuid
 from typing import Annotated, Literal
 
 import structlog
-
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import EmailStr
