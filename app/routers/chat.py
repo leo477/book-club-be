@@ -65,13 +65,18 @@ class ConnectionManager:
             still_connected = any(getattr(ws, "_user_id", None) == uid for ws in self.active_connections[room_id])
             if not still_connected:
                 self.room_presence[room_id].discard(uid)
+        # Drop empty room keys so they don't accumulate after everyone leaves.
+        if not self.active_connections[room_id]:
+            del self.active_connections[room_id]
+        if not self.room_presence[room_id]:
+            del self.room_presence[room_id]
 
     def get_presence_snapshot(self, room_id: str) -> list[dict[str, str]]:
         """Return current online users for the room as a list of presence payloads."""
-        return [{"userId": uid, "status": "online"} for uid in self.room_presence[room_id]]
+        return [{"userId": uid, "status": "online"} for uid in self.room_presence.get(room_id, set())]
 
     async def broadcast(self, room_id: str, message: dict[str, Any]) -> None:
-        for connection in self.active_connections[room_id].copy():
+        for connection in self.active_connections.get(room_id, []).copy():
             try:
                 await connection.send_json(message)
             except WebSocketDisconnect:

@@ -9,6 +9,18 @@ import httpx
 # and dict for single-item lookups — use Any to avoid a union cache type.
 CACHE: dict[str, tuple[Any, float]] = {}
 CACHE_TTL = 3600
+CACHE_MAX_SIZE = 1000
+
+
+def _cache_set(key: str, entry: tuple[Any, float]) -> None:
+    """Insert into CACHE with a bounded size: drop expired entries, then the oldest if still full."""
+    if len(CACHE) >= CACHE_MAX_SIZE:
+        now = time.time()
+        for k in [k for k, (_, exp) in CACHE.items() if exp <= now]:
+            del CACHE[k]
+        if len(CACHE) >= CACHE_MAX_SIZE:
+            del CACHE[next(iter(CACHE))]
+    CACHE[key] = entry
 
 _FIELDS = "items(id,volumeInfo(title,authors,description,imageLinks,publishedDate,publisher))"
 _BOOK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -51,7 +63,7 @@ async def search_books(query: str, limit: int = 5, api_key: str = "") -> list[di
 
     data: dict[str, Any] = resp.json()
     result: list[dict[str, Any]] = [_map_item(item) for item in data.get("items") or []]
-    CACHE[cache_key] = (result, now + CACHE_TTL)
+    _cache_set(cache_key, (result, now + CACHE_TTL))
     return result
 
 
@@ -81,5 +93,5 @@ async def get_book_by_id(book_id: str, api_key: str = "") -> dict[str, Any] | No
     if not item or "id" not in item:
         return None
     result = _map_item(item)
-    CACHE[cache_key] = (result, now + CACHE_TTL)
+    _cache_set(cache_key, (result, now + CACHE_TTL))
     return result

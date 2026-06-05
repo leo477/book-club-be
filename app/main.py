@@ -28,6 +28,7 @@ from app.routers.events import router as events_router
 from app.routers.geocode import router as geocode_router
 from app.routers.quizzes import router as quizzes_router
 from app.routers.randomizer import router as randomizer_router
+from app.routers.routes import router as routes_router
 from app.routers.upload import router as upload_router
 from app.routers.users import router as users_router
 
@@ -190,6 +191,7 @@ def create_app() -> FastAPI:
             {"name": "randomizer", "description": "Random member picker sessions"},
             {"name": "chat", "description": "Club chat rooms and messages"},
             {"name": "geocode", "description": "Photon/OSM geocoding autocomplete"},
+            {"name": "routes", "description": "Google Routes API walking-route proxy"},
             {"name": "health", "description": "Health check"},
         ],
         docs_url=None,
@@ -316,6 +318,7 @@ def create_app() -> FastAPI:
     app.include_router(randomizer_router)
     app.include_router(chat_router)
     app.include_router(geocode_router)
+    app.include_router(routes_router)
     app.include_router(config_router)
     app.include_router(upload_router)
     app.include_router(books_router)

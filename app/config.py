@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/bookclub"
-    SECRET_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ALLOWED_ORIGINS: list[str] = [
@@ -32,6 +31,7 @@ class Settings(BaseSettings):
 
     GOOGLE_BOOKS_API_KEY: str = ""
     MAPS_API_KEY: str = ""
+    MAPS_SERVER_API_KEY: str = ""
     MAPS_MAP_ID: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)

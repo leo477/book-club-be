@@ -41,6 +41,73 @@ async def test_oauth_callback_success_sets_cookie_and_creates_user(no_redirect_c
     assert "refresh_token" in resp.cookies
 
 
+_VALID_ORIGIN = "https://book-club-preview-abc123.vercel.app"
+
+
+def _fe_origin_cookie(resp) -> str | None:
+    for header in resp.headers.get_list("set-cookie"):
+        if header.startswith("fe_origin="):
+            return header.split("=", 1)[1].split(";", 1)[0].strip('"')
+    return None
+
+
+@pytest.mark.asyncio
+async def test_oauth_google_valid_origin_param_sets_cookie(no_redirect_client):
+    resp = await no_redirect_client.get("/api/v1/auth/oauth/google", params={"origin": _VALID_ORIGIN})
+    assert resp.status_code == 302
+    assert _fe_origin_cookie(resp) == _VALID_ORIGIN
+
+
+@pytest.mark.asyncio
+async def test_oauth_google_evil_origin_no_cookie(no_redirect_client):
+    resp = await no_redirect_client.get("/api/v1/auth/oauth/google", params={"origin": "https://evil.com"})
+    assert resp.status_code == 302
+    assert _fe_origin_cookie(resp) is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_google_resolves_origin_from_referer(no_redirect_client):
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/oauth/google", headers={"Referer": f"{_VALID_ORIGIN}/login"}
+    )
+    assert resp.status_code == 302
+    assert _fe_origin_cookie(resp) == _VALID_ORIGIN
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_success_redirects_to_resolved_origin(no_redirect_client):
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback",
+        params={"code": "good-code"},
+        cookies={"fe_origin": _VALID_ORIGIN},
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"{_VALID_ORIGIN}/auth/callback"
+    assert "refresh_token" in resp.cookies
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_failure_uses_resolved_origin(no_redirect_client):
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback",
+        params={"code": "bad-code"},
+        cookies={"fe_origin": _VALID_ORIGIN},
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"{_VALID_ORIGIN}/login?oauth=failed"
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_evil_cookie_falls_back_to_frontend_url(no_redirect_client):
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback",
+        params={"code": "good-code"},
+        cookies={"fe_origin": "https://evil.com"},
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "http://localhost:4200/auth/callback"
+
+
 @pytest.mark.asyncio
 async def test_register_success(async_client, register_user):
     resp = await register_user()

@@ -1,7 +1,9 @@
+import re
 import secrets
 import string
 import uuid
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 import structlog
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Query, Request, Response, status
@@ -31,7 +33,25 @@ _AUTH_PREFIX = "/api/v1/auth"
 router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 
 _REFRESH_COOKIE = "refresh_token"
+_FE_ORIGIN_COOKIE = "fe_origin"
 _DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
+
+
+def _resolve_frontend_origin(candidate: str | None, settings: Settings) -> str | None:
+    """Validate a candidate frontend origin against the allowlist to prevent open redirects."""
+    if not candidate:
+        return None
+    parsed = urlparse(candidate)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    if (
+        re.fullmatch(settings.CORS_ORIGIN_REGEX, origin)
+        or origin == settings.FRONTEND_URL
+        or origin == "http://localhost:4200"
+    ):
+        return origin
+    return None
 
 
 def _looks_like_email(text: str) -> bool:
@@ -229,36 +249,58 @@ async def refresh_token(
 async def oauth_google(
     request: Request,  # slowapi requires this exact parameter name
     settings: Annotated[Settings, Depends(get_settings_dep)],
+    origin: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
     client = await get_supabase_client(settings)
     redirect_to = f"{settings.BACKEND_URL}{_AUTH_PREFIX}/callback"
     url = await supabase_oauth_url(client, "google", redirect_to)
-    return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    response = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+
+    candidate = origin or request.headers.get("referer")
+    fe_origin = _resolve_frontend_origin(candidate, settings)
+    if fe_origin:
+        response.set_cookie(
+            key=_FE_ORIGIN_COOKIE,
+            value=fe_origin,
+            httponly=True,
+            secure=settings.ENV == "production",
+            samesite="lax",
+            max_age=600,
+            path=_AUTH_PREFIX,
+        )
+    return response
 
 
 @router.get("/callback")
 async def oauth_callback(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings_dep)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     code: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
-    failure = RedirectResponse(f"{settings.FRONTEND_URL}/login?oauth=failed", status_code=status.HTTP_302_FOUND)
+    frontend = _resolve_frontend_origin(request.cookies.get(_FE_ORIGIN_COOKIE), settings) or settings.FRONTEND_URL
+
+    def _redirect(path: str) -> RedirectResponse:
+        response = RedirectResponse(f"{frontend}{path}", status_code=status.HTTP_302_FOUND)
+        response.delete_cookie(_FE_ORIGIN_COOKIE, path=_AUTH_PREFIX)
+        return response
+
     if not code:
-        return failure
+        return _redirect("/login?oauth=failed")
     client = await get_supabase_client(settings)
     try:
         auth_response = await supabase_exchange_code(client, code)
     except HTTPException:
-        return failure
+        return _redirect("/login?oauth=failed")
     except Exception:
         logger.exception("Unexpected error during OAuth code exchange")
-        return failure
+        return _redirect("/login?oauth=failed")
     if auth_response.user is None or auth_response.session is None:
-        return failure
+        return _redirect("/login?oauth=failed")
 
     await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
 
-    redirect = RedirectResponse(f"{settings.FRONTEND_URL}/auth/callback", status_code=status.HTTP_302_FOUND)
+    redirect = _redirect("/auth/callback")
     _set_refresh_cookie(redirect, auth_response.session.refresh_token, settings)
     return redirect
 

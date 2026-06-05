@@ -57,7 +57,9 @@ async def list_events(
         Event.status.in_(["scheduled", "active"]),
     ]
     if city:
-        filters.append(Event.city.ilike(f"%{city}%"))
+        # MN-10: escape LIKE metacharacters to prevent injection via % and _
+        escaped_city = city.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        filters.append(Event.city.ilike(f"%{escaped_city}%", escape="\\"))
     if club_id:
         filters.append(Event.club_id == club_id)
     current_user_id = current_user.id if current_user else None

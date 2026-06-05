@@ -27,6 +27,7 @@ _STORES = [
 ]
 
 _CACHE_TTL = 3600
+_CACHE_MAX_SIZE = 1000
 
 
 class BookSuggestion(BaseModel):
@@ -113,5 +114,10 @@ async def get_book_stores(
         results = await asyncio.gather(*[_check_store(client, s, title) for s in _STORES])
 
     result_list = list(results)
+    if len(_cache) >= _CACHE_MAX_SIZE:
+        for k in [k for k, (_, exp) in _cache.items() if exp <= now]:
+            del _cache[k]
+        if len(_cache) >= _CACHE_MAX_SIZE:
+            del _cache[next(iter(_cache))]
     _cache[title] = (result_list, now + _CACHE_TTL)
     return result_list

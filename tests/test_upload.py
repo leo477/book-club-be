@@ -1,6 +1,6 @@
 import io
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,8 +11,8 @@ import pytest
 
 def _make_mock_supabase(public_url: str = "https://cdn.example.com/covers/test.jpg") -> MagicMock:
     mock_supabase = MagicMock()
-    mock_supabase.storage.from_.return_value.upload.return_value = None
-    mock_supabase.storage.from_.return_value.get_public_url.return_value = public_url
+    mock_supabase.storage.from_.return_value.upload = AsyncMock(return_value=None)
+    mock_supabase.storage.from_.return_value.get_public_url = AsyncMock(return_value=public_url)
     return mock_supabase
 
 
@@ -26,10 +26,10 @@ def _make_mock_settings() -> MagicMock:
 
 @contextmanager
 def _supabase_patches(mock_supabase: MagicMock):
-    """Patch both get_settings (so 503 branch is skipped) and supabase.create_client."""
+    """Patch both get_settings (so 503 branch is skipped) and the async Supabase client factory."""
     with (
         patch("app.routers.upload.get_settings", return_value=_make_mock_settings()),
-        patch("supabase.create_client", return_value=mock_supabase),
+        patch("app.routers.upload.get_supabase_client", AsyncMock(return_value=mock_supabase)),
     ):
         yield
 

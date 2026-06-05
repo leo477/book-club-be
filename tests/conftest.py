@@ -134,7 +134,6 @@ def _make_test_settings() -> Settings:
     return Settings.model_construct(
         ENV="test",
         DATABASE_URL=TEST_DATABASE_URL,
-        SECRET_KEY="",
         ACCESS_TOKEN_EXPIRE_MINUTES=30,
         REFRESH_TOKEN_EXPIRE_DAYS=7,
         ALLOWED_ORIGINS=["http://localhost:4200"],
