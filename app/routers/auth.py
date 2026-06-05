@@ -278,7 +278,9 @@ async def oauth_callback(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     code: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
-    frontend = _resolve_frontend_origin(request.cookies.get(_FE_ORIGIN_COOKIE), settings) or settings.FRONTEND_URL
+    candidate_frontend = _resolve_frontend_origin(request.cookies.get(_FE_ORIGIN_COOKIE), settings)
+    allowed_frontends = {settings.FRONTEND_URL, "http://localhost:4200"}
+    frontend = candidate_frontend if candidate_frontend in allowed_frontends else settings.FRONTEND_URL
 
     def _redirect(path: str) -> RedirectResponse:
         response = RedirectResponse(f"{frontend}{path}", status_code=status.HTTP_302_FOUND)
