@@ -1,6 +1,7 @@
 import re
 import secrets
 import string
+import time
 import uuid
 from typing import Annotated, Literal
 from urllib.parse import urlparse
@@ -35,6 +36,8 @@ router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 _REFRESH_COOKIE = "refresh_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
 _DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
+_FE_ORIGIN_STATE_TTL_SECONDS = 600
+_FE_ORIGIN_STATE: dict[str, tuple[str, float]] = {}
 
 
 def _resolve_frontend_origin(candidate: str | None, settings: Settings) -> str | None:
@@ -259,13 +262,20 @@ async def oauth_google(
     candidate = origin or request.headers.get("referer")
     fe_origin = _resolve_frontend_origin(candidate, settings)
     if fe_origin:
+        now = time.time()
+        for token, (_, expires_at) in list(_FE_ORIGIN_STATE.items()):
+            if expires_at <= now:
+                del _FE_ORIGIN_STATE[token]
+
+        state_token = secrets.token_urlsafe(32)
+        _FE_ORIGIN_STATE[state_token] = (fe_origin, now + _FE_ORIGIN_STATE_TTL_SECONDS)
         response.set_cookie(
             key=_FE_ORIGIN_COOKIE,
-            value=fe_origin,
+            value=state_token,
             httponly=True,
             secure=settings.ENV == "production",
             samesite="lax",
-            max_age=600,
+            max_age=_FE_ORIGIN_STATE_TTL_SECONDS,
             path=_AUTH_PREFIX,
         )
     return response
