@@ -3,6 +3,7 @@ import string
 import uuid
 from typing import Annotated, Literal
 
+import structlog
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import EmailStr
@@ -23,6 +24,8 @@ from app.services.auth_service import (
     supabase_sign_in,
     supabase_sign_up,
 )
+
+logger = structlog.get_logger()
 
 _AUTH_PREFIX = "/api/v1/auth"
 router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
@@ -246,6 +249,9 @@ async def oauth_callback(
     try:
         auth_response = await supabase_exchange_code(client, code)
     except HTTPException:
+        return failure
+    except Exception:
+        logger.exception("Unexpected error during OAuth code exchange")
         return failure
     if auth_response.user is None or auth_response.session is None:
         return failure
