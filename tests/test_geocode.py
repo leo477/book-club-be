@@ -164,7 +164,6 @@ def _settings_with_maps_key(key: str = "test-maps-api-key") -> Settings:
     return Settings.model_construct(
         ENV="test",
         DATABASE_URL="sqlite+aiosqlite:///:memory:",
-        SECRET_KEY="",
         ACCESS_TOKEN_EXPIRE_MINUTES=30,
         REFRESH_TOKEN_EXPIRE_DAYS=7,
         ALLOWED_ORIGINS=["http://localhost:4200"],
@@ -174,6 +173,7 @@ def _settings_with_maps_key(key: str = "test-maps-api-key") -> Settings:
         SUPABASE_URL="https://test.supabase.co",
         SUPABASE_ANON_KEY="test-anon-key",
         MAPS_API_KEY=key,
+        MAPS_SERVER_API_KEY=key,
     )
 
 

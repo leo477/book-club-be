@@ -24,6 +24,10 @@ services:
         sync: false
       - key: SENTRY_DSN
         sync: false
+      - key: MAPS_API_KEY
+        sync: false
+      - key: MAPS_SERVER_API_KEY
+        sync: false
       - key: BACKEND_URL
         value: https://book-club-be.onrender.com
       - key: FRONTEND_URL

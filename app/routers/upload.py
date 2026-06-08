@@ -2,11 +2,13 @@ import uuid
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 
 from app.config import get_settings
 from app.dependencies import get_current_user
+from app.limiter import limiter
 from app.models.user import User
+from app.services.auth_service import get_supabase_client
 
 router = APIRouter(prefix="/api/v1/upload", tags=["upload"])
 logger = structlog.get_logger(__name__)
@@ -17,7 +19,9 @@ _MAX_FILE_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
 
 
 @router.post("/cover", responses={503: {"description": "Storage not configured"}})
+@limiter.limit("10/minute")
 async def upload_cover(
+    request: Request,  # slowapi requires this exact parameter name
     file: Annotated[UploadFile, File()],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, str]:
@@ -41,14 +45,14 @@ async def upload_cover(
             detail={"error": "File too large. Maximum size is 5 MB", "code": "FILE_TOO_LARGE"},
         )
 
-    from supabase import create_client
-
     try:
-        supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+        supabase = await get_supabase_client(settings)
         ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg"
         path = f"covers/{uuid.uuid4()}.{ext}"
-        supabase.storage.from_("covers").upload(path, contents, {"content-type": file.content_type or "image/jpeg"})
-        url: str = supabase.storage.from_("covers").get_public_url(path)
+        await supabase.storage.from_("covers").upload(
+            path, contents, {"content-type": file.content_type or "image/jpeg"}
+        )
+        url: str = await supabase.storage.from_("covers").get_public_url(path)
     except Exception as exc:
         logger.exception("Supabase storage error", exc_info=True)
         raise HTTPException(

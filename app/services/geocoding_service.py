@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import aiohttp
 import structlog
+from fastapi import HTTPException, status
 
 if TYPE_CHECKING:
     import redis.asyncio as aioredis
@@ -16,7 +17,7 @@ from app.schemas.geocode import GeocodeSuggestion
 
 logger = structlog.get_logger(__name__)
 
-_PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+_PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-:+]{1,500}$")
 
 
 async def photon_autocomplete(
@@ -31,8 +32,6 @@ async def photon_autocomplete(
     Pass a ``redis`` client (from ``get_redis`` dependency) to enable caching.
     The caller is responsible for managing the Redis connection lifecycle.
     """
-    from fastapi import HTTPException, status
-
     cache_key = f"geocode:{q.strip().lower()}:{lang}:{limit}"
 
     if redis is not None:
@@ -87,14 +86,12 @@ async def photon_autocomplete(
 async def google_places_autocomplete(
     q: str, lang: str, limit: int, session_token: str, settings: Settings
 ) -> list[GeocodeSuggestion]:
-    from fastapi import HTTPException, status
-
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 "https://places.googleapis.com/v1/places:autocomplete",
                 headers={
-                    "X-Goog-Api-Key": settings.MAPS_API_KEY,
+                    "X-Goog-Api-Key": settings.MAPS_SERVER_API_KEY,
                     "X-Goog-SessionToken": session_token,
                     "Content-Type": "application/json",
                 },
@@ -123,14 +120,9 @@ async def google_places_autocomplete(
     return suggestions
 
 
-_PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-:+]{1,500}$")
-
-
 async def google_place_details(
     place_id: str, session_token: str, settings: Settings, lang: str = "uk"
 ) -> GeocodeSuggestion:
-    from fastapi import HTTPException, status
-
     if not _PLACE_ID_RE.match(place_id):
         raise HTTPException(status_code=400, detail="Invalid place_id format")
 
@@ -139,7 +131,7 @@ async def google_place_details(
             async with session.get(
                 f"https://places.googleapis.com/v1/places/{quote(place_id, safe='')}",
                 headers={
-                    "X-Goog-Api-Key": settings.MAPS_API_KEY,
+                    "X-Goog-Api-Key": settings.MAPS_SERVER_API_KEY,
                     "X-Goog-SessionToken": session_token,
                     "X-Goog-FieldMask": "id,location,formattedAddress,addressComponents,shortFormattedAddress",
                 },

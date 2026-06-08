@@ -1,3 +1,4 @@
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -499,3 +500,57 @@ async def test_get_book_by_id_happy_path_and_caches():
         result2 = await gbs_module.get_book_by_id("abc123")
         patched.assert_not_called()
     assert result2 == result
+
+
+def test_google_books_cache_set_evicts_oldest_when_full(monkeypatch):
+    gbs_module.CACHE.clear()
+    monkeypatch.setattr(gbs_module, "CACHE_MAX_SIZE", 3)
+    future = time.time() + 1000
+    for i in range(3):
+        gbs_module.CACHE[f"k{i}"] = ([], future)
+
+    gbs_module._cache_set("new", ([], future))
+
+    assert "k0" not in gbs_module.CACHE  # oldest evicted
+    assert "new" in gbs_module.CACHE
+    assert len(gbs_module.CACHE) == 3
+
+
+def test_google_books_cache_set_drops_expired_when_full(monkeypatch):
+    gbs_module.CACHE.clear()
+    monkeypatch.setattr(gbs_module, "CACHE_MAX_SIZE", 3)
+    future = time.time() + 1000
+    past = time.time() - 1000
+    gbs_module.CACHE["expired1"] = ([], past)
+    gbs_module.CACHE["expired2"] = ([], past)
+    gbs_module.CACHE["fresh"] = ([], future)
+
+    gbs_module._cache_set("new", ([], future))
+
+    assert "expired1" not in gbs_module.CACHE
+    assert "expired2" not in gbs_module.CACHE
+    assert "fresh" in gbs_module.CACHE
+    assert "new" in gbs_module.CACHE
+
+
+@pytest.mark.asyncio
+async def test_get_stores_cache_eviction(async_client, register_user, auth_headers, monkeypatch):
+    await register_user(email="books_evict@example.com")
+    headers = await auth_headers(email="books_evict@example.com")
+
+    monkeypatch.setattr(books_module, "_CACHE_MAX_SIZE", 2)
+    past = time.time() - 1000
+    future = time.time() + 1000
+    # 3 entries (> max): the expired one is dropped first, then the oldest fresh one.
+    books_module._cache["expired"] = ([], past)
+    books_module._cache["fresh1"] = ([], future)
+    books_module._cache["fresh2"] = ([], future)
+
+    mock_client = _make_mock_client(_make_http_response(200, "book found here"))
+    with patch("app.routers.books.httpx.AsyncClient", return_value=mock_client):
+        resp = await async_client.get("/api/v1/books/stores?title=EvictBook", headers=headers)
+
+    assert resp.status_code == 200
+    assert "expired" not in books_module._cache  # expired entry dropped
+    assert "fresh1" not in books_module._cache  # oldest fresh entry evicted
+    assert "EvictBook" in books_module._cache
