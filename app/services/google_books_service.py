@@ -22,6 +22,7 @@ def _cache_set(key: str, entry: tuple[Any, float]) -> None:
             del CACHE[next(iter(CACHE))]
     CACHE[key] = entry
 
+
 _FIELDS = "items(id,volumeInfo(title,authors,description,imageLinks,publishedDate,publisher))"
 _BOOK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 

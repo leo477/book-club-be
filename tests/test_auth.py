@@ -67,9 +67,7 @@ async def test_oauth_google_evil_origin_no_cookie(no_redirect_client):
 
 @pytest.mark.asyncio
 async def test_oauth_google_resolves_origin_from_referer(no_redirect_client):
-    resp = await no_redirect_client.get(
-        "/api/v1/auth/oauth/google", headers={"Referer": f"{_VALID_ORIGIN}/login"}
-    )
+    resp = await no_redirect_client.get("/api/v1/auth/oauth/google", headers={"Referer": f"{_VALID_ORIGIN}/login"})
     assert resp.status_code == 302
     assert _fe_origin_cookie(resp) == _VALID_ORIGIN
 
