@@ -44,11 +44,21 @@ def _resolve_frontend_origin(candidate: str | None, settings: Settings) -> str |
     parsed = urlparse(candidate)
     if not parsed.scheme or not parsed.netloc:
         return None
+    if parsed.scheme not in {"http", "https"}:
+        return None
+
     origin = f"{parsed.scheme}://{parsed.netloc}"
+    trusted_frontend = urlparse(settings.FRONTEND_URL)
+    trusted_frontend_origin = (
+        f"{trusted_frontend.scheme}://{trusted_frontend.netloc}"
+        if trusted_frontend.scheme and trusted_frontend.netloc
+        else settings.FRONTEND_URL
+    )
+
     if (
-        re.fullmatch(settings.CORS_ORIGIN_REGEX, origin)
-        or origin == settings.FRONTEND_URL
+        origin == trusted_frontend_origin
         or origin == "http://localhost:4200"
+        or re.fullmatch(settings.CORS_ORIGIN_REGEX, origin)
     ):
         return origin
     return None
