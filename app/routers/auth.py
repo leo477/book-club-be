@@ -54,6 +54,17 @@ def _resolve_frontend_origin(candidate: str | None, settings: Settings) -> str |
     return None
 
 
+def _canonical_frontend_origin(validated_origin: str | None, settings: Settings) -> str | None:
+    """Map validated origins to trusted canonical values before writing to cookies."""
+    if not validated_origin:
+        return None
+    if validated_origin == "http://localhost:4200":
+        return "http://localhost:4200"
+    if validated_origin == settings.FRONTEND_URL:
+        return settings.FRONTEND_URL
+    return None
+
+
 def _looks_like_email(text: str) -> bool:
     local, sep, domain = text.partition("@")
     return bool(sep and local and "." in domain)
@@ -258,13 +269,11 @@ async def oauth_google(
 
     candidate = origin or request.headers.get("referer")
     fe_origin = _resolve_frontend_origin(candidate, settings)
-    if fe_origin:
-        # fe_origin is not raw user input: _resolve_frontend_origin only returns a
-        # value that matched the CORS allowlist (regex + known URLs), and the callback
-        # re-validates it against allowed_frontends before use. CodeQL false positive.
+    canonical_fe_origin = _canonical_frontend_origin(fe_origin, settings)
+    if canonical_fe_origin:
         response.set_cookie(
             key=_FE_ORIGIN_COOKIE,
-            value=fe_origin,
+            value=canonical_fe_origin,
             httponly=True,
             secure=settings.ENV == "production",
             samesite="lax",
