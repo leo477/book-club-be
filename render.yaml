@@ -31,7 +31,7 @@ services:
       - key: BACKEND_URL
         value: https://book-club-be.onrender.com
       - key: FRONTEND_URL
-        value: http://localhost:4200
+        value: https://book-club-fe.vercel.app
 
   - type: cron
     name: keep-alive

@@ -95,6 +95,15 @@ _API_DESCRIPTION = (
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
+
+    # Fail fast on misconfigured public URLs: in production these must not point at
+    # localhost, otherwise OAuth builds an unreachable redirect_to (browser lands on
+    # http://localhost:8000/.../callback). See app/routers/auth.py:oauth_google.
+    if settings.ENV == "production":
+        for name in ("BACKEND_URL", "FRONTEND_URL"):
+            if "localhost" in getattr(settings, name):
+                raise RuntimeError(f"{name} must be a public URL in production, got {getattr(settings, name)!r}")
+
     if settings.SENTRY_DSN:
         sentry_sdk.init(
             dsn=settings.SENTRY_DSN,
