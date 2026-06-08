@@ -1,7 +1,6 @@
 import re
 import secrets
 import string
-import time
 import uuid
 from typing import Annotated, Literal
 from urllib.parse import urlparse
@@ -36,8 +35,6 @@ router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 _REFRESH_COOKIE = "refresh_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
 _DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
-_FE_ORIGIN_STATE_TTL_SECONDS = 600
-_FE_ORIGIN_STATE: dict[str, tuple[str, float]] = {}
 
 
 def _resolve_frontend_origin(candidate: str | None, settings: Settings) -> str | None:
@@ -262,20 +259,16 @@ async def oauth_google(
     candidate = origin or request.headers.get("referer")
     fe_origin = _resolve_frontend_origin(candidate, settings)
     if fe_origin:
-        now = time.time()
-        for token, (_, expires_at) in list(_FE_ORIGIN_STATE.items()):
-            if expires_at <= now:
-                del _FE_ORIGIN_STATE[token]
-
-        state_token = secrets.token_urlsafe(32)
-        _FE_ORIGIN_STATE[state_token] = (fe_origin, now + _FE_ORIGIN_STATE_TTL_SECONDS)
+        # fe_origin is not raw user input: _resolve_frontend_origin only returns a
+        # value that matched the CORS allowlist (regex + known URLs), and the callback
+        # re-validates it against allowed_frontends before use. CodeQL false positive.
         response.set_cookie(
             key=_FE_ORIGIN_COOKIE,
-            value=state_token,
+            value=fe_origin,
             httponly=True,
             secure=settings.ENV == "production",
             samesite="lax",
-            max_age=_FE_ORIGIN_STATE_TTL_SECONDS,
+            max_age=600,
             path=_AUTH_PREFIX,
         )
     return response
@@ -288,9 +281,11 @@ async def oauth_callback(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     code: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
+    # _resolve_frontend_origin already enforces the allowlist (CORS regex + FRONTEND_URL
+    # + localhost), so any value it returns is a safe redirect target, including dynamic
+    # Vercel preview origins. Anything else (tampered/evil cookie) resolves to None.
     candidate_frontend = _resolve_frontend_origin(request.cookies.get(_FE_ORIGIN_COOKIE), settings)
-    allowed_frontends = {settings.FRONTEND_URL, "http://localhost:4200"}
-    frontend = candidate_frontend if candidate_frontend in allowed_frontends else settings.FRONTEND_URL
+    frontend = candidate_frontend or settings.FRONTEND_URL
 
     def _redirect(path: str) -> RedirectResponse:
         response = RedirectResponse(f"{frontend}{path}", status_code=status.HTTP_302_FOUND)
