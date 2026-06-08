@@ -211,3 +211,26 @@ async def test_refresh_success(async_client, register_user):
     resp = await async_client.post("/api/v1/auth/refresh", cookies={"refresh_token": "fake-refresh-token"})
     assert resp.status_code == 200
     assert "accessToken" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_unexpected_exchange_error_redirects_failed(no_redirect_client):
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.routers.auth.supabase_exchange_code", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/login?oauth=failed")
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_missing_user_redirects_failed(no_redirect_client):
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    empty = MagicMock()
+    empty.user = None
+    empty.session = None
+    with patch("app.routers.auth.supabase_exchange_code", new=AsyncMock(return_value=empty)):
+        resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/login?oauth=failed")
