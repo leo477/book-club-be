@@ -34,6 +34,7 @@ router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 
 _REFRESH_COOKIE = "refresh_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
+_OAUTH_FAILED_PATH = "/login?oauth=failed"
 _DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
 
 
@@ -293,17 +294,17 @@ async def oauth_callback(
         return response
 
     if not code:
-        return _redirect("/login?oauth=failed")
+        return _redirect(_OAUTH_FAILED_PATH)
     client = await get_supabase_client(settings)
     try:
         auth_response = await supabase_exchange_code(client, code)
     except HTTPException:
-        return _redirect("/login?oauth=failed")
+        return _redirect(_OAUTH_FAILED_PATH)
     except Exception:
         logger.exception("Unexpected error during OAuth code exchange")
-        return _redirect("/login?oauth=failed")
+        return _redirect(_OAUTH_FAILED_PATH)
     if auth_response.user is None or auth_response.session is None:
-        return _redirect("/login?oauth=failed")
+        return _redirect(_OAUTH_FAILED_PATH)
 
     await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
 
