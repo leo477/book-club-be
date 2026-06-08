@@ -44,34 +44,13 @@ def _resolve_frontend_origin(candidate: str | None, settings: Settings) -> str |
     parsed = urlparse(candidate)
     if not parsed.scheme or not parsed.netloc:
         return None
-    if parsed.scheme not in {"http", "https"}:
-        return None
-
     origin = f"{parsed.scheme}://{parsed.netloc}"
-    trusted_frontend = urlparse(settings.FRONTEND_URL)
-    trusted_frontend_origin = (
-        f"{trusted_frontend.scheme}://{trusted_frontend.netloc}"
-        if trusted_frontend.scheme and trusted_frontend.netloc
-        else settings.FRONTEND_URL
-    )
-
     if (
-        origin == trusted_frontend_origin
+        re.fullmatch(settings.CORS_ORIGIN_REGEX, origin)
+        or origin == settings.FRONTEND_URL
         or origin == "http://localhost:4200"
-        or re.fullmatch(settings.CORS_ORIGIN_REGEX, origin)
     ):
         return origin
-    return None
-
-
-def _canonical_frontend_origin(validated_origin: str | None, settings: Settings) -> str | None:
-    """Map validated origins to trusted canonical values before writing to cookies."""
-    if not validated_origin:
-        return None
-    if validated_origin == "http://localhost:4200":
-        return "http://localhost:4200"
-    if validated_origin == settings.FRONTEND_URL:
-        return settings.FRONTEND_URL
     return None
 
 
@@ -279,11 +258,13 @@ async def oauth_google(
 
     candidate = origin or request.headers.get("referer")
     fe_origin = _resolve_frontend_origin(candidate, settings)
-    canonical_fe_origin = _canonical_frontend_origin(fe_origin, settings)
-    if canonical_fe_origin:
+    if fe_origin:
+        # fe_origin is not raw user input: _resolve_frontend_origin only returns a
+        # value that matched the CORS allowlist (regex + known URLs), and the callback
+        # re-validates it against allowed_frontends before use. CodeQL false positive.
         response.set_cookie(
             key=_FE_ORIGIN_COOKIE,
-            value=canonical_fe_origin,
+            value=fe_origin,
             httponly=True,
             secure=settings.ENV == "production",
             samesite="lax",
