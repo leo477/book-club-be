@@ -114,6 +114,7 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
                 token,
                 settings.SUPABASE_JWT_SECRET,
                 algorithms=["HS256"],
+                # Supabase access tokens carry aud="authenticated" (or omit aud); we don't gate on it.
                 options={"verify_aud": False},
             )
         else:
@@ -124,6 +125,7 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
                 token,
                 signing_key.key,
                 algorithms=[signing_key.algorithm_name],
+                # Supabase access tokens carry aud="authenticated" (or omit aud); we don't gate on it.
                 options={"verify_aud": False},
             )
         return payload

@@ -23,7 +23,7 @@ async def autocomplete(
     limit: Annotated[int, Query(ge=1, le=10)] = 5,
     session_token: str | None = None,
 ) -> list[GeocodeSuggestion]:
-    if settings.MAPS_API_KEY and session_token:
+    if settings.MAPS_SERVER_API_KEY and session_token:
         return await google_places_autocomplete(q, lang, limit, session_token, settings)
     return await photon_autocomplete(q, lang, limit, settings, redis=redis)
 
@@ -37,6 +37,6 @@ async def place_details(
     session_token: Annotated[str, Query(min_length=1, max_length=200)],
     lang: str = "uk",
 ) -> GeocodeSuggestion:
-    if not settings.MAPS_API_KEY:
+    if not settings.MAPS_SERVER_API_KEY:
         raise HTTPException(status_code=503, detail="Maps API not configured")
     return await google_place_details(place_id, session_token, settings, lang)
