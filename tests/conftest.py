@@ -279,9 +279,7 @@ async def make_member(async_client, test_engine):
         me = await async_client.get("/api/v1/users/me", headers=headers)
         user_id = _uuid.UUID(me.json()["id"])
         async with TestSessionLocal() as session:
-            session.add(
-                ClubMember(id=_uuid.uuid4(), club_id=_uuid.UUID(str(club_id)), user_id=user_id, role=role)
-            )
+            session.add(ClubMember(id=_uuid.uuid4(), club_id=_uuid.UUID(str(club_id)), user_id=user_id, role=role))
             await session.commit()
         return str(user_id)
 

@@ -48,9 +48,7 @@ async def test_manual_join_creates_pending_request(async_client, register_user, 
 
 @pytest.mark.asyncio
 async def test_duplicate_join_returns_already_requested(async_client, register_user, auth_headers):
-    _, club_id = await _organizer_with_club(
-        async_client, register_user, auth_headers, "jr_org2@example.com", "JRClub2"
-    )
+    _, club_id = await _organizer_with_club(async_client, register_user, auth_headers, "jr_org2@example.com", "JRClub2")
     user_headers, _ = await _member_user(async_client, register_user, auth_headers, "jr_user2@example.com")
 
     first = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
@@ -63,9 +61,7 @@ async def test_duplicate_join_returns_already_requested(async_client, register_u
 
 @pytest.mark.asyncio
 async def test_join_as_member_returns_409(async_client, register_user, auth_headers, make_member):
-    _, club_id = await _organizer_with_club(
-        async_client, register_user, auth_headers, "jr_org3@example.com", "JRClub3"
-    )
+    _, club_id = await _organizer_with_club(async_client, register_user, auth_headers, "jr_org3@example.com", "JRClub3")
     user_headers, _ = await _member_user(async_client, register_user, auth_headers, "jr_user3@example.com")
     await make_member(club_id, user_headers)
 
@@ -113,9 +109,7 @@ async def test_organizer_lists_join_requests(async_client, register_user, auth_h
 
 @pytest.mark.asyncio
 async def test_non_organizer_cannot_list_join_requests(async_client, register_user, auth_headers):
-    _, club_id = await _organizer_with_club(
-        async_client, register_user, auth_headers, "jr_org6@example.com", "JRClub6"
-    )
+    _, club_id = await _organizer_with_club(async_client, register_user, auth_headers, "jr_org6@example.com", "JRClub6")
     user_headers, _ = await _member_user(async_client, register_user, auth_headers, "jr_user6@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
@@ -131,9 +125,7 @@ async def test_approve_join_request(async_client, register_user, auth_headers):
     user_headers, user_id = await _member_user(async_client, register_user, auth_headers, "jr_user7@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
-    approve = await async_client.post(
-        f"/api/v1/clubs/{club_id}/join-requests/{user_id}/approve", headers=org_headers
-    )
+    approve = await async_client.post(f"/api/v1/clubs/{club_id}/join-requests/{user_id}/approve", headers=org_headers)
     assert approve.status_code == 200
     assert approve.json()["memberCount"] == 2
 
@@ -144,9 +136,7 @@ async def test_approve_join_request(async_client, register_user, auth_headers):
     assert data["role"] == "member"
 
     # No longer pending; second approve → 404
-    second = await async_client.post(
-        f"/api/v1/clubs/{club_id}/join-requests/{user_id}/approve", headers=org_headers
-    )
+    second = await async_client.post(f"/api/v1/clubs/{club_id}/join-requests/{user_id}/approve", headers=org_headers)
     assert second.status_code == 404
     assert second.json()["detail"]["code"] == "JOIN_REQUEST_NOT_FOUND"
 
@@ -159,9 +149,7 @@ async def test_reject_join_request_then_rejoin(async_client, register_user, auth
     user_headers, user_id = await _member_user(async_client, register_user, auth_headers, "jr_user8@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=user_headers)
 
-    reject = await async_client.post(
-        f"/api/v1/clubs/{club_id}/join-requests/{user_id}/reject", headers=org_headers
-    )
+    reject = await async_client.post(f"/api/v1/clubs/{club_id}/join-requests/{user_id}/reject", headers=org_headers)
     assert reject.status_code == 204
 
     mine = await async_client.get(f"/api/v1/clubs/{club_id}/my-membership", headers=user_headers)
