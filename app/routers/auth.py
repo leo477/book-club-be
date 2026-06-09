@@ -83,6 +83,19 @@ async def _get_or_create_user(db: AsyncSession, sb_user: SupabaseUser, email: st
     if user is not None:
         return user
 
+    # Email collision: a local user already exists for this email (e.g. registered via
+    # email/password, or a prior OAuth attempt under a different Supabase identity).
+    # Link the Supabase identity to the existing row instead of inserting a duplicate,
+    # which would violate the unique email constraint and surface as a 500.
+    existing = await db.execute(select(User).where(User.email == email))
+    user = existing.scalar_one_or_none()
+    if user is not None:
+        if user.supabase_user_id is None:
+            user.supabase_user_id = supabase_user_id
+            await db.commit()
+            await db.refresh(user)
+        return user
+
     metadata = sb_user.user_metadata or {}
     raw_name = metadata.get("display_name") or metadata.get("full_name") or metadata.get("name") or email
     display_name = _sanitize_display_name(str(raw_name))
@@ -306,7 +319,12 @@ async def oauth_callback(
     if auth_response.user is None or auth_response.session is None:
         return _redirect(_OAUTH_FAILED_PATH)
 
-    await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
+    try:
+        await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
+    except Exception:
+        await db.rollback()
+        logger.exception("Failed to provision user during OAuth callback")
+        return _redirect("/login?oauth=failed")
 
     redirect = _redirect("/auth/callback")
     _set_refresh_cookie(redirect, auth_response.session.refresh_token, settings)
