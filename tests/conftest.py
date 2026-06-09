@@ -256,6 +256,39 @@ async def register_user(async_client):
 
 
 @pytest_asyncio.fixture
+async def make_member(async_client, test_engine):
+    """Insert a ClubMember row directly so a user is a real member.
+
+    The approval workflow means POST /join only creates a pending request; tests
+    that need an actual member (chat access, stats, leave, listing) use this to
+    bypass the organizer-approval step deterministically.
+    """
+    import uuid as _uuid
+
+    from app.models.club_member import ClubMember
+
+    TestSessionLocal = async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+        autocommit=False,
+    )
+
+    async def _make_member(club_id, headers, role="member"):
+        me = await async_client.get("/api/v1/users/me", headers=headers)
+        user_id = _uuid.UUID(me.json()["id"])
+        async with TestSessionLocal() as session:
+            session.add(
+                ClubMember(id=_uuid.uuid4(), club_id=_uuid.UUID(str(club_id)), user_id=user_id, role=role)
+            )
+            await session.commit()
+        return str(user_id)
+
+    return _make_member
+
+
+@pytest_asyncio.fixture
 async def auth_headers(async_client):
     async def _get_headers(
         email="test@example.com",
