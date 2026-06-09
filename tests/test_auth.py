@@ -245,9 +245,10 @@ async def test_oauth_callback_links_existing_email(no_redirect_client, db_sessio
 
     from app.models.user import User
 
+    stale_id = uuid.uuid4()  # e.g. left over from an earlier email/password signup
     existing = User(
         id=uuid.uuid4(),
-        supabase_user_id=None,
+        supabase_user_id=stale_id,
         email="oauth@example.com",
         display_name="Existing Reader",
         role="user",
@@ -264,7 +265,10 @@ async def test_oauth_callback_links_existing_email(no_redirect_client, db_sessio
     db_session.expire_all()  # request committed in its own session; force a fresh DB read
     row = await db_session.execute(select(User).where(User.email == "oauth@example.com"))
     linked = row.scalar_one()
+    # supabase_user_id must be re-linked to the OAuth identity, not the stale one,
+    # otherwise get_current_user (resolves by supabase_user_id) would 401 on /me.
     assert linked.supabase_user_id is not None
+    assert linked.supabase_user_id != stale_id
     assert linked.display_name == "Existing Reader"
 
 
