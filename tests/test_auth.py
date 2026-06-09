@@ -234,3 +234,46 @@ async def test_oauth_callback_missing_user_redirects_failed(no_redirect_client):
         resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
     assert resp.status_code == 302
     assert resp.headers["location"].endswith("/login?oauth=failed")
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_links_existing_email(no_redirect_client, db_session):
+    """OAuth for an email that already has a local user links the Supabase id instead of 500."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.user import User
+
+    existing = User(
+        id=uuid.uuid4(),
+        supabase_user_id=None,
+        email="oauth@example.com",
+        display_name="Existing Reader",
+        role="user",
+        socials_public=False,
+    )
+    db_session.add(existing)
+    await db_session.commit()
+
+    resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/auth/callback")
+    assert "refresh_token" in resp.cookies
+
+    db_session.expire_all()  # request committed in its own session; force a fresh DB read
+    row = await db_session.execute(select(User).where(User.email == "oauth@example.com"))
+    linked = row.scalar_one()
+    assert linked.supabase_user_id is not None
+    assert linked.display_name == "Existing Reader"
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_provision_failure_redirects_failed(no_redirect_client):
+    """A DB/provisioning error after a valid code exchange redirects instead of leaking a 500."""
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.routers.auth._get_or_create_user", new=AsyncMock(side_effect=RuntimeError("db down"))):
+        resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/login?oauth=failed")
