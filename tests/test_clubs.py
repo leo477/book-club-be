@@ -201,11 +201,11 @@ async def test_join_club(async_client, register_user, auth_headers):
     headers2 = await auth_headers(email="user2@example.com")
     join_resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
     assert join_resp.status_code == 200
-    assert "memberCount" in join_resp.json()
+    assert join_resp.json()["status"] == "pending"
 
 
 @pytest.mark.asyncio
-async def test_join_club_already_member(async_client, register_user, auth_headers):
+async def test_join_club_already_member(async_client, register_user, auth_headers, make_member):
     await register_user()
     headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
@@ -215,13 +215,13 @@ async def test_join_club_already_member(async_client, register_user, auth_header
     club_id = club_resp.json()["id"]
     await register_user(email="user2@example.com")
     headers2 = await auth_headers(email="user2@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
+    await make_member(club_id, headers2)
     resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
     assert resp.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_leave_club(async_client, register_user, auth_headers):
+async def test_leave_club(async_client, register_user, auth_headers, make_member):
     await register_user()
     headers = await auth_headers()
     await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
@@ -231,7 +231,7 @@ async def test_leave_club(async_client, register_user, auth_headers):
     club_id = club_resp.json()["id"]
     await register_user(email="user2@example.com")
     headers2 = await auth_headers(email="user2@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
+    await make_member(club_id, headers2)
     resp = await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=headers2)
     assert resp.status_code == 204
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import structlog
 from sqlalchemy import and_, func, select
@@ -13,10 +14,19 @@ from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
 from app.models.club import Club
 from app.models.club_ban import ClubBan
+from app.models.club_join_request import ClubJoinRequest
 from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
 from app.models.user import User
-from app.schemas.clubs import BanRequest, BanResponse, ChampionInfo, ClubResponse, CreateClubRequest
+from app.schemas.clubs import (
+    BanRequest,
+    BanResponse,
+    ChampionInfo,
+    ClubResponse,
+    CreateClubRequest,
+    JoinRequestResponse,
+    MyMembershipResponse,
+)
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
 from app.schemas.users import UserStatsResponse
 
@@ -33,6 +43,7 @@ async def delete_club_cascade(club_id: uuid.UUID, db: AsyncSession) -> None:
     else:
         logger.debug("delete_club_cascade: no chat rooms found for club", club_id=str(club_id))
     await db.execute(sa_delete(ClubBan).where(ClubBan.club_id == club_id))
+    await db.execute(sa_delete(ClubJoinRequest).where(ClubJoinRequest.club_id == club_id))
     await db.execute(sa_delete(ClubMember).where(ClubMember.club_id == club_id))
 
     from app.models.event import Event, EventAttendee
@@ -246,7 +257,7 @@ async def create_club_service(
         cover_url=body.coverUrl,
         is_public=body.isPublic,
         organizer_id=current_user.id,
-        city=body.city,
+        city=(body.city or "").strip() or None,
         tags=body.tags or [],
         meeting_duration_minutes=body.meetingDurationMinutes,
         after_meeting_venue=body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None,
@@ -274,12 +285,15 @@ async def create_club_service(
     return await build_club_response(club, db)
 
 
-async def join_club_service(
+async def request_join_club_service(
     club_id: uuid.UUID,
     current_user: User,
     db: AsyncSession,
-) -> int:
-    """Perform the join transaction and return the new member count.
+    source: str = "manual",
+) -> Literal["pending", "already_requested", "member"]:
+    """Create (or reactivate) a pending join request for the club.
+
+    Returns one of "pending" | "already_requested" | "member".
 
     C1: a PostgreSQL statement_timeout is set at the start of the transaction
     so that any stalled DB call is aborted by the server (raises OperationalError)
@@ -289,9 +303,6 @@ async def join_club_service(
     from sqlalchemy import text
 
     # C1: enforce an 8-second ceiling on every statement in this transaction.
-    # If any call stalls (lock contention, pooler issue), Postgres aborts it
-    # and raises OperationalError — caught cleanly in join_club without
-    # cancelling the coroutine or leaving the connection in an undefined state.
     # SET LOCAL is PostgreSQL-specific; guard with a dialect check so tests
     # running against SQLite are unaffected.
     conn = await db.connection()
@@ -312,28 +323,192 @@ async def join_club_service(
         if ban_active:
             raise AppError(403, "You are banned from this club", "CLUB_BANNED")
 
-    existing = await db.execute(
+    existing_member = await db.execute(
         select(ClubMember.id).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
     )
-    if existing.scalar_one_or_none():
-        raise AppError(409, "Already a member", "ALREADY_MEMBER")
+    if existing_member.scalar_one_or_none():
+        if source == "manual":
+            raise AppError(409, "Already a member", "ALREADY_MEMBER")
+        return "member"
 
-    membership = ClubMember(
-        id=uuid.uuid4(),
-        club_id=club_id,
-        user_id=current_user.id,
-        role="member",
+    existing_request = await db.execute(
+        select(ClubJoinRequest).where(
+            and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == current_user.id)
+        )
     )
-    db.add(membership)
-    # M-5: guard against TOCTOU race — a concurrent join between the SELECT and INSERT
+    join_request = existing_request.scalar_one_or_none()
+    if join_request is not None:
+        if join_request.status == "pending":
+            return "already_requested"
+        if join_request.status == "approved":
+            return "member"
+        # rejected -> flip back to pending
+        join_request.status = "pending"
+        join_request.source = source
+        join_request.decided_by = None
+        join_request.decided_at = None
+        await db.commit()
+        return "pending"
+
+    db.add(
+        ClubJoinRequest(
+            id=uuid.uuid4(),
+            club_id=club_id,
+            user_id=current_user.id,
+            status="pending",
+            source=source,
+        )
+    )
     try:
         await db.commit()
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
-        raise AppError(409, "Already a member", "ALREADY_MEMBER") from exc
+        return "already_requested"
+    return "pending"
+
+
+async def list_join_requests_service(
+    club_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+    skip: int,
+    limit: int,
+) -> list[JoinRequestResponse]:
+    from app.dependencies import require_club_organizer
+
+    await require_club_organizer(club_id, current_user, db)
+
+    result = await db.execute(
+        select(ClubJoinRequest, User)
+        .join(User, ClubJoinRequest.user_id == User.id)
+        .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.status == "pending"))
+        .order_by(ClubJoinRequest.created_at.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return [
+        JoinRequestResponse(
+            userId=str(user.id),
+            displayName=user.display_name,
+            avatarUrl=user.avatar_url,
+            status=req.status,
+            source=req.source,
+            createdAt=req.created_at.isoformat(),
+        )
+        for req, user in result.all()
+    ]
+
+
+async def approve_join_request_service(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> int:
+    from app.dependencies import require_club_organizer
+
+    await require_club_organizer(club_id, current_user, db)
+
+    result = await db.execute(
+        select(ClubJoinRequest).where(
+            and_(
+                ClubJoinRequest.club_id == club_id,
+                ClubJoinRequest.user_id == user_id,
+                ClubJoinRequest.status == "pending",
+            )
+        )
+    )
+    join_request = result.scalar_one_or_none()
+    if join_request is None:
+        raise AppError(404, "Join request not found", "JOIN_REQUEST_NOT_FOUND")
+
+    member_result = await db.execute(
+        select(ClubMember.id).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id))
+    )
+    already_member = member_result.scalar_one_or_none() is not None
+
+    now_utc = datetime.now(UTC)
+    join_request.status = "approved"
+    join_request.decided_by = current_user.id
+    join_request.decided_at = now_utc
+
+    if not already_member:
+        db.add(ClubMember(id=uuid.uuid4(), club_id=club_id, user_id=user_id, role="member"))
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        # Member row already exists (race) — re-apply the approval without the insert.
+        retry = await db.execute(
+            select(ClubJoinRequest).where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == user_id))
+        )
+        retry_request = retry.scalar_one_or_none()
+        if retry_request is not None:
+            retry_request.status = "approved"
+            retry_request.decided_by = current_user.id
+            retry_request.decided_at = now_utc
+            await db.commit()
 
     count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
     return int(count_result.scalar() or 0)
+
+
+async def reject_join_request_service(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> None:
+    from app.dependencies import require_club_organizer
+
+    await require_club_organizer(club_id, current_user, db)
+
+    result = await db.execute(
+        select(ClubJoinRequest).where(
+            and_(
+                ClubJoinRequest.club_id == club_id,
+                ClubJoinRequest.user_id == user_id,
+                ClubJoinRequest.status == "pending",
+            )
+        )
+    )
+    join_request = result.scalar_one_or_none()
+    if join_request is None:
+        raise AppError(404, "Join request not found", "JOIN_REQUEST_NOT_FOUND")
+
+    join_request.status = "rejected"
+    join_request.decided_by = current_user.id
+    join_request.decided_at = datetime.now(UTC)
+    await db.commit()
+
+
+async def get_my_membership_service(
+    club_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> MyMembershipResponse:
+    await get_club_or_404(club_id, db)
+
+    member_result = await db.execute(
+        select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
+    )
+    member = member_result.scalar_one_or_none()
+    if member is not None:
+        return MyMembershipResponse(isMember=True, role=member.role)
+
+    request_result = await db.execute(
+        select(ClubJoinRequest)
+        .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == current_user.id))
+        .order_by(ClubJoinRequest.created_at.desc())
+        .limit(1)
+    )
+    join_request = request_result.scalar_one_or_none()
+    if join_request is not None and join_request.status == "pending":
+        return MyMembershipResponse(isMember=False, joinRequestStatus="pending")
+    if join_request is not None and join_request.status == "rejected":
+        return MyMembershipResponse(isMember=False, joinRequestStatus="rejected")
+    return MyMembershipResponse(isMember=False)
 
 
 async def ban_user_service(
@@ -407,7 +582,7 @@ async def create_event_service(
         title=body.title,
         description=body.description,
         date=body.date,
-        city=body.city,
+        city=body.city.strip(),
         address=body.address,
         lat=body.lat,
         lng=body.lng,

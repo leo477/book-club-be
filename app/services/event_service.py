@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import status as http_status
 from sqlalchemy import and_, func, select
@@ -210,7 +210,29 @@ async def attend_event_service(
     count_result = await db.execute(
         sa_select(func.count()).select_from(EventAttendee).where(EventAttendee.event_id == event_id)
     )
-    return AttendEventResponse(attendeeCount=count_result.scalar() or 0)
+    attendee_count = count_result.scalar() or 0
+
+    from app.models.club_member import ClubMember
+    from app.services.club_service import request_join_club_service
+
+    member_result = await db.execute(
+        sa_select(ClubMember.id).where(and_(ClubMember.club_id == event.club_id, ClubMember.user_id == current_user.id))
+    )
+    join_request_status: Literal["none", "pending", "member"]
+    if member_result.scalar_one_or_none() is not None:
+        join_request_status = "member"
+    else:
+        try:
+            result = await request_join_club_service(event.club_id, current_user, db, source="event")
+            join_request_status = "pending" if result in ("pending", "already_requested") else "none"
+        except AppError as exc:
+            code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+            if code == "CLUB_BANNED":
+                join_request_status = "none"
+            else:
+                raise
+
+    return AttendEventResponse(attendeeCount=attendee_count, joinRequestStatus=join_request_status)
 
 
 async def build_event_response(

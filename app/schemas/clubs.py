@@ -125,3 +125,22 @@ class MemberResponse(BaseModel):
     role: str
     socials: dict[str, str] | None
     socialsPublic: bool
+
+
+class JoinClubResponse(BaseModel):
+    status: Literal["pending", "already_requested", "member"]
+
+
+class JoinRequestResponse(BaseModel):
+    userId: str
+    displayName: str
+    avatarUrl: str | None = None
+    status: str
+    source: str
+    createdAt: str
+
+
+class MyMembershipResponse(BaseModel):
+    isMember: bool
+    role: str | None = None
+    joinRequestStatus: Literal["none", "pending", "rejected"] = "none"

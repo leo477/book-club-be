@@ -20,6 +20,7 @@ from app.schemas.clubs import (
     ClubResponse,
     ClubStatsResponse,
     CreateClubRequest,
+    JoinClubResponse,
     RescheduleMeetingRequest,
     UpdateClubRequest,
 )
@@ -31,7 +32,7 @@ from app.services.club_service import (
     create_event_service,
     delete_club_cascade,
     get_club_or_404,
-    join_club_service,
+    request_join_club_service,
 )
 from app.services.event_service import build_event_responses_bulk
 
@@ -193,10 +194,10 @@ async def join_club(
     club_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-) -> dict[str, int]:
+) -> JoinClubResponse:
     log = logger.bind(club_id=str(club_id), user_id=str(current_user.id))
     try:
-        member_count = await join_club_service(club_id, current_user, db)
+        join_status = await request_join_club_service(club_id, current_user, db)
     except AppError:
         # Already a structured response (404/403/409) — let it propagate.
         raise
@@ -210,8 +211,8 @@ async def join_club(
         # bounded 503 rather than an unhandled 500.
         raise AppError(503, "Database error while joining club", "JOIN_DB_ERROR") from exc
 
-    log.info("join_club succeeded", member_count=member_count)
-    return {"memberCount": member_count}
+    log.info("join_club succeeded", join_status=join_status)
+    return JoinClubResponse(status=join_status)
 
 
 @router.delete("/{club_id}/leave", status_code=status.HTTP_204_NO_CONTENT)
