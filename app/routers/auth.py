@@ -89,7 +89,12 @@ async def _get_or_create_user(db: AsyncSession, sb_user: SupabaseUser, email: st
     existing = await db.execute(select(User).where(User.email == email))
     user = existing.scalar_one_or_none()
     if user is not None:
-        if user.supabase_user_id is None:
+        # Re-link to the Supabase identity that just authenticated. get_current_user
+        # resolves users by supabase_user_id, so a stale id here (e.g. from an earlier
+        # email/password signup under a different Supabase identity) would make /me
+        # return 401 even after a valid token exchange. The id lookup above found no
+        # other row holding it, so reassigning cannot violate the unique constraint.
+        if user.supabase_user_id != supabase_user_id:
             user.supabase_user_id = supabase_user_id
             await db.commit()
             await db.refresh(user)
