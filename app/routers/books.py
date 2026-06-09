@@ -29,6 +29,30 @@ _STORES = [
 _CACHE_TTL = 3600
 _CACHE_MAX_SIZE = 1000
 
+# Realistic browser headers reduce trivial bot-blocking (403/503) from the
+# storefronts, which otherwise made every store resolve to found=False.
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
+}
+
+_NO_RESULTS_KEYWORDS = [
+    "нічого не знайдено",
+    "не знайдено",
+    "0 товарів",
+    "товарів не знайдено",
+    "результатів не знайдено",
+    "nothing found",
+    "no results",
+    "0 results",
+    "no products",
+    "no matches",
+]
+
 
 class BookSuggestion(BaseModel):
     id: str
@@ -58,21 +82,14 @@ async def _check_store(client: httpx.AsyncClient, store: dict[str, str], title: 
     url = store["search"].format(q=q)
     try:
         resp = await client.get(url, follow_redirects=True, timeout=8.0)
+        # Non-200 (403/503/Cloudflare bot-walls, etc.): availability is unknown,
+        # report not-found but still hand back a working search URL.
+        if resp.status_code != 200:
+            logger.info("Store %s returned status %s", store["name"], resp.status_code)
+            return StoreResult(name=store["name"], url=url, found=False)
         text = resp.text.lower()
-        no_results = any(
-            kw in text
-            for kw in [
-                "нічого не знайдено",
-                "не знайдено",
-                "0 товарів",
-                "товарів не знайдено",
-                "nothing found",
-                "no results",
-                "0 results",
-                "no products",
-            ]
-        )
-        found = resp.status_code == 200 and not no_results
+        no_results = any(kw in text for kw in _NO_RESULTS_KEYWORDS)
+        found = not no_results
     except Exception as exc:
         logger.warning("Store check failed for %s: %s", store["name"], exc)
         found = False
@@ -110,7 +127,7 @@ async def get_book_stores(
     if cached and now < cached[1]:
         return cached[0]
 
-    async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 BookClub/1.0"}) as client:
+    async with httpx.AsyncClient(headers=_BROWSER_HEADERS) as client:
         results = await asyncio.gather(*[_check_store(client, s, title) for s in _STORES])
 
     result_list = list(results)
