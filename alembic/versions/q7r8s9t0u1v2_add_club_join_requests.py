@@ -9,6 +9,7 @@ Create Date: 2026-06-09 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -19,8 +20,12 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    status_enum = sa.Enum("pending", "approved", "rejected", name="club_join_request_status_enum")
-    source_enum = sa.Enum("manual", "event", name="club_join_request_source_enum")
+    # create_type=False: the type is created explicitly below with checkfirst,
+    # so create_table must NOT emit a second CREATE TYPE (would fail on Postgres).
+    status_enum = postgresql.ENUM(
+        "pending", "approved", "rejected", name="club_join_request_status_enum", create_type=False
+    )
+    source_enum = postgresql.ENUM("manual", "event", name="club_join_request_source_enum", create_type=False)
     status_enum.create(op.get_bind(), checkfirst=True)
     source_enum.create(op.get_bind(), checkfirst=True)
 
