@@ -106,6 +106,42 @@ async def test_get_stores_http_error_falls_back_to_not_found(async_client, regis
 
 
 @pytest.mark.asyncio
+async def test_get_stores_non_200_marks_not_found_with_url(async_client, register_user, auth_headers):
+    await register_user(email="books_403@example.com")
+    headers = await auth_headers(email="books_403@example.com")
+
+    mock_resp = _make_http_response(403, "Access denied")
+    mock_client = _make_mock_client(mock_resp)
+
+    with patch("app.routers.books.httpx.AsyncClient", return_value=mock_client):
+        resp = await async_client.get("/api/v1/books/stores?title=Kobzar", headers=headers)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 5
+    assert all(item["found"] is False for item in data)
+    # a working search URL is still returned so the user can search manually
+    assert all(item["url"] for item in data)
+
+
+@pytest.mark.asyncio
+async def test_get_stores_sends_browser_headers(async_client, register_user, auth_headers):
+    await register_user(email="books_headers@example.com")
+    headers = await auth_headers(email="books_headers@example.com")
+
+    mock_resp = _make_http_response(200, "available")
+    mock_client = _make_mock_client(mock_resp)
+
+    with patch("app.routers.books.httpx.AsyncClient", return_value=mock_client) as client_ctor:
+        resp = await async_client.get("/api/v1/books/stores?title=Kobzar", headers=headers)
+
+    assert resp.status_code == 200
+    sent_headers = client_ctor.call_args.kwargs["headers"]
+    assert "Accept-Language" in sent_headers
+    assert "uk" in sent_headers["Accept-Language"]
+
+
+@pytest.mark.asyncio
 async def test_get_stores_cache_hit(async_client, register_user, auth_headers):
     await register_user(email="books_cache@example.com")
     headers = await auth_headers(email="books_cache@example.com")
