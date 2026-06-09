@@ -11,11 +11,24 @@ from app.dependencies import get_current_user, get_db_dep, require_club_organize
 from app.exceptions import AppError
 from app.models.club import Club
 from app.models.club_ban import ClubBan
+from app.models.club_join_request import ClubJoinRequest
 from app.models.club_member import ClubMember
 from app.models.user import User
 from app.schemas.auth import build_socials
-from app.schemas.clubs import BanRequest, BanResponse, MemberResponse
-from app.services.club_service import ban_user_service
+from app.schemas.clubs import (
+    BanRequest,
+    BanResponse,
+    JoinRequestResponse,
+    MemberResponse,
+    MyMembershipResponse,
+)
+from app.services.club_service import (
+    approve_join_request_service,
+    ban_user_service,
+    get_my_membership_service,
+    list_join_requests_service,
+    reject_join_request_service,
+)
 
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
@@ -131,3 +144,53 @@ async def list_bans(
         )
         for b in bans
     ]
+
+
+@router.get("/join-requests")
+async def list_join_requests(
+    club_id: uuid.UUID,
+    response: Response,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[JoinRequestResponse]:
+    requests = await list_join_requests_service(club_id, current_user, db, skip, limit)
+
+    total_result = await db.execute(
+        select(func.count())
+        .select_from(ClubJoinRequest)
+        .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.status == "pending"))
+    )
+    response.headers["X-Total-Count"] = str(total_result.scalar_one())
+    return requests
+
+
+@router.post("/join-requests/{user_id}/approve")
+async def approve_join_request(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> dict[str, int]:
+    member_count = await approve_join_request_service(club_id, user_id, current_user, db)
+    return {"memberCount": member_count}
+
+
+@router.post("/join-requests/{user_id}/reject", status_code=status.HTTP_204_NO_CONTENT)
+async def reject_join_request(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> None:
+    await reject_join_request_service(club_id, user_id, current_user, db)
+
+
+@router.get("/my-membership")
+async def get_my_membership(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> MyMembershipResponse:
+    return await get_my_membership_service(club_id, current_user, db)

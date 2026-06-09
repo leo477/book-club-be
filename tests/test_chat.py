@@ -46,7 +46,7 @@ async def test_send_and_get_messages(async_client, register_user, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_ws_room_membership_after_join(async_client, register_user, auth_headers):
+async def test_ws_room_membership_after_join(async_client, register_user, auth_headers, make_member):
     """Regression: POST /clubs/{id}/join then WS connect must get 101, not 403.
 
     Root cause: the WS session's db connection could inherit a stale transaction
@@ -81,8 +81,7 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
     member_headers = await auth_headers(email=member_email)
     member_token = member_headers["Authorization"].split(" ", 1)[1]
 
-    join_resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=member_headers)
-    assert join_resp.status_code == 200, f"Join failed: {join_resp.text}"
+    await make_member(club_id, member_headers)
 
     # --- Act: drive the WS ASGI endpoint directly inside the current event loop ---
     # We wire up two asyncio.Queue pairs to simulate the ASGI receive/send channels,

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -99,4 +99,4 @@ class RescheduleEventRequest(BaseModel):
 
 class AttendEventResponse(BaseModel):
     attendeeCount: int
-    autoJoined: bool = False
+    joinRequestStatus: Literal["none", "pending", "member"] = "none"

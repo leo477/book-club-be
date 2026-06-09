@@ -21,7 +21,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_clubs_joined_after_join(async_client, register_user, auth_headers):
+async def test_clubs_joined_after_join(async_client, register_user, auth_headers, make_member):
     """After joining a club, clubs_joined in GET /users/me/stats must be 1."""
     # --- organizer creates a public club ---
     await register_user(email="sj_org@example.com", role="organizer")
@@ -40,8 +40,7 @@ async def test_clubs_joined_after_join(async_client, register_user, auth_headers
     await register_user(email="sj_member@example.com")
     member_headers = await auth_headers(email="sj_member@example.com")
 
-    join_resp = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=member_headers)
-    assert join_resp.status_code == 200, join_resp.text
+    await make_member(club_id, member_headers)
 
     # --- stats must reflect the join ---
     stats_resp = await async_client.get("/api/v1/users/me/stats", headers=member_headers)
@@ -51,7 +50,7 @@ async def test_clubs_joined_after_join(async_client, register_user, auth_headers
 
 
 @pytest.mark.asyncio
-async def test_clubs_joined_after_multiple_joins(async_client, register_user, auth_headers):
+async def test_clubs_joined_after_multiple_joins(async_client, register_user, auth_headers, make_member):
     """clubs_joined increments correctly when a user joins multiple clubs."""
     # org1 creates club1
     await register_user(email="mj_org1@example.com", role="organizer")
@@ -68,8 +67,7 @@ async def test_clubs_joined_after_multiple_joins(async_client, register_user, au
     # regular user joins club1
     await register_user(email="mj_member@example.com")
     member_headers = await auth_headers(email="mj_member@example.com")
-    join1 = await async_client.post(f"/api/v1/clubs/{club1_id}/join", headers=member_headers)
-    assert join1.status_code == 200
+    await make_member(club1_id, member_headers)
 
     stats1 = await async_client.get("/api/v1/users/me/stats", headers=member_headers)
     assert stats1.json()["clubsJoined"] == 1, f"After 1 join: {stats1.json()}"
@@ -86,8 +84,7 @@ async def test_clubs_joined_after_multiple_joins(async_client, register_user, au
     assert club2_resp.status_code == 201
     club2_id = club2_resp.json()["id"]
 
-    join2 = await async_client.post(f"/api/v1/clubs/{club2_id}/join", headers=member_headers)
-    assert join2.status_code == 200
+    await make_member(club2_id, member_headers)
 
     stats2 = await async_client.get("/api/v1/users/me/stats", headers=member_headers)
     assert stats2.json()["clubsJoined"] == 2, f"After 2 joins: {stats2.json()}"

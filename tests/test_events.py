@@ -140,14 +140,14 @@ async def test_list_my_events_empty_when_no_clubs(async_client, register_user, a
 
 
 @pytest.mark.asyncio
-async def test_list_my_events_returns_events_from_member_clubs(async_client, register_user, auth_headers):
+async def test_list_my_events_returns_events_from_member_clubs(async_client, register_user, auth_headers, make_member):
     org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_my_org@example.com")
     club_id = await _create_club(async_client, org_headers, "MyEvClub")
     event = await _create_event(async_client, org_headers, club_id)
 
     await register_user(email="ev_my_member@example.com")
     member_headers = await auth_headers(email="ev_my_member@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=member_headers)
+    await make_member(club_id, member_headers)
 
     resp = await async_client.get("/api/v1/events/my", headers=member_headers)
     assert resp.status_code == 200
@@ -283,8 +283,8 @@ async def test_attend_event_does_not_auto_join_club(async_client, register_user,
     """Regression: POST /events/{id}/attend must NOT add the user to clubs/my.
 
     The user is a non-member before attending. After a successful RSVP the user
-    should still not appear as a club member — the response must not contain an
-    `autoJoined` field, and GET /clubs/my must not include the club.
+    should still not appear as a club member — attendance only creates a pending
+    join request (joinRequestStatus == "pending"), never instant membership.
     """
     org_headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_att_nojoin_reg@example.com")
     club_id = await _create_club(async_client, org_headers, "NoAutoJoinClub")
@@ -298,8 +298,9 @@ async def test_attend_event_does_not_auto_join_club(async_client, register_user,
     assert resp.status_code == 201
     data = resp.json()
     assert data["attendeeCount"] >= 1
-    # autoJoined must be False — RSVP does not auto-join the club
-    assert data.get("autoJoined") is False
+    # autoJoined is removed; a non-member attending gets a pending join request
+    assert "autoJoined" not in data
+    assert data["joinRequestStatus"] == "pending"
 
     # User must NOT appear in club membership
     my_clubs_resp = await async_client.get("/api/v1/clubs/my", headers=member_headers)
