@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.club import Club
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
+from app.models.user import User
 
 
 class EventRepository:
@@ -105,4 +106,14 @@ class EventRepository:
 
     async def get_club_for_event(self, event: Event) -> Club | None:
         result = await self.db.execute(select(Club).where(Club.id == event.club_id))
+        return result.scalar_one_or_none()
+
+    async def get_user(self, user_id: uuid.UUID) -> User | None:
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        return result.scalar_one_or_none()
+
+    async def get_membership_id(self, club_id: uuid.UUID, user_id: uuid.UUID) -> uuid.UUID | None:
+        result = await self.db.execute(
+            select(ClubMember.id).where(ClubMember.club_id == club_id, ClubMember.user_id == user_id)
+        )
         return result.scalar_one_or_none()

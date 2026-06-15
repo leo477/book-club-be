@@ -455,6 +455,35 @@ async def test_event_repo_get_club_for_event(db_session):
     assert found_club.id == club.id
 
 
+@pytest.mark.asyncio
+async def test_event_repo_get_user(db_session):
+    user = _user()
+    db_session.add(user)
+    await db_session.commit()
+
+    repo = EventRepository(db_session)
+    found = await repo.get_user(user.id)
+    assert found is not None
+    assert found.id == user.id
+    assert await repo.get_user(uuid.uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_event_repo_get_membership_id(db_session):
+    user = _user()
+    db_session.add(user)
+    club = _club(organizer_id=user.id)
+    db_session.add(club)
+    await db_session.commit()
+    member = ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=user.id, role="member")
+    db_session.add(member)
+    await db_session.commit()
+
+    repo = EventRepository(db_session)
+    assert await repo.get_membership_id(club.id, user.id) == member.id
+    assert await repo.get_membership_id(club.id, uuid.uuid4()) is None
+
+
 # ---------------------------------------------------------------------------
 # ChatRepository
 # ---------------------------------------------------------------------------
