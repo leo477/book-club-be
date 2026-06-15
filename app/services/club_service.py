@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,8 +24,12 @@ from app.schemas.clubs import (
     BanResponse,
     ChampionInfo,
     ClubResponse,
+    ClubStatsResponse,
     CreateClubRequest,
+    EventAttendanceStat,
     JoinRequestResponse,
+    MemberStatRow,
+    MonthlyStatRow,
     MyMembershipResponse,
 )
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
@@ -328,12 +333,7 @@ async def request_join_club_service(
             raise AppError(409, "Already a member", "ALREADY_MEMBER")
         return "member"
 
-    existing_request = await db.execute(
-        select(ClubJoinRequest).where(
-            and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == current_user.id)
-        )
-    )
-    join_request = existing_request.scalar_one_or_none()
+    join_request = await repo.get_join_request(club_id, current_user.id)
     if join_request is not None:
         if join_request.status == "pending":
             return "already_requested"
@@ -375,14 +375,8 @@ async def list_join_requests_service(
 
     await require_club_organizer(club_id, current_user, db)
 
-    result = await db.execute(
-        select(ClubJoinRequest, User)
-        .join(User, ClubJoinRequest.user_id == User.id)
-        .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.status == "pending"))
-        .order_by(ClubJoinRequest.created_at.asc())
-        .offset(skip)
-        .limit(limit)
-    )
+    repo = ClubRepository(db)
+    rows = await repo.list_pending_join_requests_with_users(club_id, skip, limit)
     return [
         JoinRequestResponse(
             userId=str(user.id),
@@ -392,7 +386,7 @@ async def list_join_requests_service(
             source=req.source,
             createdAt=req.created_at.isoformat(),
         )
-        for req, user in result.all()
+        for req, user in rows
     ]
 
 
@@ -406,23 +400,12 @@ async def approve_join_request_service(
 
     await require_club_organizer(club_id, current_user, db)
 
-    result = await db.execute(
-        select(ClubJoinRequest).where(
-            and_(
-                ClubJoinRequest.club_id == club_id,
-                ClubJoinRequest.user_id == user_id,
-                ClubJoinRequest.status == "pending",
-            )
-        )
-    )
-    join_request = result.scalar_one_or_none()
+    repo = ClubRepository(db)
+    join_request = await repo.get_pending_join_request(club_id, user_id)
     if join_request is None:
         raise AppError(404, "Join request not found", "JOIN_REQUEST_NOT_FOUND")
 
-    member_result = await db.execute(
-        select(ClubMember.id).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id))
-    )
-    already_member = member_result.scalar_one_or_none() is not None
+    already_member = await repo.get_membership(club_id, user_id) is not None
 
     now_utc = datetime.now(UTC)
     join_request.status = "approved"
@@ -430,25 +413,21 @@ async def approve_join_request_service(
     join_request.decided_at = now_utc
 
     if not already_member:
-        db.add(ClubMember(id=uuid.uuid4(), club_id=club_id, user_id=user_id, role="member"))
+        repo.add_member(ClubMember(id=uuid.uuid4(), club_id=club_id, user_id=user_id, role="member"))
 
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
         # Member row already exists (race) — re-apply the approval without the insert.
-        retry = await db.execute(
-            select(ClubJoinRequest).where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == user_id))
-        )
-        retry_request = retry.scalar_one_or_none()
+        retry_request = await repo.get_join_request(club_id, user_id)
         if retry_request is not None:
             retry_request.status = "approved"
             retry_request.decided_by = current_user.id
             retry_request.decided_at = now_utc
             await db.commit()
 
-    count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
-    return int(count_result.scalar() or 0)
+    return await repo.count_members(club_id)
 
 
 async def reject_join_request_service(
@@ -461,16 +440,8 @@ async def reject_join_request_service(
 
     await require_club_organizer(club_id, current_user, db)
 
-    result = await db.execute(
-        select(ClubJoinRequest).where(
-            and_(
-                ClubJoinRequest.club_id == club_id,
-                ClubJoinRequest.user_id == user_id,
-                ClubJoinRequest.status == "pending",
-            )
-        )
-    )
-    join_request = result.scalar_one_or_none()
+    repo = ClubRepository(db)
+    join_request = await repo.get_pending_join_request(club_id, user_id)
     if join_request is None:
         raise AppError(404, "Join request not found", "JOIN_REQUEST_NOT_FOUND")
 
@@ -492,13 +463,7 @@ async def get_my_membership_service(
     if member is not None:
         return MyMembershipResponse(isMember=True, role=member.role)
 
-    request_result = await db.execute(
-        select(ClubJoinRequest)
-        .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == current_user.id))
-        .order_by(ClubJoinRequest.created_at.desc())
-        .limit(1)
-    )
-    join_request = request_result.scalar_one_or_none()
+    join_request = await repo.get_latest_join_request(club_id, current_user.id)
     if join_request is not None and join_request.status == "pending":
         return MyMembershipResponse(isMember=False, joinRequestStatus="pending")
     if join_request is not None and join_request.status == "rejected":
@@ -594,6 +559,64 @@ async def create_event_service(
     await db.commit()
     await db.refresh(event)
     return await build_event_response(event, db, current_user.id, club_name=club.name, organizer_id=club.organizer_id)
+
+
+async def get_club_stats_service(club_id: uuid.UUID, db: AsyncSession) -> ClubStatsResponse:
+    """Aggregate club analytics: top members, attendance, growth, frequency, counts."""
+    await get_club_or_404(club_id, db)
+    repo = ClubRepository(db)
+
+    top_active = [
+        MemberStatRow(userId=str(uid), displayName=name, avatarUrl=avatar, count=cnt)
+        for uid, name, avatar, cnt in await repo.top_active_members(club_id)
+    ]
+    top_winners = [
+        MemberStatRow(userId=str(uid), displayName=name, avatarUrl=avatar, count=cnt)
+        for uid, name, avatar, cnt in await repo.top_quiz_winners(club_id)
+    ]
+    recent_attendance = [
+        EventAttendanceStat(eventId=str(eid), title=title, date=date, attendeeCount=cnt)
+        for eid, title, date, cnt in await repo.recent_held_events_with_attendance(club_id)
+    ]
+
+    now = datetime.now(UTC)
+    six_months_ago = now - timedelta(days=183)
+
+    (
+        total_members,
+        total_events,
+        total_messages,
+        banned_users_count,
+        upcoming_events_count,
+    ) = await asyncio.gather(
+        repo.count_members(club_id),
+        repo.count_events(club_id),
+        repo.count_messages(club_id),
+        repo.count_active_room_bans(club_id, now),
+        repo.count_upcoming_events(club_id, now),
+    )
+
+    member_growth = [
+        MonthlyStatRow(month=f"{yr:04d}-{mo:02d}", count=cnt)
+        for yr, mo, cnt in await repo.member_growth_by_month(club_id, six_months_ago)
+    ]
+    event_frequency = [
+        MonthlyStatRow(month=f"{yr:04d}-{mo:02d}", count=cnt)
+        for yr, mo, cnt in await repo.event_frequency_by_month(club_id, six_months_ago)
+    ]
+
+    return ClubStatsResponse(
+        topActive=top_active,
+        topWinners=top_winners,
+        recentAttendance=recent_attendance,
+        totalMembers=total_members,
+        totalEvents=total_events,
+        totalMessages=total_messages,
+        memberGrowth=member_growth,
+        eventFrequency=event_frequency,
+        bannedUsersCount=banned_users_count,
+        upcomingEventsCount=upcoming_events_count,
+    )
 
 
 def _assemble_club_response(

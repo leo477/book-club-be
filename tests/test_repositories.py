@@ -306,6 +306,111 @@ async def test_club_repo_list_for_user_pagination(db_session):
     assert len(await repo.list_for_user(user.id, limit=20)) == 3
 
 
+@pytest.mark.asyncio
+async def test_club_repo_join_request_lookups(db_session):
+    organizer = _user()
+    requester = _user()
+    db_session.add_all([organizer, requester])
+    club = _club(organizer_id=organizer.id)
+    db_session.add(club)
+    await db_session.commit()
+
+    repo = ClubRepository(db_session)
+    assert await repo.get_join_request(club.id, requester.id) is None
+    assert await repo.get_pending_join_request(club.id, requester.id) is None
+    assert await repo.get_latest_join_request(club.id, requester.id) is None
+    assert await repo.list_pending_join_requests_with_users(club.id) == []
+
+    req = ClubJoinRequest(
+        id=uuid.uuid4(), club_id=club.id, user_id=requester.id, status="pending", source="manual"
+    )
+    db_session.add(req)
+    await db_session.commit()
+
+    assert await repo.get_join_request(club.id, requester.id) is not None
+    assert await repo.get_pending_join_request(club.id, requester.id) is not None
+    latest = await repo.get_latest_join_request(club.id, requester.id)
+    assert latest is not None and latest.id == req.id
+
+    rows = await repo.list_pending_join_requests_with_users(club.id)
+    assert len(rows) == 1
+    found_req, found_user = rows[0]
+    assert found_req.id == req.id
+    assert found_user.id == requester.id
+
+    # Once decided, it's no longer pending.
+    req.status = "rejected"
+    await db_session.commit()
+    assert await repo.get_pending_join_request(club.id, requester.id) is None
+    assert await repo.list_pending_join_requests_with_users(club.id) == []
+    still_latest = await repo.get_latest_join_request(club.id, requester.id)
+    assert still_latest is not None and still_latest.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_club_repo_stats_aggregations(db_session):
+    organizer = _user()
+    member = _user(display_name="Member")
+    db_session.add_all([organizer, member])
+    club = _club(organizer_id=organizer.id)
+    db_session.add(club)
+    db_session.add(ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=member.id, role="member"))
+
+    held = _event(club_id=club.id, date_offset_days=-1, status="held", title="Held")
+    upcoming = _event(club_id=club.id, date_offset_days=5, status="scheduled", title="Soon")
+    db_session.add_all([held, upcoming])
+    db_session.add(EventAttendee(event_id=held.id, user_id=member.id))
+
+    quiz = Quiz(id=uuid.uuid4(), club_id=club.id, created_by=organizer.id, title="Quiz")
+    db_session.add(quiz)
+    db_session.add(
+        QuizAttempt(id=uuid.uuid4(), quiz_id=quiz.id, user_id=member.id, score=5, total=5, answers=[0])
+    )
+
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    db_session.add(
+        ChatMessage(id=uuid.uuid4(), room_id=room.id, sender_id=member.id, text="hi", timestamp=datetime.now(UTC))
+    )
+    db_session.add(
+        ChatRoomBan(
+            id=uuid.uuid4(),
+            room_id=room.id,
+            user_id=member.id,
+            banned_by=organizer.id,
+            banned_until=datetime.now(UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    repo = ClubRepository(db_session)
+    now = datetime.now(UTC)
+    since = now - timedelta(days=183)
+
+    active = await repo.top_active_members(club.id)
+    assert len(active) == 1
+    assert active[0][3] == 1
+
+    winners = await repo.top_quiz_winners(club.id)
+    assert len(winners) == 1
+    assert winners[0][3] == 1
+
+    recent = await repo.recent_held_events_with_attendance(club.id)
+    assert len(recent) == 1
+    assert recent[0][1] == "Held"
+    assert recent[0][3] == 1
+
+    assert await repo.count_events(club.id) == 2
+    assert await repo.count_messages(club.id) == 1
+    assert await repo.count_active_room_bans(club.id, now) == 1
+    assert await repo.count_upcoming_events(club.id, now) == 1
+
+    growth = await repo.member_growth_by_month(club.id, since)
+    assert sum(cnt for _, _, cnt in growth) == 1
+    freq = await repo.event_frequency_by_month(club.id, since)
+    assert sum(cnt for _, _, cnt in freq) == 2
+
+
 # ---------------------------------------------------------------------------
 # EventRepository
 # ---------------------------------------------------------------------------
