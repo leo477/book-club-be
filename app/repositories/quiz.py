@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +35,17 @@ class QuizRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_questions_by_ids(
+        self, quiz_id: uuid.UUID, question_ids: Sequence[uuid.UUID]
+    ) -> list[QuizQuestion]:
+        result = await self.db.execute(
+            select(QuizQuestion).where(
+                QuizQuestion.quiz_id == quiz_id,
+                QuizQuestion.id.in_(question_ids),
+            )
+        )
+        return list(result.scalars().all())
+
     async def count_questions(self, quiz_id: uuid.UUID) -> int:
         result = await self.db.execute(
             select(func.count()).select_from(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
@@ -60,11 +73,30 @@ class QuizRepository:
         )
         return result.scalar() or 0
 
+    async def count_attempts_since(self, quiz_id: uuid.UUID, since: datetime) -> int:
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(QuizAttempt)
+            .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.created_at >= since)
+        )
+        return result.scalar() or 0
+
     async def get_attempts_with_users(self, quiz_id: uuid.UUID) -> list[tuple[QuizAttempt, str, str | None]]:
         result = await self.db.execute(
             select(QuizAttempt, User.display_name, User.avatar_url)
             .join(User, QuizAttempt.user_id == User.id)
             .where(QuizAttempt.quiz_id == quiz_id)
+            .order_by(QuizAttempt.score.desc(), QuizAttempt.created_at.asc())
+        )
+        return list(result.tuples().all())
+
+    async def get_attempts_with_users_since(
+        self, quiz_id: uuid.UUID, since: datetime
+    ) -> list[tuple[QuizAttempt, str, str | None]]:
+        result = await self.db.execute(
+            select(QuizAttempt, User.display_name, User.avatar_url)
+            .join(User, QuizAttempt.user_id == User.id)
+            .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.created_at >= since)
             .order_by(QuizAttempt.score.desc(), QuizAttempt.created_at.asc())
         )
         return list(result.tuples().all())

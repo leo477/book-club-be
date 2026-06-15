@@ -702,6 +702,10 @@ async def test_quiz_repo_questions(db_session):
     assert found is not None
     assert await repo.get_question(uuid.uuid4(), quiz.id) is None
 
+    by_ids = await repo.get_questions_by_ids(quiz.id, [q.id])
+    assert len(by_ids) == 1
+    assert await repo.get_questions_by_ids(quiz.id, [uuid.uuid4()]) == []
+
     assert await repo.count_questions(quiz.id) == 1
     assert await repo.count_questions(uuid.uuid4()) == 0
 
@@ -755,3 +759,12 @@ async def test_quiz_repo_attempts(db_session):
     attempt_obj, display_name, avatar_url = rows[0]
     assert attempt_obj.score == 3
     assert display_name == user.display_name
+
+    past = datetime.now(UTC) - timedelta(hours=1)
+    future = datetime.now(UTC) + timedelta(hours=1)
+    assert await repo.count_attempts_since(quiz.id, past) == 1
+    assert await repo.count_attempts_since(quiz.id, future) == 0
+
+    since_rows = await repo.get_attempts_with_users_since(quiz.id, past)
+    assert len(since_rows) == 1
+    assert await repo.get_attempts_with_users_since(quiz.id, future) == []
