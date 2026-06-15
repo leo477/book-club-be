@@ -18,13 +18,15 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.limiter import limiter
-from app.routers import clubs, health, members
 from app.routers.auth import router as auth_router
 from app.routers.books import router as books_router
 from app.routers.chat import router as chat_router
+from app.routers.clubs import router as clubs_router
 from app.routers.config import router as config_router
 from app.routers.events import router as events_router
 from app.routers.geocode import router as geocode_router
+from app.routers.health import router as health_router
+from app.routers.members import router as members_router
 from app.routers.quizzes import router as quizzes_router
 from app.routers.randomizer import router as randomizer_router
 from app.routers.routes import router as routes_router
@@ -279,11 +281,11 @@ def create_app() -> FastAPI:
         logger.exception("Unhandled exception", exc_info=exc)
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
-    app.include_router(health.router)
+    app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(users_router)
-    app.include_router(clubs.router)
-    app.include_router(members.router)
+    app.include_router(clubs_router)
+    app.include_router(members_router)
     app.include_router(events_router)
     app.include_router(quizzes_router)
     app.include_router(randomizer_router)
