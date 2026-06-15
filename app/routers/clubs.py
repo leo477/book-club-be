@@ -7,13 +7,12 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import and_, delete, extract, func, or_, select
+from sqlalchemy import and_, extract, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_club_organizer
 from app.exceptions import AppError
-from app.models.club import Club
 from app.models.club_member import ClubMember
 from app.models.user import User
 from app.schemas.clubs import (
@@ -27,11 +26,13 @@ from app.schemas.clubs import (
 from app.schemas.events import CreateEventRequest, EventResponse
 from app.services.club_service import (
     build_club_response,
-    build_club_responses_bulk,
     create_club_service,
     create_event_service,
     delete_club_cascade,
     get_club_or_404,
+    leave_club_service,
+    list_clubs_service,
+    list_my_clubs_service,
     request_join_club_service,
 )
 from app.services.event_service import build_event_responses_bulk
@@ -49,25 +50,7 @@ async def list_clubs(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[ClubResponse]:
-    stmt = select(Club)
-
-    if current_user is not None:
-        member_club_ids = select(ClubMember.club_id).where(ClubMember.user_id == current_user.id)
-        stmt = stmt.where(or_(Club.is_public.is_(True), Club.id.in_(member_club_ids)))
-    else:
-        stmt = stmt.where(Club.is_public.is_(True))
-
-    if search:
-        # MN-10: escape LIKE metacharacters to prevent injection via % and _
-        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        like = f"%{escaped}%"
-        stmt = stmt.where(or_(Club.name.ilike(like, escape="\\"), Club.description.ilike(like, escape="\\")))
-
-    stmt = stmt.offset(skip).limit(limit)
-
-    result = await db.execute(stmt)
-    clubs = result.scalars().all()
-    return await build_club_responses_bulk(list(clubs), db)
+    return await list_clubs_service(current_user, db, search, skip, limit)
 
 
 @router.get("/my")
@@ -77,15 +60,7 @@ async def list_my_clubs(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[ClubResponse]:
-    member_club_ids = select(ClubMember.club_id).where(ClubMember.user_id == current_user.id)
-    result = await db.execute(
-        select(Club)
-        .where(or_(Club.id.in_(member_club_ids), Club.organizer_id == current_user.id))
-        .offset(skip)
-        .limit(limit)
-    )
-    clubs = result.scalars().all()
-    return await build_club_responses_bulk(list(clubs), db)
+    return await list_my_clubs_service(current_user, db, skip, limit)
 
 
 @router.get("/{club_id}")
@@ -221,19 +196,7 @@ async def leave_club(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
-    await get_club_or_404(club_id, db)
-
-    existing = await db.execute(
-        select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
-    )
-    member = existing.scalar_one_or_none()
-    if not member:
-        raise AppError(409, "Not a member", "NOT_A_MEMBER")
-
-    await db.execute(
-        delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
-    )
-    await db.commit()
+    await leave_club_service(club_id, current_user, db)
 
 
 @router.get("/{club_id}/events")

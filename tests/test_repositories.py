@@ -6,10 +6,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
-from app.models.chat import ChatMessage, ChatRoom
+from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
 from app.models.club import Club
 from app.models.club_ban import ClubBan
+from app.models.club_join_request import ClubJoinRequest
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.quiz import Quiz, QuizAttempt, QuizQuestion, QuizSession
@@ -219,6 +221,89 @@ async def test_club_repo_membership(db_session):
     await db_session.commit()
 
     assert await repo.get_membership(club.id, user.id) is None
+
+
+@pytest.mark.asyncio
+async def test_club_repo_cascade_delete(db_session):
+    organizer = _user()
+    db_session.add(organizer)
+    club = _club(organizer_id=organizer.id)
+    db_session.add(club)
+
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    message = ChatMessage(
+        id=uuid.uuid4(), room_id=room.id, sender_id=organizer.id, text="Hi", timestamp=datetime.now(UTC)
+    )
+    db_session.add(message)
+    room_ban = ChatRoomBan(
+        id=uuid.uuid4(),
+        room_id=room.id,
+        user_id=organizer.id,
+        banned_by=organizer.id,
+        banned_until=datetime.now(UTC) + timedelta(days=1),
+    )
+    db_session.add(room_ban)
+
+    member = ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=organizer.id, role="organizer")
+    db_session.add(member)
+    club_ban = ClubBan(
+        id=uuid.uuid4(),
+        club_id=club.id,
+        user_id=organizer.id,
+        banned_by=organizer.id,
+        duration="permanent",
+    )
+    db_session.add(club_ban)
+    join_request = ClubJoinRequest(
+        id=uuid.uuid4(), club_id=club.id, user_id=organizer.id, status="pending", source="manual"
+    )
+    db_session.add(join_request)
+
+    event = _event(club_id=club.id)
+    db_session.add(event)
+    attendee = EventAttendee(event_id=event.id, user_id=organizer.id)
+    db_session.add(attendee)
+    await db_session.commit()
+
+    repo = ClubRepository(db_session)
+    await repo.cascade_delete(club.id)
+    await db_session.commit()
+
+    assert await repo.get_by_id(club.id) is None
+    assert await repo.count_members(club.id) == 0
+
+    rooms = (await db_session.execute(select(ChatRoom).where(ChatRoom.club_id == club.id))).scalars().all()
+    assert rooms == []
+    messages = (await db_session.execute(select(ChatMessage).where(ChatMessage.room_id == room.id))).scalars().all()
+    assert messages == []
+    room_bans = (await db_session.execute(select(ChatRoomBan).where(ChatRoomBan.room_id == room.id))).scalars().all()
+    assert room_bans == []
+    events = (await db_session.execute(select(Event).where(Event.club_id == club.id))).scalars().all()
+    assert events == []
+    attendees = (
+        await db_session.execute(select(EventAttendee).where(EventAttendee.event_id == event.id))
+    ).scalars().all()
+    assert attendees == []
+
+
+@pytest.mark.asyncio
+async def test_club_repo_list_for_user_pagination(db_session):
+    user = _user()
+    db_session.add(user)
+    db_session.add_all(
+        [
+            _club(organizer_id=user.id, name="C1"),
+            _club(organizer_id=user.id, name="C2"),
+            _club(organizer_id=user.id, name="C3"),
+        ]
+    )
+    await db_session.commit()
+
+    repo = ClubRepository(db_session)
+    assert len(await repo.list_for_user(user.id, skip=0, limit=2)) == 2
+    assert len(await repo.list_for_user(user.id, skip=2, limit=2)) == 1
+    assert len(await repo.list_for_user(user.id, limit=20)) == 3
 
 
 # ---------------------------------------------------------------------------
