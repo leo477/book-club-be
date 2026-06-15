@@ -514,6 +514,87 @@ async def test_chat_repo_messages(db_session):
 
 
 @pytest.mark.asyncio
+async def test_chat_repo_get_room_by_name(db_session):
+    user = _user()
+    db_session.add(user)
+    club = _club(organizer_id=user.id)
+    db_session.add(club)
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    await db_session.commit()
+
+    repo = ChatRepository(db_session)
+    found = await repo.get_room_by_name(club.id, "General")
+    assert found is not None
+    assert found.id == room.id
+    assert await repo.get_room_by_name(club.id, "Nope") is None
+
+
+@pytest.mark.asyncio
+async def test_chat_repo_list_messages_paginated(db_session):
+    user = _user()
+    db_session.add(user)
+    club = _club(organizer_id=user.id)
+    db_session.add(club)
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    now = datetime.now(UTC)
+    old_msg = ChatMessage(
+        id=uuid.uuid4(), room_id=room.id, sender_id=user.id, text="Old", timestamp=now - timedelta(hours=2)
+    )
+    new_msg = ChatMessage(id=uuid.uuid4(), room_id=room.id, sender_id=user.id, text="New", timestamp=now)
+    db_session.add_all([old_msg, new_msg])
+    await db_session.commit()
+
+    repo = ChatRepository(db_session)
+    all_rows = await repo.list_messages_paginated(room.id)
+    assert [r[0].text for r in all_rows] == ["New", "Old"]
+
+    before = await repo.list_messages_paginated(room.id, before_id=new_msg.id)
+    assert len(before) == 1
+    assert before[0][0].text == "Old"
+    assert before[0][1] == user.display_name
+
+
+@pytest.mark.asyncio
+async def test_chat_repo_user_membership_ban_lookups(db_session):
+    user = _user()
+    other = _user()
+    db_session.add_all([user, other])
+    club = _club(organizer_id=user.id)
+    db_session.add(club)
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    member = ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=user.id, role="member")
+    db_session.add(member)
+    await db_session.commit()
+
+    repo = ChatRepository(db_session)
+    assert (await repo.get_user_by_supabase_id(user.supabase_user_id)) is not None
+    assert (await repo.get_user_by_supabase_id(uuid.uuid4())) is None
+
+    assert (await repo.get_membership(club.id, user.id)) is not None
+    assert (await repo.get_membership(club.id, other.id)) is None
+
+    now = datetime.now(UTC)
+    assert (await repo.get_active_ban(room.id, user.id, now)) is None
+
+    ban = ChatRoomBan(
+        id=uuid.uuid4(),
+        room_id=room.id,
+        user_id=user.id,
+        banned_by=user.id,
+        banned_until=now + timedelta(hours=1),
+    )
+    db_session.add(ban)
+    await db_session.commit()
+    assert (await repo.get_active_ban(room.id, user.id, now)) is not None
+
+    expired = now + timedelta(hours=2)
+    assert (await repo.get_active_ban(room.id, user.id, expired)) is None
+
+
+@pytest.mark.asyncio
 async def test_chat_repo_list_messages_before_ts(db_session):
     user = _user()
     db_session.add(user)
