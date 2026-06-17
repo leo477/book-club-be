@@ -5,13 +5,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import and_, delete, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_event_club_organizer
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
 from app.models.club_member import ClubMember
-from app.models.event import Event, EventAttendee
+from app.models.event import Event
 from app.models.user import User
 from app.schemas.events import (
     AttendEventResponse,
@@ -23,8 +23,10 @@ from app.schemas.events import (
 from app.services.event_service import (
     attend_event_service,
     build_event_response,
+    cancel_attendance_service,
     fetch_enriched_event_list,
     get_event_or_404,
+    set_event_winner_service,
 )
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
@@ -108,11 +110,7 @@ async def cancel_attendance(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
-    await get_event_or_404(event_id, db)
-    await db.execute(
-        delete(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id))
-    )
-    await db.commit()
+    await cancel_attendance_service(event_id, current_user, db)
 
 
 @router.patch("/{event_id}")
@@ -187,27 +185,4 @@ async def set_event_winner(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
 ) -> EventResponse:
-    from app.exceptions import AppError
-    from app.models.user import User as UserModel
-
-    event = await get_event_or_404(event_id, db)
-    if event.status != "held":
-        raise AppError(400, "Event must be held to set a winner", "EVENT_NOT_HELD")
-
-    attendee = await db.execute(
-        select(EventAttendee).where(and_(EventAttendee.event_id == event_id, EventAttendee.user_id == body.winner_id))
-    )
-    if not attendee.scalar_one_or_none():
-        raise AppError(400, "Winner must be an attendee of this event", "WINNER_NOT_ATTENDEE")
-
-    winner_result = await db.execute(select(UserModel).where(UserModel.id == body.winner_id))
-    winner = winner_result.scalar_one_or_none()
-    if not winner:
-        raise AppError(404, "User not found", "USER_NOT_FOUND")
-
-    event.has_winner = True
-    event.winner_id = body.winner_id
-    event.winner_name = winner.display_name
-    await db.commit()
-    await db.refresh(event)
-    return await build_event_response(event, db, current_user.id)
+    return await set_event_winner_service(event_id, body.winner_id, current_user.id, db)

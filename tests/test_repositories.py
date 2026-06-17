@@ -6,10 +6,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
-from app.models.chat import ChatMessage, ChatRoom
+from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
 from app.models.club import Club
 from app.models.club_ban import ClubBan
+from app.models.club_join_request import ClubJoinRequest
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.quiz import Quiz, QuizAttempt, QuizQuestion, QuizSession
@@ -221,6 +223,190 @@ async def test_club_repo_membership(db_session):
     assert await repo.get_membership(club.id, user.id) is None
 
 
+@pytest.mark.asyncio
+async def test_club_repo_cascade_delete(db_session):
+    organizer = _user()
+    db_session.add(organizer)
+    club = _club(organizer_id=organizer.id)
+    db_session.add(club)
+
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    message = ChatMessage(
+        id=uuid.uuid4(), room_id=room.id, sender_id=organizer.id, text="Hi", timestamp=datetime.now(UTC)
+    )
+    db_session.add(message)
+    room_ban = ChatRoomBan(
+        id=uuid.uuid4(),
+        room_id=room.id,
+        user_id=organizer.id,
+        banned_by=organizer.id,
+        banned_until=datetime.now(UTC) + timedelta(days=1),
+    )
+    db_session.add(room_ban)
+
+    member = ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=organizer.id, role="organizer")
+    db_session.add(member)
+    club_ban = ClubBan(
+        id=uuid.uuid4(),
+        club_id=club.id,
+        user_id=organizer.id,
+        banned_by=organizer.id,
+        duration="permanent",
+    )
+    db_session.add(club_ban)
+    join_request = ClubJoinRequest(
+        id=uuid.uuid4(), club_id=club.id, user_id=organizer.id, status="pending", source="manual"
+    )
+    db_session.add(join_request)
+
+    event = _event(club_id=club.id)
+    db_session.add(event)
+    attendee = EventAttendee(event_id=event.id, user_id=organizer.id)
+    db_session.add(attendee)
+    await db_session.commit()
+
+    repo = ClubRepository(db_session)
+    await repo.cascade_delete(club.id)
+    await db_session.commit()
+
+    assert await repo.get_by_id(club.id) is None
+    assert await repo.count_members(club.id) == 0
+
+    rooms = (await db_session.execute(select(ChatRoom).where(ChatRoom.club_id == club.id))).scalars().all()
+    assert rooms == []
+    messages = (await db_session.execute(select(ChatMessage).where(ChatMessage.room_id == room.id))).scalars().all()
+    assert messages == []
+    room_bans = (await db_session.execute(select(ChatRoomBan).where(ChatRoomBan.room_id == room.id))).scalars().all()
+    assert room_bans == []
+    events = (await db_session.execute(select(Event).where(Event.club_id == club.id))).scalars().all()
+    assert events == []
+    attendees = (
+        (await db_session.execute(select(EventAttendee).where(EventAttendee.event_id == event.id))).scalars().all()
+    )
+    assert attendees == []
+
+
+@pytest.mark.asyncio
+async def test_club_repo_list_for_user_pagination(db_session):
+    user = _user()
+    db_session.add(user)
+    db_session.add_all(
+        [
+            _club(organizer_id=user.id, name="C1"),
+            _club(organizer_id=user.id, name="C2"),
+            _club(organizer_id=user.id, name="C3"),
+        ]
+    )
+    await db_session.commit()
+
+    repo = ClubRepository(db_session)
+    assert len(await repo.list_for_user(user.id, skip=0, limit=2)) == 2
+    assert len(await repo.list_for_user(user.id, skip=2, limit=2)) == 1
+    assert len(await repo.list_for_user(user.id, limit=20)) == 3
+
+
+@pytest.mark.asyncio
+async def test_club_repo_join_request_lookups(db_session):
+    organizer = _user()
+    requester = _user()
+    db_session.add_all([organizer, requester])
+    club = _club(organizer_id=organizer.id)
+    db_session.add(club)
+    await db_session.commit()
+
+    repo = ClubRepository(db_session)
+    assert await repo.get_join_request(club.id, requester.id) is None
+    assert await repo.get_pending_join_request(club.id, requester.id) is None
+    assert await repo.get_latest_join_request(club.id, requester.id) is None
+    assert await repo.list_pending_join_requests_with_users(club.id) == []
+
+    req = ClubJoinRequest(id=uuid.uuid4(), club_id=club.id, user_id=requester.id, status="pending", source="manual")
+    db_session.add(req)
+    await db_session.commit()
+
+    assert await repo.get_join_request(club.id, requester.id) is not None
+    assert await repo.get_pending_join_request(club.id, requester.id) is not None
+    latest = await repo.get_latest_join_request(club.id, requester.id)
+    assert latest is not None and latest.id == req.id
+
+    rows = await repo.list_pending_join_requests_with_users(club.id)
+    assert len(rows) == 1
+    found_req, found_user = rows[0]
+    assert found_req.id == req.id
+    assert found_user.id == requester.id
+
+    # Once decided, it's no longer pending.
+    req.status = "rejected"
+    await db_session.commit()
+    assert await repo.get_pending_join_request(club.id, requester.id) is None
+    assert await repo.list_pending_join_requests_with_users(club.id) == []
+    still_latest = await repo.get_latest_join_request(club.id, requester.id)
+    assert still_latest is not None and still_latest.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_club_repo_stats_aggregations(db_session):
+    organizer = _user()
+    member = _user(display_name="Member")
+    db_session.add_all([organizer, member])
+    club = _club(organizer_id=organizer.id)
+    db_session.add(club)
+    db_session.add(ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=member.id, role="member"))
+
+    held = _event(club_id=club.id, date_offset_days=-1, status="held", title="Held")
+    upcoming = _event(club_id=club.id, date_offset_days=5, status="scheduled", title="Soon")
+    db_session.add_all([held, upcoming])
+    db_session.add(EventAttendee(event_id=held.id, user_id=member.id))
+
+    quiz = Quiz(id=uuid.uuid4(), club_id=club.id, created_by=organizer.id, title="Quiz")
+    db_session.add(quiz)
+    db_session.add(QuizAttempt(id=uuid.uuid4(), quiz_id=quiz.id, user_id=member.id, score=5, total=5, answers=[0]))
+
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    db_session.add(
+        ChatMessage(id=uuid.uuid4(), room_id=room.id, sender_id=member.id, text="hi", timestamp=datetime.now(UTC))
+    )
+    db_session.add(
+        ChatRoomBan(
+            id=uuid.uuid4(),
+            room_id=room.id,
+            user_id=member.id,
+            banned_by=organizer.id,
+            banned_until=datetime.now(UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    repo = ClubRepository(db_session)
+    now = datetime.now(UTC)
+    since = now - timedelta(days=183)
+
+    active = await repo.top_active_members(club.id)
+    assert len(active) == 1
+    assert active[0][3] == 1
+
+    winners = await repo.top_quiz_winners(club.id)
+    assert len(winners) == 1
+    assert winners[0][3] == 1
+
+    recent = await repo.recent_held_events_with_attendance(club.id)
+    assert len(recent) == 1
+    assert recent[0][1] == "Held"
+    assert recent[0][3] == 1
+
+    assert await repo.count_events(club.id) == 2
+    assert await repo.count_messages(club.id) == 1
+    assert await repo.count_active_room_bans(club.id, now) == 1
+    assert await repo.count_upcoming_events(club.id, now) == 1
+
+    growth = await repo.member_growth_by_month(club.id, since)
+    assert sum(cnt for _, _, cnt in growth) == 1
+    freq = await repo.event_frequency_by_month(club.id, since)
+    assert sum(cnt for _, _, cnt in freq) == 2
+
+
 # ---------------------------------------------------------------------------
 # EventRepository
 # ---------------------------------------------------------------------------
@@ -370,6 +556,35 @@ async def test_event_repo_get_club_for_event(db_session):
     assert found_club.id == club.id
 
 
+@pytest.mark.asyncio
+async def test_event_repo_get_user(db_session):
+    user = _user()
+    db_session.add(user)
+    await db_session.commit()
+
+    repo = EventRepository(db_session)
+    found = await repo.get_user(user.id)
+    assert found is not None
+    assert found.id == user.id
+    assert await repo.get_user(uuid.uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_event_repo_get_membership_id(db_session):
+    user = _user()
+    db_session.add(user)
+    club = _club(organizer_id=user.id)
+    db_session.add(club)
+    await db_session.commit()
+    member = ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=user.id, role="member")
+    db_session.add(member)
+    await db_session.commit()
+
+    repo = EventRepository(db_session)
+    assert await repo.get_membership_id(club.id, user.id) == member.id
+    assert await repo.get_membership_id(club.id, uuid.uuid4()) is None
+
+
 # ---------------------------------------------------------------------------
 # ChatRepository
 # ---------------------------------------------------------------------------
@@ -426,6 +641,87 @@ async def test_chat_repo_messages(db_session):
     messages = await repo.list_messages(room.id)
     assert len(messages) == 1
     assert messages[0][1] == user.display_name
+
+
+@pytest.mark.asyncio
+async def test_chat_repo_get_room_by_name(db_session):
+    user = _user()
+    db_session.add(user)
+    club = _club(organizer_id=user.id)
+    db_session.add(club)
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    await db_session.commit()
+
+    repo = ChatRepository(db_session)
+    found = await repo.get_room_by_name(club.id, "General")
+    assert found is not None
+    assert found.id == room.id
+    assert await repo.get_room_by_name(club.id, "Nope") is None
+
+
+@pytest.mark.asyncio
+async def test_chat_repo_list_messages_paginated(db_session):
+    user = _user()
+    db_session.add(user)
+    club = _club(organizer_id=user.id)
+    db_session.add(club)
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    now = datetime.now(UTC)
+    old_msg = ChatMessage(
+        id=uuid.uuid4(), room_id=room.id, sender_id=user.id, text="Old", timestamp=now - timedelta(hours=2)
+    )
+    new_msg = ChatMessage(id=uuid.uuid4(), room_id=room.id, sender_id=user.id, text="New", timestamp=now)
+    db_session.add_all([old_msg, new_msg])
+    await db_session.commit()
+
+    repo = ChatRepository(db_session)
+    all_rows = await repo.list_messages_paginated(room.id)
+    assert [r[0].text for r in all_rows] == ["New", "Old"]
+
+    before = await repo.list_messages_paginated(room.id, before_id=new_msg.id)
+    assert len(before) == 1
+    assert before[0][0].text == "Old"
+    assert before[0][1] == user.display_name
+
+
+@pytest.mark.asyncio
+async def test_chat_repo_user_membership_ban_lookups(db_session):
+    user = _user()
+    other = _user()
+    db_session.add_all([user, other])
+    club = _club(organizer_id=user.id)
+    db_session.add(club)
+    room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
+    db_session.add(room)
+    member = ClubMember(id=uuid.uuid4(), club_id=club.id, user_id=user.id, role="member")
+    db_session.add(member)
+    await db_session.commit()
+
+    repo = ChatRepository(db_session)
+    assert (await repo.get_user_by_supabase_id(user.supabase_user_id)) is not None
+    assert (await repo.get_user_by_supabase_id(uuid.uuid4())) is None
+
+    assert (await repo.get_membership(club.id, user.id)) is not None
+    assert (await repo.get_membership(club.id, other.id)) is None
+
+    now = datetime.now(UTC)
+    assert (await repo.get_active_ban(room.id, user.id, now)) is None
+
+    ban = ChatRoomBan(
+        id=uuid.uuid4(),
+        room_id=room.id,
+        user_id=user.id,
+        banned_by=user.id,
+        banned_until=now + timedelta(hours=1),
+    )
+    db_session.add(ban)
+    await db_session.commit()
+    assert (await repo.get_active_ban(room.id, user.id, now)) is not None
+
+    expired = now + timedelta(hours=2)
+    assert (await repo.get_active_ban(room.id, user.id, expired)) is None
 
 
 @pytest.mark.asyncio
@@ -507,6 +803,10 @@ async def test_quiz_repo_questions(db_session):
     assert found is not None
     assert await repo.get_question(uuid.uuid4(), quiz.id) is None
 
+    by_ids = await repo.get_questions_by_ids(quiz.id, [q.id])
+    assert len(by_ids) == 1
+    assert await repo.get_questions_by_ids(quiz.id, [uuid.uuid4()]) == []
+
     assert await repo.count_questions(quiz.id) == 1
     assert await repo.count_questions(uuid.uuid4()) == 0
 
@@ -560,3 +860,12 @@ async def test_quiz_repo_attempts(db_session):
     attempt_obj, display_name, avatar_url = rows[0]
     assert attempt_obj.score == 3
     assert display_name == user.display_name
+
+    past = datetime.now(UTC) - timedelta(hours=1)
+    future = datetime.now(UTC) + timedelta(hours=1)
+    assert await repo.count_attempts_since(quiz.id, past) == 1
+    assert await repo.count_attempts_since(quiz.id, future) == 0
+
+    since_rows = await repo.get_attempts_with_users_since(quiz.id, past)
+    assert len(since_rows) == 1
+    assert await repo.get_attempts_with_users_since(quiz.id, future) == []

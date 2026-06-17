@@ -3,11 +3,11 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.quiz import Quiz, QuizAttempt, QuizQuestion, QuizSession
 from app.models.user import User
+from app.repositories import QuizRepository
 from app.schemas.quizzes import (
     AttemptResponse,
     LeaderboardEntry,
@@ -20,14 +20,57 @@ SESSION_NOT_FOUND = "Session not found"
 
 
 async def _get_quiz_or_404(quiz_id: uuid.UUID, db: AsyncSession) -> Quiz:
-    result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
-    quiz = result.scalar_one_or_none()
+    quiz = await QuizRepository(db).get_by_id(quiz_id)
     if quiz is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": QUIZ_NOT_FOUND, "code": "QUIZ_NOT_FOUND"},
         )
     return quiz
+
+
+async def list_quizzes(club_id: uuid.UUID, db: AsyncSession, skip: int, limit: int) -> list[Quiz]:
+    return await QuizRepository(db).list_for_club(club_id, skip=skip, limit=limit)
+
+
+async def list_questions(quiz_id: uuid.UUID, db: AsyncSession) -> list[QuizQuestion]:
+    return await QuizRepository(db).get_questions(quiz_id)
+
+
+async def count_questions(quiz_id: uuid.UUID, db: AsyncSession) -> int:
+    return await QuizRepository(db).count_questions(quiz_id)
+
+
+async def get_question(question_id: uuid.UUID, quiz_id: uuid.UUID, db: AsyncSession) -> QuizQuestion | None:
+    return await QuizRepository(db).get_question(question_id, quiz_id)
+
+
+async def get_questions_by_ids(
+    quiz_id: uuid.UUID, question_ids: list[uuid.UUID], db: AsyncSession
+) -> list[QuizQuestion]:
+    return await QuizRepository(db).get_questions_by_ids(quiz_id, question_ids)
+
+
+async def get_active_session(quiz_id: uuid.UUID, db: AsyncSession) -> tuple[QuizSession, int]:
+    repo = QuizRepository(db)
+    session = await repo.get_active_session(quiz_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
+        )
+    participant_count = await repo.count_attempts_since(quiz_id, session.started_at)
+    return session, participant_count
+
+
+async def get_session_or_404(session_id: uuid.UUID, quiz_id: uuid.UUID, db: AsyncSession) -> QuizSession:
+    session = await QuizRepository(db).get_session(session_id, quiz_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
+        )
+    return session
 
 
 async def submit_quiz_attempt(
@@ -37,6 +80,7 @@ async def submit_quiz_attempt(
     db: AsyncSession,
 ) -> AttemptResponse:
     """Score and persist a quiz attempt for the current user."""
+    repo = QuizRepository(db)
     quiz = await _get_quiz_or_404(quiz_id, db)
 
     if not quiz.is_active:
@@ -45,10 +89,7 @@ async def submit_quiz_attempt(
             detail={"error": "Quiz is not active", "code": "QUIZ_NOT_ACTIVE"},
         )
 
-    questions_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id).order_by(QuizQuestion.position)
-    )
-    questions_db = questions_result.scalars().all()
+    questions_db = await repo.get_questions(quiz_id)
     total = len(questions_db)
 
     score = sum(1 for i, q in enumerate(questions_db) if i < len(body.answers) and body.answers[i] == q.correct_index)
@@ -82,31 +123,20 @@ async def get_quiz_leaderboard(
     db: AsyncSession,
 ) -> LeaderboardResponse:
     """Build a ranked leaderboard for a specific quiz session."""
+    repo = QuizRepository(db)
     await _get_quiz_or_404(quiz_id, db)
 
-    session_result = await db.execute(
-        select(QuizSession).where(QuizSession.id == session_id, QuizSession.quiz_id == quiz_id)
-    )
-    # M-4: retain session object to use started_at for scoping attempts
-    session_obj = session_result.scalar_one_or_none()
+    session_obj = await repo.get_session(session_id, quiz_id)
     if session_obj is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": SESSION_NOT_FOUND, "code": "SESSION_NOT_FOUND"},
         )
 
-    total_questions_result = await db.execute(
-        select(func.count()).select_from(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
-    )
-    total_questions = total_questions_result.scalar() or 0
+    total_questions = await repo.count_questions(quiz_id)
 
-    attempts_result = await db.execute(
-        select(QuizAttempt, User.display_name, User.avatar_url)
-        .join(User, QuizAttempt.user_id == User.id)
-        .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.created_at >= session_obj.started_at)
-        .order_by(QuizAttempt.score.desc(), QuizAttempt.created_at.asc())
-    )
-    rows = attempts_result.all()
+    # M-4: scope attempts to this session via started_at
+    rows = await repo.get_attempts_with_users_since(quiz_id, session_obj.started_at)
 
     seen_users: dict[str, LeaderboardEntry] = {}
     rank = 1

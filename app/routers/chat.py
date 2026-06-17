@@ -7,16 +7,13 @@ from typing import Annotated, Any, TypedDict
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.dependencies import get_current_user, get_db_dep, get_settings_dep, is_club_organizer, require_club_organizer
-from app.exceptions import AppError
-from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
-from app.models.club_member import ClubMember
-from app.models.event import Event, EventAttendee
+from app.dependencies import get_current_user, get_db_dep, get_settings_dep
+from app.models.chat import ChatMessage, ChatRoom
 from app.models.user import User
+from app.repositories import ChatRepository
 from app.schemas.chat import (
     BanFromRoomRequest,
     ChatMessageResponse,
@@ -27,7 +24,19 @@ from app.schemas.chat import (
     UnreadCountResponse,
 )
 from app.services.auth_service import decode_access_token
-from app.services.chat_service import check_user_ban, get_room_or_404
+from app.services.chat_service import (
+    ban_from_room_service,
+    create_chat_room_service,
+    create_event_chat_room_service,
+    delete_chat_room_service,
+    delete_message_service,
+    get_event_chat_room_service,
+    get_unread_count_service,
+    list_chat_rooms_service,
+    list_messages_service,
+    mark_room_as_read_service,
+    send_message_service,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -101,9 +110,7 @@ async def get_chat_rooms(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[ChatRoomResponse]:
-    result = await db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id).distinct())
-    rooms = result.scalars().unique().all()
-    return [ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms]
+    return await list_chat_rooms_service(club_id, db)
 
 
 @router.post("/clubs/{club_id}/chat/rooms", status_code=status.HTTP_201_CREATED)
@@ -113,17 +120,7 @@ async def create_chat_room(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatRoomResponse:
-    await require_club_organizer(club_id, current_user, db)
-
-    existing = await db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id, ChatRoom.name == body.name))
-    if existing.scalar_one_or_none() is not None:
-        raise AppError(409, "A room with this name already exists in the club", "ROOM_NAME_DUPLICATE")
-
-    room = ChatRoom(id=uuid.uuid4(), club_id=club_id, name=body.name)
-    db.add(room)
-    await db.commit()
-    await db.refresh(room)
-    return ChatRoomResponse(id=str(room.id), name=room.name, eventId=None)
+    return await create_chat_room_service(club_id, body, current_user, db)
 
 
 @router.get("/chat/rooms/{room_id}/messages", status_code=status.HTTP_200_OK)
@@ -134,41 +131,7 @@ async def get_messages(
     before_id: str | None = None,
     limit: int = 50,
 ) -> list[ChatMessageResponse]:
-    await get_room_or_404(room_id, db)
-
-    query = (
-        select(ChatMessage, User.display_name)
-        .join(User, ChatMessage.sender_id == User.id)
-        .where(ChatMessage.room_id == room_id)
-    )
-
-    # MN-6: ID-based cursor pagination — no timestamp collision issues
-    if before_id:
-        try:
-            cursor_uuid = uuid.UUID(before_id)
-        except ValueError as exc:
-            raise AppError(422, "Invalid cursor", "INVALID_CURSOR") from exc
-        cursor_ts_subq = select(ChatMessage.timestamp).where(ChatMessage.id == cursor_uuid).scalar_subquery()
-        query = query.where(
-            (ChatMessage.timestamp < cursor_ts_subq)
-            | ((ChatMessage.timestamp == cursor_ts_subq) & (ChatMessage.id < cursor_uuid))
-        )
-
-    query = query.order_by(ChatMessage.timestamp.desc(), ChatMessage.id.desc()).limit(limit)
-    rows = (await db.execute(query)).all()
-
-    messages = [
-        ChatMessageResponse(
-            id=str(msg.id),
-            senderId=str(msg.sender_id),
-            senderName=display_name,
-            text=msg.text,
-            timestamp=msg.timestamp.isoformat(),
-        )
-        for msg, display_name in rows
-    ]
-    messages.reverse()
-    return messages
+    return await list_messages_service(room_id, db, before_id=before_id, limit=limit)
 
 
 @router.post("/chat/rooms/{room_id}/messages", status_code=status.HTTP_201_CREATED)
@@ -178,16 +141,7 @@ async def send_message(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatMessageResponse:
-    await get_room_or_404(room_id, db)
-
-    # MN-4: check if user is banned from this room
-    if await check_user_ban(room_id, current_user.id, db):
-        raise AppError(403, "You are banned from this room", "ROOM_BANNED")
-
-    msg = ChatMessage(room_id=room_id, sender_id=current_user.id, text=body.text)
-    db.add(msg)
-    await db.commit()
-    await db.refresh(msg)
+    msg = await send_message_service(room_id, body.text, current_user, db)
 
     payload: MessagePayload = {
         "id": str(msg.id),
@@ -214,20 +168,7 @@ async def delete_message(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    msg_result = await db.execute(
-        select(ChatMessage).where(ChatMessage.id == message_id, ChatMessage.room_id == room_id)
-    )
-    msg = msg_result.scalar_one_or_none()
-    if msg is None:
-        raise AppError(status.HTTP_404_NOT_FOUND, "Message not found", "MESSAGE_NOT_FOUND")
-
-    if msg.sender_id != current_user.id:
-        room = await get_room_or_404(room_id, db)
-        if not await is_club_organizer(room.club_id, current_user.id, db):
-            raise AppError(status.HTTP_403_FORBIDDEN, "Not authorized to delete this message", "FORBIDDEN")
-
-    await db.delete(msg)
-    await db.commit()
+    await delete_message_service(room_id, message_id, current_user, db)
 
 
 @router.post("/chat/rooms/{room_id}/ban", status_code=status.HTTP_204_NO_CONTENT)
@@ -237,22 +178,7 @@ async def ban_from_room(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    room = await get_room_or_404(room_id, db)
-    await require_club_organizer(room.club_id, current_user, db)
-
-    banned_until = None
-    if body.duration_seconds > 0:
-        banned_until = datetime.now(UTC) + timedelta(seconds=body.duration_seconds)
-
-    ban = ChatRoomBan(
-        id=uuid.uuid4(),
-        room_id=room_id,
-        user_id=uuid.UUID(body.user_id),
-        banned_by=current_user.id,
-        banned_until=banned_until,
-    )
-    db.add(ban)
-    await db.commit()
+    await ban_from_room_service(room_id, body, current_user, db)
 
 
 # ── Feature 5: read/unread tracking ──────────────────────────────────────────
@@ -266,37 +192,7 @@ async def mark_room_as_read(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> None:
     """Mark messages in a room as read up to `last_read_message_id`."""
-    # Validate the message exists in this room.
-    msg_result = await db.execute(
-        select(ChatMessage).where(
-            ChatMessage.id == uuid.UUID(body.last_read_message_id),
-            ChatMessage.room_id == room_id,
-        )
-    )
-    if msg_result.scalar_one_or_none() is None:
-        raise AppError(404, "Message not found", "MESSAGE_NOT_FOUND")
-
-    # Upsert: insert or update the read pointer.
-    existing = await db.execute(
-        select(MessageRead).where(
-            MessageRead.user_id == current_user.id,
-            MessageRead.room_id == room_id,
-        )
-    )
-    read_row = existing.scalar_one_or_none()
-    if read_row is None:
-        read_row = MessageRead(
-            user_id=current_user.id,
-            room_id=room_id,
-            last_read_message_id=uuid.UUID(body.last_read_message_id),
-        )
-        db.add(read_row)
-    else:
-        read_row.last_read_message_id = uuid.UUID(body.last_read_message_id)
-        from sqlalchemy.sql import func as sqlfunc
-
-        read_row.updated_at = sqlfunc.now()
-    await db.commit()
+    await mark_room_as_read_service(room_id, body, current_user, db)
 
 
 @router.get("/chat/rooms/{room_id}/unread-count", status_code=status.HTTP_200_OK)
@@ -306,41 +202,7 @@ async def get_unread_count(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UnreadCountResponse:
     """Return the number of unread messages and the last-read message id."""
-    from sqlalchemy import func as sqlfunc
-
-    # Load the user's read pointer for this room.
-    read_result = await db.execute(
-        select(MessageRead).where(
-            MessageRead.user_id == current_user.id,
-            MessageRead.room_id == room_id,
-        )
-    )
-    read_row = read_result.scalar_one_or_none()
-
-    if read_row is None or read_row.last_read_message_id is None:
-        # No read pointer → all messages are unread.
-        total = await db.scalar(select(sqlfunc.count()).where(ChatMessage.room_id == room_id))
-        return UnreadCountResponse(
-            room_id=str(room_id),
-            unread_count=int(total or 0),
-            last_read_message_id=None,
-        )
-
-    # Count messages with a timestamp strictly after the last-read message.
-    last_ts_subq = (
-        select(ChatMessage.timestamp).where(ChatMessage.id == read_row.last_read_message_id).scalar_subquery()
-    )
-    count = await db.scalar(
-        select(sqlfunc.count()).where(
-            ChatMessage.room_id == room_id,
-            ChatMessage.timestamp > last_ts_subq,
-        )
-    )
-    return UnreadCountResponse(
-        room_id=str(room_id),
-        unread_count=int(count or 0),
-        last_read_message_id=str(read_row.last_read_message_id),
-    )
+    return await get_unread_count_service(room_id, current_user, db)
 
 
 async def _ws_authenticate(
@@ -368,24 +230,17 @@ async def _ws_authenticate(
     # any ClubMember row that was committed by a preceding POST /join request —
     # this is the root-cause fix for the WS-403-after-join bug.
     await db.rollback()
+    repo = ChatRepository(db)
     user_id = token_data.get("sub")
-    user_result = await db.execute(select(User).where(User.supabase_user_id == uuid.UUID(str(user_id))))
-    user = user_result.scalar_one_or_none()
+    user = await repo.get_user_by_supabase_id(uuid.UUID(str(user_id)))
     if not user:
         await websocket.close(code=1008)
         return None
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.id == uuid.UUID(room_id)))
-    room = room_result.scalar_one_or_none()
+    room = await repo.get_room(uuid.UUID(room_id))
     if not room:
         await websocket.close(code=1008)
         return None
-    member_result = await db.execute(
-        select(ClubMember).where(
-            ClubMember.club_id == room.club_id,
-            ClubMember.user_id == user.id,
-        )
-    )
-    if member_result.scalar_one_or_none() is None:
+    if await repo.get_membership(room.club_id, user.id) is None:
         await websocket.close(code=1008)
         return None
     return user, room
@@ -421,19 +276,15 @@ async def websocket_endpoint(
     ban_cache_expires: datetime = datetime.now(UTC)
     _msg_timestamps: deque[float] = deque(maxlen=10)
 
+    ban_repo = ChatRepository(db)
+
     async def check_ban_cached() -> bool:
         nonlocal ban_cache_result, ban_cache_expires
         now_ = datetime.now(UTC)
         if ban_cache_result is not None and now_ < ban_cache_expires:
             return ban_cache_result
-        ban_q = await db.execute(
-            select(ChatRoomBan).where(
-                ChatRoomBan.room_id == uuid.UUID(room_id),
-                ChatRoomBan.user_id == user.id,
-                (ChatRoomBan.banned_until.is_(None)) | (ChatRoomBan.banned_until > now_),
-            )
-        )
-        ban_cache_result = ban_q.scalar_one_or_none() is not None
+        ban = await ban_repo.get_active_ban(uuid.UUID(room_id), user.id, now_)
+        ban_cache_result = ban is not None
         ban_cache_expires = now_ + timedelta(seconds=_ban_cache_ttl)
         return ban_cache_result
 
@@ -497,19 +348,7 @@ async def delete_chat_room(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> None:
     """Delete a chat room. Only the club organizer may do this."""
-    from sqlalchemy import delete as sa_delete
-
-    room = await get_room_or_404(room_id, db)
-    await require_club_organizer(room.club_id, current_user, db)
-
-    # Delete child records that may not have CASCADE FK constraints.
-    # MessageRead and ChatRoomBan reference chat_rooms.id; ChatMessage also does.
-    # We delete them explicitly to be safe regardless of migration history.
-    await db.execute(sa_delete(MessageRead).where(MessageRead.room_id == room_id))
-    await db.execute(sa_delete(ChatRoomBan).where(ChatRoomBan.room_id == room_id))
-    await db.execute(sa_delete(ChatMessage).where(ChatMessage.room_id == room_id))
-    await db.delete(room)
-    await db.commit()
+    await delete_chat_room_service(room_id, current_user, db)
 
 
 @router.post("/events/{event_id}/chat/room", status_code=status.HTTP_201_CREATED)
@@ -518,22 +357,7 @@ async def create_event_chat_room(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatRoomResponse:
-    event_result = await db.execute(select(Event).where(Event.id == event_id))
-    event = event_result.scalar_one_or_none()
-    if event is None:
-        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
-
-    await require_club_organizer(event.club_id, current_user, db)
-
-    existing_result = await db.execute(select(ChatRoom).where(ChatRoom.event_id == event_id))
-    if existing_result.scalar_one_or_none() is not None:
-        raise AppError(409, "Event chat room already exists", "EVENT_CHAT_ALREADY_EXISTS")
-
-    room = ChatRoom(club_id=event.club_id, event_id=event_id, name=event.title + " · Chat")
-    db.add(room)
-    await db.commit()
-    await db.refresh(room)
-    return ChatRoomResponse(id=str(room.id), name=room.name, eventId=str(room.event_id) if room.event_id else None)
+    return await create_event_chat_room_service(event_id, current_user, db)
 
 
 @router.get("/events/{event_id}/chat/room", status_code=status.HTTP_200_OK)
@@ -542,25 +366,4 @@ async def get_event_chat_room(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ChatRoomResponse:
-    event_result = await db.execute(select(Event).where(Event.id == event_id))
-    event = event_result.scalar_one_or_none()
-    if event is None:
-        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
-
-    organizer = await is_club_organizer(event.club_id, current_user.id, db)
-    if not organizer:
-        attendee_result = await db.execute(
-            select(EventAttendee).where(
-                EventAttendee.event_id == event_id,
-                EventAttendee.user_id == current_user.id,
-            )
-        )
-        if attendee_result.scalar_one_or_none() is None:
-            raise AppError(403, "Access denied", "FORBIDDEN")
-
-    room_result = await db.execute(select(ChatRoom).where(ChatRoom.event_id == event_id))
-    room = room_result.scalar_one_or_none()
-    if room is None:
-        raise AppError(404, "Event chat not found", "EVENT_CHAT_NOT_FOUND")
-
-    return ChatRoomResponse(id=str(room.id), name=room.name, eventId=str(room.event_id) if room.event_id else None)
+    return await get_event_chat_room_service(event_id, current_user, db)
