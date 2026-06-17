@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -582,19 +581,11 @@ async def get_club_stats_service(club_id: uuid.UUID, db: AsyncSession) -> ClubSt
     now = datetime.now(UTC)
     six_months_ago = now - timedelta(days=183)
 
-    (
-        total_members,
-        total_events,
-        total_messages,
-        banned_users_count,
-        upcoming_events_count,
-    ) = await asyncio.gather(
-        repo.count_members(club_id),
-        repo.count_events(club_id),
-        repo.count_messages(club_id),
-        repo.count_active_room_bans(club_id, now),
-        repo.count_upcoming_events(club_id, now),
-    )
+    total_members = await repo.count_members(club_id)
+    total_events = await repo.count_events(club_id)
+    total_messages = await repo.count_messages(club_id)
+    banned_users_count = await repo.count_active_room_bans(club_id, now)
+    upcoming_events_count = await repo.count_upcoming_events(club_id, now)
 
     member_growth = [
         MonthlyStatRow(month=f"{yr:04d}-{mo:02d}", count=cnt)
