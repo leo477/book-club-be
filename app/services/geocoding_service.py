@@ -19,6 +19,8 @@ logger = structlog.get_logger(__name__)
 
 _PLACE_ID_RE = re.compile(r"^[A-Za-z0-9_\-:+]{1,500}$")
 
+_GEOCODING_UNAVAILABLE = "Geocoding service unavailable"
+
 
 async def photon_autocomplete(
     q: str,
@@ -57,7 +59,7 @@ async def photon_autocomplete(
                 data = await response.json()
     except Exception as exc:
         logger.error("Photon geocoding request failed", error=str(exc), exc_type=type(exc).__name__)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Geocoding service unavailable") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_GEOCODING_UNAVAILABLE) from exc
 
     suggestions: list[GeocodeSuggestion] = []
     for feature in data.get("features", []):
@@ -101,7 +103,7 @@ async def google_places_autocomplete(
                 data = await response.json()
     except Exception as exc:
         logger.error("Google Places autocomplete failed", error=str(exc))
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Geocoding service unavailable") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_GEOCODING_UNAVAILABLE) from exc
 
     suggestions: list[GeocodeSuggestion] = []
     for item in data.get("suggestions", [])[:limit]:
@@ -141,7 +143,7 @@ async def google_place_details(
                 data = await response.json()
     except Exception as exc:
         logger.error("Google Place details failed", error=str(exc))
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Geocoding service unavailable") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_GEOCODING_UNAVAILABLE) from exc
 
     city: str | None = None
     country: str | None = None

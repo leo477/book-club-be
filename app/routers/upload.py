@@ -18,6 +18,7 @@ _ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/png", "
 _MAX_FILE_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
 
 
+# noinspection PyUnusedLocal
 @router.post("/cover", responses={503: {"description": "Storage not configured"}})
 @limiter.limit("10/minute")
 async def upload_cover(

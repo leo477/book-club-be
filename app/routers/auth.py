@@ -149,6 +149,7 @@ def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
     )
 
 
+# noinspection PyUnusedLocal
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=None)
 @limiter.limit("5/minute")
 async def register(
@@ -210,6 +211,7 @@ async def register(
     )
 
 
+# noinspection PyUnusedLocal
 @router.post("/login", status_code=status.HTTP_200_OK)
 @limiter.limit("10/minute")
 async def login(
@@ -314,19 +316,21 @@ async def oauth_callback(
     if not code:
         return _redirect(_OAUTH_FAILED_PATH)
     client = await get_supabase_client(settings)
+    # noinspection PyBroadException
     try:
         auth_response = await supabase_exchange_code(client, code)
     except HTTPException:
         return _redirect(_OAUTH_FAILED_PATH)
-    except Exception:
+    except Exception:  # intentional: any failure redirects to the OAuth failure page
         logger.exception("Unexpected error during OAuth code exchange")
         return _redirect(_OAUTH_FAILED_PATH)
     if auth_response.user is None or auth_response.session is None:
         return _redirect(_OAUTH_FAILED_PATH)
 
+    # noinspection PyBroadException
     try:
         await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
-    except Exception:
+    except Exception:  # intentional: provisioning failure redirects to login
         await db.rollback()
         logger.exception("Failed to provision user during OAuth callback")
         return _redirect("/login?oauth=failed")
