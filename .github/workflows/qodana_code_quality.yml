@@ -65,7 +65,7 @@ jobs:
         # found problems (kept non-blocking), while a failed scan with NO report
         # means the scan never ran (e.g. an invalid/declined QODANA_TOKEN) — that
         # must turn the job red instead of silently passing.
-        if: always() && github.event_name == 'push' && steps.qodana.outcome == 'failure' && hashFiles(format('{0}/qodana/results/qodana.sarif.json', runner.temp)) == ''
+        if: always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.qodana.outcome == 'failure' && hashFiles(format('{0}/qodana/results/qodana.sarif.json', runner.temp)) == ''
         run: |
           echo "::error::Qodana scan did not produce a report — likely an invalid or declined QODANA_TOKEN, or an infrastructure error. Check the 'Qodana Scan' step logs."
           exit 1
