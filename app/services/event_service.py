@@ -5,14 +5,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import status as http_status
-from sqlalchemy import and_, func, select
-from sqlalchemy import select as sa_select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import AppError
 from app.models.event import Event, EventAttendee
 from app.models.user import User
+from app.repositories import EventRepository
 from app.schemas.events import AfterMeetingVenueSchema, AttendEventResponse, EventResponse
 
 
@@ -171,8 +171,7 @@ async def fetch_enriched_event_list(
 
 
 async def get_event_or_404(event_id: uuid.UUID, db: AsyncSession) -> Event:
-    result = await db.execute(select(Event).where(Event.id == event_id))
-    event = result.scalar_one_or_none()
+    event = await EventRepository(db).get_by_id(event_id)
     if not event:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
     return event
@@ -183,6 +182,7 @@ async def attend_event_service(
     current_user: User,
     db: AsyncSession,
 ) -> AttendEventResponse:
+    repo = EventRepository(db)
     event = await get_event_or_404(event_id, db)
 
     if event.status == "cancelled":
@@ -192,34 +192,22 @@ async def attend_event_service(
     if event_date - datetime.now(tz=UTC) < timedelta(days=3):
         raise AppError(http_status.HTTP_400_BAD_REQUEST, "Registration closed", "REGISTRATION_CLOSED")
 
-    existing = await db.execute(
-        sa_select(EventAttendee).where(
-            and_(EventAttendee.event_id == event_id, EventAttendee.user_id == current_user.id)
-        )
-    )
-    if existing.scalar_one_or_none() is not None:
+    if await repo.get_attendance(event_id, current_user.id) is not None:
         raise AppError(http_status.HTTP_409_CONFLICT, "Already attending", "ALREADY_ATTENDING")
 
-    db.add(EventAttendee(event_id=event_id, user_id=current_user.id))
+    repo.add_attendee(EventAttendee(event_id=event_id, user_id=current_user.id))
     try:
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
         raise AppError(http_status.HTTP_409_CONFLICT, "Already attending", "ALREADY_ATTENDING") from exc
 
-    count_result = await db.execute(
-        sa_select(func.count()).select_from(EventAttendee).where(EventAttendee.event_id == event_id)
-    )
-    attendee_count = count_result.scalar() or 0
+    attendee_count = await repo.count_attendees(event_id)
 
-    from app.models.club_member import ClubMember
     from app.services.club_service import request_join_club_service
 
-    member_result = await db.execute(
-        sa_select(ClubMember.id).where(and_(ClubMember.club_id == event.club_id, ClubMember.user_id == current_user.id))
-    )
     join_request_status: Literal["none", "pending", "member"]
-    if member_result.scalar_one_or_none() is not None:
+    if await repo.get_membership_id(event.club_id, current_user.id) is not None:
         join_request_status = "member"
     else:
         try:
@@ -242,29 +230,55 @@ async def build_event_response(
     club_name: str | None = None,
     organizer_id: uuid.UUID | None = None,
 ) -> EventResponse:
-    count_result = await db.execute(
-        select(func.count()).select_from(EventAttendee).where(EventAttendee.event_id == event.id)
-    )
-    attendee_count = count_result.scalar() or 0
+    repo = EventRepository(db)
+    attendee_count = await repo.count_attendees(event.id)
 
     is_attending = False
     if current_user_id is not None:
-        attending_result = await db.execute(
-            select(EventAttendee).where(
-                EventAttendee.event_id == event.id,
-                EventAttendee.user_id == current_user_id,
-            )
-        )
-        is_attending = attending_result.scalar_one_or_none() is not None
+        is_attending = await repo.get_attendance(event.id, current_user_id) is not None
 
     # Load club info if not provided
     if club_name is None or organizer_id is None:
-        from app.models.club import Club
-
-        club_result = await db.execute(select(Club).where(Club.id == event.club_id))
-        club = club_result.scalar_one_or_none()
+        club = await repo.get_club_for_event(event)
         if club:
             club_name = club_name or club.name
             organizer_id = organizer_id or club.organizer_id
 
     return _assemble_event_response(event, attendee_count, is_attending, club_name or "", organizer_id)
+
+
+async def cancel_attendance_service(
+    event_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> None:
+    repo = EventRepository(db)
+    await get_event_or_404(event_id, db)
+    await repo.remove_attendee(event_id, current_user.id)
+    await db.commit()
+
+
+async def set_event_winner_service(
+    event_id: uuid.UUID,
+    winner_id: uuid.UUID,
+    current_user_id: uuid.UUID,
+    db: AsyncSession,
+) -> EventResponse:
+    repo = EventRepository(db)
+    event = await get_event_or_404(event_id, db)
+    if event.status != "held":
+        raise AppError(400, "Event must be held to set a winner", "EVENT_NOT_HELD")
+
+    if await repo.get_attendance(event_id, winner_id) is None:
+        raise AppError(400, "Winner must be an attendee of this event", "WINNER_NOT_ATTENDEE")
+
+    winner = await repo.get_user(winner_id)
+    if not winner:
+        raise AppError(404, "User not found", "USER_NOT_FOUND")
+
+    event.has_winner = True
+    event.winner_id = winner_id
+    event.winner_name = winner.display_name
+    await db.commit()
+    await db.refresh(event)
+    return await build_event_response(event, db, current_user_id)

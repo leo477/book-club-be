@@ -52,6 +52,9 @@ jobs:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
       - name: 'Upload SARIF to GitHub Security tab'
         uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
-        if: always() && github.event_name == 'push'
+        # Only upload when the scan actually produced a SARIF report. The Qodana
+        # step is continue-on-error, so a failed scan (e.g. declined license
+        # token) would otherwise leave the job red on a missing file.
+        if: always() && github.event_name == 'push' && hashFiles(format('{0}/qodana/results/qodana.sarif.json', runner.temp)) != ''
         with:
           sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json

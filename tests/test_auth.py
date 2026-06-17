@@ -77,7 +77,7 @@ async def test_oauth_callback_success_redirects_to_resolved_origin(no_redirect_c
     resp = await no_redirect_client.get(
         "/api/v1/auth/callback",
         params={"code": "good-code"},
-        cookies={"fe_origin": _VALID_ORIGIN},
+        headers={"Cookie": f"fe_origin={_VALID_ORIGIN}"},
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == f"{_VALID_ORIGIN}/auth/callback"
@@ -89,7 +89,7 @@ async def test_oauth_callback_failure_uses_resolved_origin(no_redirect_client):
     resp = await no_redirect_client.get(
         "/api/v1/auth/callback",
         params={"code": "bad-code"},
-        cookies={"fe_origin": _VALID_ORIGIN},
+        headers={"Cookie": f"fe_origin={_VALID_ORIGIN}"},
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == f"{_VALID_ORIGIN}/login?oauth=failed"
@@ -100,7 +100,7 @@ async def test_oauth_callback_evil_cookie_falls_back_to_frontend_url(no_redirect
     resp = await no_redirect_client.get(
         "/api/v1/auth/callback",
         params={"code": "good-code"},
-        cookies={"fe_origin": "https://evil.com"},
+        headers={"Cookie": "fe_origin=https://evil.com"},
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == "http://localhost:4200/auth/callback"
@@ -200,7 +200,7 @@ async def test_refresh_no_cookie(async_client):
 
 @pytest.mark.asyncio
 async def test_refresh_invalid_token(async_client):
-    resp = await async_client.post("/api/v1/auth/refresh", cookies={"refresh_token": "bad-token"})
+    resp = await async_client.post("/api/v1/auth/refresh", headers={"Cookie": "refresh_token=bad-token"})
     assert resp.status_code == 401
     assert resp.json()["detail"]["code"] == "INVALID_REFRESH_TOKEN"
 
@@ -208,7 +208,7 @@ async def test_refresh_invalid_token(async_client):
 @pytest.mark.asyncio
 async def test_refresh_success(async_client, register_user):
     await register_user()
-    resp = await async_client.post("/api/v1/auth/refresh", cookies={"refresh_token": "fake-refresh-token"})
+    resp = await async_client.post("/api/v1/auth/refresh", headers={"Cookie": "refresh_token=fake-refresh-token"})
     assert resp.status_code == 200
     assert "accessToken" in resp.json()
 

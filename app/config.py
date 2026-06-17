@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
     LOG_LEVEL: str = "INFO"
     ENV: str = "development"
+    # Start in-process background loops (e.g. chat-room cleanup). On a multi-instance
+    # deploy only ONE instance should set this true, to avoid duplicating periodic work.
+    RUN_BACKGROUND_TASKS: bool = True
 
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
