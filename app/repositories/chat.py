@@ -24,9 +24,7 @@ class ChatRepository:
         return list(result.scalars().unique().all())
 
     async def get_room_by_name(self, club_id: uuid.UUID, name: str) -> ChatRoom | None:
-        result = await self.db.execute(
-            select(ChatRoom).where(ChatRoom.club_id == club_id, ChatRoom.name == name)
-        )
+        result = await self.db.execute(select(ChatRoom).where(ChatRoom.club_id == club_id, ChatRoom.name == name))
         return result.scalar_one_or_none()
 
     async def get_user_by_supabase_id(self, supabase_user_id: uuid.UUID) -> User | None:
@@ -39,9 +37,7 @@ class ChatRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_active_ban(
-        self, room_id: uuid.UUID, user_id: uuid.UUID, now: datetime
-    ) -> ChatRoomBan | None:
+    async def get_active_ban(self, room_id: uuid.UUID, user_id: uuid.UUID, now: datetime) -> ChatRoomBan | None:
         result = await self.db.execute(
             select(ChatRoomBan).where(
                 ChatRoomBan.room_id == room_id,

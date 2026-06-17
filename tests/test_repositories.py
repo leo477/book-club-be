@@ -282,8 +282,8 @@ async def test_club_repo_cascade_delete(db_session):
     events = (await db_session.execute(select(Event).where(Event.club_id == club.id))).scalars().all()
     assert events == []
     attendees = (
-        await db_session.execute(select(EventAttendee).where(EventAttendee.event_id == event.id))
-    ).scalars().all()
+        (await db_session.execute(select(EventAttendee).where(EventAttendee.event_id == event.id))).scalars().all()
+    )
     assert attendees == []
 
 
@@ -321,9 +321,7 @@ async def test_club_repo_join_request_lookups(db_session):
     assert await repo.get_latest_join_request(club.id, requester.id) is None
     assert await repo.list_pending_join_requests_with_users(club.id) == []
 
-    req = ClubJoinRequest(
-        id=uuid.uuid4(), club_id=club.id, user_id=requester.id, status="pending", source="manual"
-    )
+    req = ClubJoinRequest(id=uuid.uuid4(), club_id=club.id, user_id=requester.id, status="pending", source="manual")
     db_session.add(req)
     await db_session.commit()
 
@@ -363,9 +361,7 @@ async def test_club_repo_stats_aggregations(db_session):
 
     quiz = Quiz(id=uuid.uuid4(), club_id=club.id, created_by=organizer.id, title="Quiz")
     db_session.add(quiz)
-    db_session.add(
-        QuizAttempt(id=uuid.uuid4(), quiz_id=quiz.id, user_id=member.id, score=5, total=5, answers=[0])
-    )
+    db_session.add(QuizAttempt(id=uuid.uuid4(), quiz_id=quiz.id, user_id=member.id, score=5, total=5, answers=[0]))
 
     room = ChatRoom(id=uuid.uuid4(), club_id=club.id, name="General")
     db_session.add(room)

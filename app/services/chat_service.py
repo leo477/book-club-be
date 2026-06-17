@@ -44,9 +44,7 @@ async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSessio
 async def list_chat_rooms_service(club_id: uuid.UUID, db: AsyncSession) -> list[ChatRoomResponse]:
     repo = ChatRepository(db)
     rooms = await repo.list_rooms(club_id)
-    return [
-        ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms
-    ]
+    return [ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms]
 
 
 async def create_chat_room_service(

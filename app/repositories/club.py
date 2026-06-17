@@ -131,9 +131,7 @@ class ClubRepository:
 
     async def get_join_request(self, club_id: uuid.UUID, user_id: uuid.UUID) -> ClubJoinRequest | None:
         result = await self.db.execute(
-            select(ClubJoinRequest).where(
-                and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == user_id)
-            )
+            select(ClubJoinRequest).where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == user_id))
         )
         return result.scalar_one_or_none()
 
@@ -252,9 +250,7 @@ class ClubRepository:
         )
         return int(result.scalar() or 0)
 
-    async def member_growth_by_month(
-        self, club_id: uuid.UUID, since: datetime
-    ) -> list[tuple[int, int, int]]:
+    async def member_growth_by_month(self, club_id: uuid.UUID, since: datetime) -> list[tuple[int, int, int]]:
         yr = extract("year", ClubMember.joined_at).label("yr")
         mo = extract("month", ClubMember.joined_at).label("mo")
         result = await self.db.execute(
@@ -265,9 +261,7 @@ class ClubRepository:
         )
         return [(int(r.yr), int(r.mo), r.cnt) for r in result.all()]
 
-    async def event_frequency_by_month(
-        self, club_id: uuid.UUID, since: datetime
-    ) -> list[tuple[int, int, int]]:
+    async def event_frequency_by_month(self, club_id: uuid.UUID, since: datetime) -> list[tuple[int, int, int]]:
         yr = extract("year", Event.date).label("yr")
         mo = extract("month", Event.date).label("mo")
         result = await self.db.execute(

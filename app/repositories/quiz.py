@@ -35,9 +35,7 @@ class QuizRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_questions_by_ids(
-        self, quiz_id: uuid.UUID, question_ids: Sequence[uuid.UUID]
-    ) -> list[QuizQuestion]:
+    async def get_questions_by_ids(self, quiz_id: uuid.UUID, question_ids: Sequence[uuid.UUID]) -> list[QuizQuestion]:
         result = await self.db.execute(
             select(QuizQuestion).where(
                 QuizQuestion.quiz_id == quiz_id,
