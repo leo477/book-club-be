@@ -139,7 +139,7 @@ def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
     return app.openapi_schema
 
 
-def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
+def _rate_limit_exceeded_handler(_request: Request, exc: RateLimitExceeded) -> Response:
     return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 

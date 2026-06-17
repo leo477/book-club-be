@@ -12,6 +12,7 @@ from app.services.geocoding_service import google_place_details, google_places_a
 router = APIRouter(prefix="/api/v1/geocode", tags=["geocode"])
 
 
+# noinspection PyUnusedLocal
 @router.get("/autocomplete")
 @limiter.limit("30/minute")
 async def autocomplete(
@@ -28,7 +29,8 @@ async def autocomplete(
     return await photon_autocomplete(q, lang, limit, settings, redis=redis)
 
 
-@router.get("/place-details")
+# noinspection PyUnusedLocal
+@router.get("/place-details", responses={503: {"description": "Maps API not configured"}})
 @limiter.limit("30/minute")
 async def place_details(
     request: Request,  # slowapi requires this exact parameter name

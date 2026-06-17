@@ -12,6 +12,7 @@ from app.services.routing_service import walking_route
 router = APIRouter(prefix="/api/v1/routes", tags=["routes"])
 
 
+# noinspection PyUnusedLocal
 @router.get("/walking")
 @limiter.limit("30/minute")
 async def walking(
