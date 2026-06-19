@@ -177,6 +177,28 @@ async def get_event_or_404(event_id: uuid.UUID, db: AsyncSession) -> Event:
     return event
 
 
+async def _resolve_join_request_status(
+    repo: EventRepository,
+    event: Event,
+    current_user: User,
+    db: AsyncSession,
+) -> Literal["none", "pending", "member"]:
+    """Auto-request club membership when attending an event, mapping the result to a status."""
+    if await repo.get_membership_id(event.club_id, current_user.id) is not None:
+        return "member"
+
+    from app.services.club_service import request_join_club_service
+
+    try:
+        result = await request_join_club_service(event.club_id, current_user, db, source="event")
+    except AppError as exc:
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+        if code == "CLUB_BANNED":
+            return "none"
+        raise
+    return "pending" if result in ("pending", "already_requested") else "none"
+
+
 async def attend_event_service(
     event_id: uuid.UUID,
     current_user: User,
@@ -203,22 +225,7 @@ async def attend_event_service(
         raise AppError(http_status.HTTP_409_CONFLICT, "Already attending", "ALREADY_ATTENDING") from exc
 
     attendee_count = await repo.count_attendees(event_id)
-
-    from app.services.club_service import request_join_club_service
-
-    join_request_status: Literal["none", "pending", "member"]
-    if await repo.get_membership_id(event.club_id, current_user.id) is not None:
-        join_request_status = "member"
-    else:
-        try:
-            result = await request_join_club_service(event.club_id, current_user, db, source="event")
-            join_request_status = "pending" if result in ("pending", "already_requested") else "none"
-        except AppError as exc:
-            code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
-            if code == "CLUB_BANNED":
-                join_request_status = "none"
-            else:
-                raise
+    join_request_status = await _resolve_join_request_status(repo, event, current_user, db)
 
     return AttendEventResponse(attendeeCount=attendee_count, joinRequestStatus=join_request_status)
 

@@ -96,7 +96,7 @@ async def _check_store(client: httpx.AsyncClient, store: dict[str, str], title: 
     return StoreResult(name=store["name"], url=url, found=found)
 
 
-@router.get("/search", response_model=list[BookSuggestion])
+@router.get("/search")
 async def search_books(
     q: Annotated[str, Query(min_length=2)],
     _current_user: Annotated[User, Depends(get_current_user)],
@@ -106,7 +106,7 @@ async def search_books(
     return [BookSuggestion.model_validate(item) for item in results]
 
 
-@router.get("/details/{book_id}", response_model=BookDetails, responses={404: {"description": "Book not found"}})
+@router.get("/details/{book_id}", responses={404: {"description": "Book not found"}})
 async def get_book_details(
     book_id: str,
     _current_user: Annotated[User, Depends(get_current_user)],
@@ -117,7 +117,7 @@ async def get_book_details(
     return BookDetails.model_validate(item)
 
 
-@router.get("/stores", response_model=list[StoreResult])
+@router.get("/stores")
 async def get_book_stores(
     title: str,
     _current_user: Annotated[User, Depends(get_current_user)],

@@ -211,9 +211,10 @@ async def _ws_authenticate(
     settings: Settings,
     room_id: str,
 ) -> tuple[User, ChatRoom] | None:
+    # noinspection PyBroadException
     try:
         raw = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
-    except Exception:
+    except Exception:  # intentional: any handshake failure closes the socket
         await websocket.close(code=1008)
         return None
     if not isinstance(raw, dict) or raw.get("type") != "auth" or not raw.get("token"):
@@ -288,6 +289,7 @@ async def websocket_endpoint(
         ban_cache_expires = now_ + timedelta(seconds=_ban_cache_ttl)
         return ban_cache_result
 
+    # noinspection PyBroadException
     try:
         while True:
             data = await websocket.receive_json()
@@ -329,7 +331,7 @@ async def websocket_endpoint(
             )
     except WebSocketDisconnect:
         pass  # Normal client disconnect; the finally block below handles cleanup
-    except Exception as exc:
+    except Exception as exc:  # intentional: keep the socket handler alive and log any unexpected error
         logger.exception("Unexpected WebSocket error", exc_info=exc)
     finally:
         # Feature 4: broadcast offline status before removing from connection list.
