@@ -3,13 +3,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, is_club_organizer, require_club_organizer
 from app.exceptions import AppError
-from app.models.quiz import Quiz, QuizAttempt, QuizQuestion, QuizSession
+from app.models.quiz import Quiz, QuizQuestion, QuizSession
 from app.models.user import User
+from app.repositories import QuizRepository
 from app.schemas.quizzes import (
     AddQuestionRequest,
     AttemptResponse,
@@ -25,7 +25,17 @@ from app.schemas.quizzes import (
     UpdateQuestionRequest,
     UpdateQuizRequest,
 )
-from app.services.quiz_service import get_quiz_leaderboard, submit_quiz_attempt
+from app.services.quiz_service import (
+    count_questions,
+    get_active_session,
+    get_question,
+    get_questions_by_ids,
+    get_quiz_leaderboard,
+    get_session_or_404,
+    list_questions,
+    list_quizzes,
+    submit_quiz_attempt,
+)
 
 QUIZ_NOT_FOUND = "Quiz not found"
 QUESTION_NOT_FOUND = "Question not found"
@@ -59,8 +69,7 @@ def _session_response(s: QuizSession, participant_count: int) -> QuizSessionResp
 
 
 async def _get_quiz_or_404(quiz_id: uuid.UUID, db: AsyncSession) -> Quiz:
-    result = await db.execute(select(Quiz).where(Quiz.id == quiz_id))
-    quiz = result.scalar_one_or_none()
+    quiz = await QuizRepository(db).get_by_id(quiz_id)
     if quiz is None:
         raise AppError(status.HTTP_404_NOT_FOUND, QUIZ_NOT_FOUND, "QUIZ_NOT_FOUND")
     return quiz
@@ -74,8 +83,8 @@ async def get_quizzes(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[QuizResponse]:
-    result = await db.execute(select(Quiz).where(Quiz.club_id == club_id).offset(skip).limit(limit))
-    return [_quiz_response(q) for q in result.scalars().all()]
+    quizzes = await list_quizzes(club_id, db, skip=skip, limit=limit)
+    return [_quiz_response(q) for q in quizzes]
 
 
 @router.post("/clubs/{club_id}/quizzes", status_code=status.HTTP_201_CREATED)
@@ -142,10 +151,7 @@ async def get_questions(
     quiz = await _get_quiz_or_404(quiz_id, db)
     organizer = await is_club_organizer(quiz.club_id, current_user.id, db)
 
-    questions_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id).order_by(QuizQuestion.position)
-    )
-    questions_db = questions_result.scalars().all()
+    questions_db = await list_questions(quiz_id, db)
 
     return [
         QuizQuestionResponse(
@@ -170,10 +176,7 @@ async def add_question(
     quiz = await _get_quiz_or_404(quiz_id, db)
     await require_club_organizer(quiz.club_id, current_user, db)
 
-    count_result = await db.execute(
-        select(func.count()).select_from(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id)
-    )
-    position = count_result.scalar() or 0
+    position = await count_questions(quiz_id, db)
 
     question = QuizQuestion(
         id=uuid.uuid4(),
@@ -212,10 +215,7 @@ async def update_question(
     quiz = await _get_quiz_or_404(quiz_id, db)
     await require_club_organizer(quiz.club_id, current_user, db)
 
-    q_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.id == question_id, QuizQuestion.quiz_id == quiz_id)
-    )
-    question = q_result.scalar_one_or_none()
+    question = await get_question(question_id, quiz_id, db)
     if question is None:
         raise AppError(status.HTTP_404_NOT_FOUND, QUESTION_NOT_FOUND, "QUESTION_NOT_FOUND")
 
@@ -249,10 +249,7 @@ async def delete_question(
     quiz = await _get_quiz_or_404(quiz_id, db)
     await require_club_organizer(quiz.club_id, current_user, db)
 
-    q_result = await db.execute(
-        select(QuizQuestion).where(QuizQuestion.id == question_id, QuizQuestion.quiz_id == quiz_id)
-    )
-    question = q_result.scalar_one_or_none()
+    question = await get_question(question_id, quiz_id, db)
     if question is None:
         raise AppError(status.HTTP_404_NOT_FOUND, QUESTION_NOT_FOUND, "QUESTION_NOT_FOUND")
 
@@ -272,13 +269,8 @@ async def reorder_questions(
 
     # M-2: load all questions in a single query instead of N per-item SELECTs
     ordered_ids = [uuid.UUID(qid) for qid in req.order]
-    q_result = await db.execute(
-        select(QuizQuestion).where(
-            QuizQuestion.quiz_id == quiz_id,
-            QuizQuestion.id.in_(ordered_ids),
-        )
-    )
-    questions_map = {q.id: q for q in q_result.scalars().all()}
+    questions = await get_questions_by_ids(quiz_id, ordered_ids, db)
+    questions_map = {q.id: q for q in questions}
     for position, qid in enumerate(ordered_ids):
         question = questions_map.get(qid)
         if question is not None:
@@ -338,31 +330,13 @@ async def create_session(
 
 
 @router.get("/quizzes/{quiz_id}/sessions/active", status_code=status.HTTP_200_OK)
-async def get_active_session(
+async def get_active_session_route(
     quiz_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> QuizSessionResponse:
     await _get_quiz_or_404(quiz_id, db)
-
-    result = await db.execute(
-        select(QuizSession)
-        .where(QuizSession.quiz_id == quiz_id, QuizSession.closed_at.is_(None))
-        .order_by(QuizSession.started_at.desc())
-        .limit(1)
-    )
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise AppError(status.HTTP_404_NOT_FOUND, SESSION_NOT_FOUND, "SESSION_NOT_FOUND")
-
-    # M-3: scope participant count to this session only (attempts after session started)
-    count_result = await db.execute(
-        select(func.count())
-        .select_from(QuizAttempt)
-        .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.created_at >= session.started_at)
-    )
-    participant_count = count_result.scalar() or 0
-
+    session, participant_count = await get_active_session(quiz_id, db)
     return _session_response(session, participant_count)
 
 
@@ -389,12 +363,6 @@ async def close_session(
     quiz = await _get_quiz_or_404(quiz_id, db)
     await require_club_organizer(quiz.club_id, current_user, db)
 
-    session_result = await db.execute(
-        select(QuizSession).where(QuizSession.id == session_id, QuizSession.quiz_id == quiz_id)
-    )
-    session = session_result.scalar_one_or_none()
-    if session is None:
-        raise AppError(status.HTTP_404_NOT_FOUND, SESSION_NOT_FOUND, "SESSION_NOT_FOUND")
-
+    session = await get_session_or_404(session_id, quiz_id, db)
     session.closed_at = datetime.now(UTC)
     await db.commit()

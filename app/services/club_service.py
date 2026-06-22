@@ -5,26 +5,30 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
-from sqlalchemy import and_, func, select
-from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import AppError
-from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
+from app.models.chat import ChatRoom
 from app.models.club import Club
 from app.models.club_ban import ClubBan
 from app.models.club_join_request import ClubJoinRequest
 from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
 from app.models.user import User
+from app.repositories import ClubRepository
 from app.schemas.clubs import (
     BanRequest,
     BanResponse,
     ChampionInfo,
     ClubResponse,
+    ClubStatsResponse,
     CreateClubRequest,
+    EventAttendanceStat,
     JoinRequestResponse,
+    MemberStatRow,
+    MonthlyStatRow,
     MyMembershipResponse,
 )
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
@@ -34,38 +38,14 @@ logger = structlog.get_logger(__name__)
 
 
 async def delete_club_cascade(club_id: uuid.UUID, db: AsyncSession) -> None:
-    room_ids_result = await db.execute(select(ChatRoom.id).where(ChatRoom.club_id == club_id))
-    room_ids = list(room_ids_result.scalars().all())
-    if room_ids:
-        await db.execute(sa_delete(ChatRoomBan).where(ChatRoomBan.room_id.in_(room_ids)))
-        await db.execute(sa_delete(ChatMessage).where(ChatMessage.room_id.in_(room_ids)))
-        await db.execute(sa_delete(ChatRoom).where(ChatRoom.club_id == club_id))
-    else:
-        logger.debug("delete_club_cascade: no chat rooms found for club", club_id=str(club_id))
-    await db.execute(sa_delete(ClubBan).where(ClubBan.club_id == club_id))
-    await db.execute(sa_delete(ClubJoinRequest).where(ClubJoinRequest.club_id == club_id))
-    await db.execute(sa_delete(ClubMember).where(ClubMember.club_id == club_id))
-
-    from app.models.event import Event, EventAttendee
-
-    event_ids_result = await db.execute(select(Event.id).where(Event.club_id == club_id))
-    event_ids = list(event_ids_result.scalars().all())
-    if event_ids:
-        await db.execute(sa_delete(EventAttendee).where(EventAttendee.event_id.in_(event_ids)))
-        await db.execute(sa_delete(Event).where(Event.club_id == club_id))
-    else:
-        logger.debug("delete_club_cascade: no events found for club", club_id=str(club_id))
-
-    club_result = await db.execute(select(Club).where(Club.id == club_id))
-    club = club_result.scalar_one_or_none()
-    if club:
-        await db.delete(club)
+    repo = ClubRepository(db)
+    await repo.cascade_delete(club_id)
     await db.commit()
 
 
 async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
-    result = await db.execute(select(Club).where(Club.id == club_id))
-    club = result.scalar_one_or_none()
+    repo = ClubRepository(db)
+    club = await repo.get_by_id(club_id)
     if not club:
         raise AppError(404, "Club not found", "CLUB_NOT_FOUND")
     return club
@@ -123,16 +103,9 @@ async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> Champio
 
 
 async def build_club_response(club: Club, db: AsyncSession) -> ClubResponse:
-    count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club.id))
-    member_count = count_result.scalar() or 0
-
-    members_result = await db.execute(
-        select(User.avatar_url)
-        .join(ClubMember, ClubMember.user_id == User.id)
-        .where(ClubMember.club_id == club.id)
-        .limit(5)
-    )
-    previews = [r for r in members_result.scalars() if r]
+    repo = ClubRepository(db)
+    member_count = await repo.count_members(club.id)
+    previews = await repo.get_member_avatar_previews(club.id, limit=5)
     champion = await _get_current_champion(club.id, db)
     return _assemble_club_response(club, member_count, previews, champion)
 
@@ -237,6 +210,43 @@ async def build_club_responses_bulk(clubs: list[Club], db: AsyncSession) -> list
 _JOIN_DB_TIMEOUT_SECONDS = 8.0
 
 
+async def list_clubs_service(
+    current_user: User | None,
+    db: AsyncSession,
+    search: str | None = None,
+    skip: int = 0,
+    limit: int = 20,
+) -> list[ClubResponse]:
+    repo = ClubRepository(db)
+    user_id = current_user.id if current_user else None
+    clubs = await repo.list_public_or_member(user_id, search, skip, limit)
+    return await build_club_responses_bulk(clubs, db)
+
+
+async def list_my_clubs_service(
+    current_user: User,
+    db: AsyncSession,
+    skip: int = 0,
+    limit: int = 20,
+) -> list[ClubResponse]:
+    repo = ClubRepository(db)
+    clubs = await repo.list_for_user(current_user.id, skip, limit)
+    return await build_club_responses_bulk(clubs, db)
+
+
+async def leave_club_service(
+    club_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> None:
+    await get_club_or_404(club_id, db)
+    repo = ClubRepository(db)
+    if await repo.get_membership(club_id, current_user.id) is None:
+        raise AppError(409, "Not a member", "NOT_A_MEMBER")
+    await repo.remove_member(club_id, current_user.id)
+    await db.commit()
+
+
 async def create_club_service(
     body: CreateClubRequest,
     current_user: User,
@@ -311,32 +321,18 @@ async def request_join_club_service(
         await db.execute(text(f"SET LOCAL statement_timeout = '{timeout_ms}ms'"))
 
     await get_club_or_404(club_id, db)
+    repo = ClubRepository(db)
 
     # M-7: check for active ban (respects expires_at; NULL = permanent)
-    ban_result = await db.execute(
-        select(ClubBan).where(and_(ClubBan.club_id == club_id, ClubBan.user_id == current_user.id))
-    )
-    ban = ban_result.scalar_one_or_none()
-    if ban is not None:
-        now_utc = datetime.now(UTC)
-        ban_active = ban.expires_at is None or ban.expires_at > now_utc
-        if ban_active:
-            raise AppError(403, "You are banned from this club", "CLUB_BANNED")
+    if await repo.is_banned(club_id, current_user.id):
+        raise AppError(403, "You are banned from this club", "CLUB_BANNED")
 
-    existing_member = await db.execute(
-        select(ClubMember.id).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
-    )
-    if existing_member.scalar_one_or_none():
+    if await repo.get_membership(club_id, current_user.id) is not None:
         if source == "manual":
             raise AppError(409, "Already a member", "ALREADY_MEMBER")
         return "member"
 
-    existing_request = await db.execute(
-        select(ClubJoinRequest).where(
-            and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == current_user.id)
-        )
-    )
-    join_request = existing_request.scalar_one_or_none()
+    join_request = await repo.get_join_request(club_id, current_user.id)
     if join_request is not None:
         if join_request.status == "pending":
             return "already_requested"
@@ -378,14 +374,8 @@ async def list_join_requests_service(
 
     await require_club_organizer(club_id, current_user, db)
 
-    result = await db.execute(
-        select(ClubJoinRequest, User)
-        .join(User, ClubJoinRequest.user_id == User.id)
-        .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.status == "pending"))
-        .order_by(ClubJoinRequest.created_at.asc())
-        .offset(skip)
-        .limit(limit)
-    )
+    repo = ClubRepository(db)
+    rows = await repo.list_pending_join_requests_with_users(club_id, skip, limit)
     return [
         JoinRequestResponse(
             userId=str(user.id),
@@ -395,7 +385,7 @@ async def list_join_requests_service(
             source=req.source,
             createdAt=req.created_at.isoformat(),
         )
-        for req, user in result.all()
+        for req, user in rows
     ]
 
 
@@ -409,23 +399,12 @@ async def approve_join_request_service(
 
     await require_club_organizer(club_id, current_user, db)
 
-    result = await db.execute(
-        select(ClubJoinRequest).where(
-            and_(
-                ClubJoinRequest.club_id == club_id,
-                ClubJoinRequest.user_id == user_id,
-                ClubJoinRequest.status == "pending",
-            )
-        )
-    )
-    join_request = result.scalar_one_or_none()
+    repo = ClubRepository(db)
+    join_request = await repo.get_pending_join_request(club_id, user_id)
     if join_request is None:
         raise AppError(404, "Join request not found", "JOIN_REQUEST_NOT_FOUND")
 
-    member_result = await db.execute(
-        select(ClubMember.id).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id))
-    )
-    already_member = member_result.scalar_one_or_none() is not None
+    already_member = await repo.get_membership(club_id, user_id) is not None
 
     now_utc = datetime.now(UTC)
     join_request.status = "approved"
@@ -433,25 +412,21 @@ async def approve_join_request_service(
     join_request.decided_at = now_utc
 
     if not already_member:
-        db.add(ClubMember(id=uuid.uuid4(), club_id=club_id, user_id=user_id, role="member"))
+        repo.add_member(ClubMember(id=uuid.uuid4(), club_id=club_id, user_id=user_id, role="member"))
 
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
         # Member row already exists (race) — re-apply the approval without the insert.
-        retry = await db.execute(
-            select(ClubJoinRequest).where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == user_id))
-        )
-        retry_request = retry.scalar_one_or_none()
+        retry_request = await repo.get_join_request(club_id, user_id)
         if retry_request is not None:
             retry_request.status = "approved"
             retry_request.decided_by = current_user.id
             retry_request.decided_at = now_utc
             await db.commit()
 
-    count_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
-    return int(count_result.scalar() or 0)
+    return await repo.count_members(club_id)
 
 
 async def reject_join_request_service(
@@ -464,16 +439,8 @@ async def reject_join_request_service(
 
     await require_club_organizer(club_id, current_user, db)
 
-    result = await db.execute(
-        select(ClubJoinRequest).where(
-            and_(
-                ClubJoinRequest.club_id == club_id,
-                ClubJoinRequest.user_id == user_id,
-                ClubJoinRequest.status == "pending",
-            )
-        )
-    )
-    join_request = result.scalar_one_or_none()
+    repo = ClubRepository(db)
+    join_request = await repo.get_pending_join_request(club_id, user_id)
     if join_request is None:
         raise AppError(404, "Join request not found", "JOIN_REQUEST_NOT_FOUND")
 
@@ -489,21 +456,13 @@ async def get_my_membership_service(
     db: AsyncSession,
 ) -> MyMembershipResponse:
     await get_club_or_404(club_id, db)
+    repo = ClubRepository(db)
 
-    member_result = await db.execute(
-        select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == current_user.id))
-    )
-    member = member_result.scalar_one_or_none()
+    member = await repo.get_membership(club_id, current_user.id)
     if member is not None:
         return MyMembershipResponse(isMember=True, role=member.role)
 
-    request_result = await db.execute(
-        select(ClubJoinRequest)
-        .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.user_id == current_user.id))
-        .order_by(ClubJoinRequest.created_at.desc())
-        .limit(1)
-    )
-    join_request = request_result.scalar_one_or_none()
+    join_request = await repo.get_latest_join_request(club_id, current_user.id)
     if join_request is not None and join_request.status == "pending":
         return MyMembershipResponse(isMember=False, joinRequestStatus="pending")
     if join_request is not None and join_request.status == "rejected":
@@ -547,9 +506,8 @@ async def ban_user_service(
     )
     db.add(ban)
 
-    from sqlalchemy import delete as _delete
-
-    await db.execute(_delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id)))
+    repo = ClubRepository(db)
+    await repo.remove_member(club_id, user_id)
     await db.commit()
     await db.refresh(ban)
 
@@ -600,6 +558,56 @@ async def create_event_service(
     await db.commit()
     await db.refresh(event)
     return await build_event_response(event, db, current_user.id, club_name=club.name, organizer_id=club.organizer_id)
+
+
+async def get_club_stats_service(club_id: uuid.UUID, db: AsyncSession) -> ClubStatsResponse:
+    """Aggregate club analytics: top members, attendance, growth, frequency, counts."""
+    await get_club_or_404(club_id, db)
+    repo = ClubRepository(db)
+
+    top_active = [
+        MemberStatRow(userId=str(uid), displayName=name, avatarUrl=avatar, count=cnt)
+        for uid, name, avatar, cnt in await repo.top_active_members(club_id)
+    ]
+    top_winners = [
+        MemberStatRow(userId=str(uid), displayName=name, avatarUrl=avatar, count=cnt)
+        for uid, name, avatar, cnt in await repo.top_quiz_winners(club_id)
+    ]
+    recent_attendance = [
+        EventAttendanceStat(eventId=str(eid), title=title, date=date, attendeeCount=cnt)
+        for eid, title, date, cnt in await repo.recent_held_events_with_attendance(club_id)
+    ]
+
+    now = datetime.now(UTC)
+    six_months_ago = now - timedelta(days=183)
+
+    total_members = await repo.count_members(club_id)
+    total_events = await repo.count_events(club_id)
+    total_messages = await repo.count_messages(club_id)
+    banned_users_count = await repo.count_active_room_bans(club_id, now)
+    upcoming_events_count = await repo.count_upcoming_events(club_id, now)
+
+    member_growth = [
+        MonthlyStatRow(month=f"{yr:04d}-{mo:02d}", count=cnt)
+        for yr, mo, cnt in await repo.member_growth_by_month(club_id, six_months_ago)
+    ]
+    event_frequency = [
+        MonthlyStatRow(month=f"{yr:04d}-{mo:02d}", count=cnt)
+        for yr, mo, cnt in await repo.event_frequency_by_month(club_id, six_months_ago)
+    ]
+
+    return ClubStatsResponse(
+        topActive=top_active,
+        topWinners=top_winners,
+        recentAttendance=recent_attendance,
+        totalMembers=total_members,
+        totalEvents=total_events,
+        totalMessages=total_messages,
+        memberGrowth=member_growth,
+        eventFrequency=event_frequency,
+        bannedUsersCount=banned_users_count,
+        upcomingEventsCount=upcoming_events_count,
+    )
 
 
 def _assemble_club_response(

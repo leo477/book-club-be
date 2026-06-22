@@ -6,14 +6,16 @@ from typing import Annotated
 
 import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.exceptions import AppError
 from app.models.club_member import ClubMember
+from app.models.event import Event
 from app.models.user import User
+from app.services.auth_service import decode_access_token
 
 
 async def get_db_dep() -> AsyncGenerator[AsyncSession, None]:
@@ -34,9 +36,6 @@ async def get_current_user(
     if cached is not None:
         return cached
 
-    from app.models.user import User as UserModel
-    from app.services.auth_service import decode_access_token
-
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise AppError(status.HTTP_401_UNAUTHORIZED, "Not authenticated", "NOT_AUTHENTICATED")
@@ -47,7 +46,7 @@ async def get_current_user(
     if not user_id:
         raise AppError(status.HTTP_401_UNAUTHORIZED, "Invalid token", "INVALID_TOKEN")
 
-    result = await db.execute(select(UserModel).where(UserModel.supabase_user_id == uuid.UUID(user_id)))
+    result = await db.execute(select(User).where(User.supabase_user_id == uuid.UUID(user_id)))
     user = result.scalar_one_or_none()
     if not user:
         raise AppError(status.HTTP_401_UNAUTHORIZED, "User not found", "USER_NOT_FOUND")
@@ -62,16 +61,12 @@ async def _fetch_organizer_membership(
     db: AsyncSession,
 ) -> ClubMember | None:
     """Shared DB query for organizer membership checks (MN-12: eliminates duplicate logic)."""
-    from sqlalchemy import and_, select
-
-    from app.models.club_member import ClubMember as ClubMemberModel
-
     result = await db.execute(
-        select(ClubMemberModel).where(
+        select(ClubMember).where(
             and_(
-                ClubMemberModel.club_id == club_id,
-                ClubMemberModel.user_id == user_id,
-                ClubMemberModel.role == "organizer",
+                ClubMember.club_id == club_id,
+                ClubMember.user_id == user_id,
+                ClubMember.role == "organizer",
             )
         )
     )
@@ -94,9 +89,7 @@ async def require_event_club_organizer(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> ClubMember:
-    from app.models.event import Event as EventModel
-
-    result = await db.execute(select(EventModel).where(EventModel.id == event_id))
+    result = await db.execute(select(Event).where(Event.id == event_id))
     event = result.scalar_one_or_none()
     if not event:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
