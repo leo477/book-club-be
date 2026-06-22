@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str = ""
 
     GOOGLE_BOOKS_API_KEY: str = ""
+    GOOGLE_CSE_API_KEY: str = ""
+    GOOGLE_CSE_ID: str = ""
     MAPS_API_KEY: str = ""
     MAPS_SERVER_API_KEY: str = ""
     MAPS_MAP_ID: str = ""
