@@ -59,9 +59,7 @@ async def test_get_stores_unauthenticated(async_client):
 
 
 @pytest.mark.asyncio
-async def test_get_stores_found_with_product_url(
-    async_client, register_user, auth_headers, cse_configured
-):
+async def test_get_stores_found_with_product_url(async_client, register_user, auth_headers, cse_configured):
     await register_user(email="books_found@example.com")
     headers = await auth_headers(email="books_found@example.com")
 
@@ -79,9 +77,7 @@ async def test_get_stores_found_with_product_url(
 
 
 @pytest.mark.asyncio
-async def test_get_stores_listing_links_only_not_found(
-    async_client, register_user, auth_headers, cse_configured
-):
+async def test_get_stores_listing_links_only_not_found(async_client, register_user, auth_headers, cse_configured):
     await register_user(email="books_noresult@example.com")
     headers = await auth_headers(email="books_noresult@example.com")
 
@@ -100,9 +96,7 @@ async def test_get_stores_listing_links_only_not_found(
 
 
 @pytest.mark.asyncio
-async def test_get_stores_rate_limited_falls_back(
-    async_client, register_user, auth_headers, cse_configured
-):
+async def test_get_stores_rate_limited_falls_back(async_client, register_user, auth_headers, cse_configured):
     await register_user(email="books_429@example.com")
     headers = await auth_headers(email="books_429@example.com")
 

@@ -119,7 +119,5 @@ async def check_stores(title: str, api_key: str, cse_id: str) -> list[dict[str, 
         return [_degraded(s["name"], title, s["domain"]) for s in _STORES]
 
     async with httpx.AsyncClient() as client:
-        results = await asyncio.gather(
-            *[_check_store(client, store, title, api_key, cse_id) for store in _STORES]
-        )
+        results = await asyncio.gather(*[_check_store(client, store, title, api_key, cse_id) for store in _STORES])
     return list(results)
