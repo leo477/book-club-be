@@ -167,7 +167,10 @@ async def mark_room_as_read_service(
     db: AsyncSession,
 ) -> None:
     repo = ChatRepository(db)
-    last_read_id = uuid.UUID(body.last_read_message_id)
+    try:
+        last_read_id = uuid.UUID(body.last_read_message_id)
+    except ValueError as exc:
+        raise AppError(400, "Invalid message id", "INVALID_MESSAGE_ID") from exc
     if await repo.get_message(last_read_id, room_id) is None:
         raise AppError(404, "Message not found", "MESSAGE_NOT_FOUND")
 

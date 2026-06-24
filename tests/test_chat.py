@@ -46,6 +46,45 @@ async def test_send_and_get_messages(async_client, register_user, auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_mark_room_read_valid_message(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=headers)).json()
+    room_id = rooms[0]["id"]
+    send_resp = await async_client.post(f"/api/v1/chat/rooms/{room_id}/messages", headers=headers, json={"text": "hi"})
+    message_id = send_resp.json()["id"]
+    resp = await async_client.post(
+        f"/api/v1/chat/rooms/{room_id}/read", headers=headers, json={"last_read_message_id": message_id}
+    )
+    assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_mark_room_read_non_uuid_returns_400(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=headers)).json()
+    room_id = rooms[0]["id"]
+    resp = await async_client.post(
+        f"/api/v1/chat/rooms/{room_id}/read", headers=headers, json={"last_read_message_id": "temp-abc"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "INVALID_MESSAGE_ID"
+
+
+@pytest.mark.asyncio
+async def test_mark_room_read_unknown_uuid_returns_404(async_client, register_user, auth_headers):
+    import uuid
+
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=headers)).json()
+    room_id = rooms[0]["id"]
+    resp = await async_client.post(
+        f"/api/v1/chat/rooms/{room_id}/read", headers=headers, json={"last_read_message_id": str(uuid.uuid4())}
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "MESSAGE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
 async def test_ws_room_membership_after_join(async_client, register_user, auth_headers, make_member):
     """Regression: POST /clubs/{id}/join then WS connect must get 101, not 403.
 
