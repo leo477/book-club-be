@@ -62,5 +62,5 @@ async def get_book_stores(
     title: str,
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[StoreResult]:
-    results = await book_stores_service.check_stores(title, settings.GOOGLE_CSE_API_KEY, settings.GOOGLE_CSE_ID)
+    results = book_stores_service.check_stores(title)
     return [StoreResult.model_validate(item) for item in results]
