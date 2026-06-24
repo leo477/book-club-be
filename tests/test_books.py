@@ -1,55 +1,26 @@
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import quote_plus
 
 import pytest
 
-from app.routers import books as books_module
 from app.services import book_stores_service as bss_module
 from app.services import google_books_service as gbs_module
 
-
-def _make_cse_response(status_code: int = 200, items: list[dict] | None = None) -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.json.return_value = {"items": items} if items is not None else {}
-    return resp
-
-
-def _make_mock_client(response: MagicMock) -> AsyncMock:
-    client = AsyncMock()
-    client.get = AsyncMock(return_value=response)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=None)
-    return client
-
-
-def _make_per_domain_client(path: str) -> AsyncMock:
-    """A client whose CSE response returns a product link on the queried store's own domain."""
-
-    async def _get(url, params=None, timeout=None):
-        domain = params["siteSearch"]
-        return _make_cse_response(200, [{"link": f"https://{domain}{path}"}])
-
-    client = AsyncMock()
-    client.get = AsyncMock(side_effect=_get)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=None)
-    return client
+_STORE_DOMAINS = {
+    "Небо": "nebo.ua",  # noqa: RUF001
+    "КСД": "ksd.ua",
+    "Буква": "bukva.ua",
+    "Vivat": "vivat.com.ua",
+    "Yakaboo": "yakaboo.ua",
+}
 
 
 @pytest.fixture(autouse=True)
 def clear_cache():
-    bss_module.CACHE.clear()
     gbs_module.CACHE.clear()
     yield
-    bss_module.CACHE.clear()
     gbs_module.CACHE.clear()
-
-
-@pytest.fixture
-def cse_configured(monkeypatch):
-    monkeypatch.setattr(books_module.settings, "GOOGLE_CSE_API_KEY", "test-key")
-    monkeypatch.setattr(books_module.settings, "GOOGLE_CSE_ID", "test-cx")
 
 
 @pytest.mark.asyncio
@@ -59,98 +30,37 @@ async def test_get_stores_unauthenticated(async_client):
 
 
 @pytest.mark.asyncio
-async def test_get_stores_found_with_product_url(async_client, register_user, auth_headers, cse_configured):
-    await register_user(email="books_found@example.com")
-    headers = await auth_headers(email="books_found@example.com")
+async def test_get_stores_returns_direct_search_links(async_client, register_user, auth_headers):
+    await register_user(email="books_stores@example.com")
+    headers = await auth_headers(email="books_stores@example.com")
 
-    mock_client = _make_per_domain_client("/kobzar-shevchenko-12345.html")
-
-    with patch("app.services.book_stores_service.httpx.AsyncClient", return_value=mock_client):
-        resp = await async_client.get("/api/v1/books/stores?title=Kobzar", headers=headers)
+    title = "Кобзар Шевченко"
+    resp = await async_client.get(f"/api/v1/books/stores?title={quote_plus(title)}", headers=headers)
 
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 5
-    assert all(item["found"] is True for item in data)
-    assert all(item["product_url"] == item["url"] for item in data)
-    assert all(item["product_url"].endswith("/kobzar-shevchenko-12345.html") for item in data)
+
+    encoded = quote_plus(title)
+    assert {item["name"] for item in data} == set(_STORE_DOMAINS)
+    for item in data:
+        assert item["found"] is None
+        assert item["product_url"] is None
+        assert _STORE_DOMAINS[item["name"]] in item["url"]
+        assert encoded in item["url"]
 
 
-@pytest.mark.asyncio
-async def test_get_stores_listing_links_only_not_found(async_client, register_user, auth_headers, cse_configured):
-    await register_user(email="books_noresult@example.com")
-    headers = await auth_headers(email="books_noresult@example.com")
+def test_check_stores_is_sync_and_encodes_title():
+    results = bss_module.check_stores("Test Book & Co")
 
-    # Only category/search listing links → not a product page.
-    items = [{"link": "https://nebo.ua/search?q=NonExistentBook"}]
-    mock_client = _make_mock_client(_make_cse_response(200, items))
-
-    with patch("app.services.book_stores_service.httpx.AsyncClient", return_value=mock_client):
-        resp = await async_client.get("/api/v1/books/stores?title=NonExistentBook", headers=headers)
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert all(item["found"] is False for item in data)
-    assert all(item["product_url"] is None for item in data)
-    assert all(item["url"].startswith("https://www.google.com/search?q=") for item in data)
-
-
-@pytest.mark.asyncio
-async def test_get_stores_rate_limited_falls_back(async_client, register_user, auth_headers, cse_configured):
-    await register_user(email="books_429@example.com")
-    headers = await auth_headers(email="books_429@example.com")
-
-    mock_client = _make_mock_client(_make_cse_response(429))
-
-    with patch("app.services.book_stores_service.httpx.AsyncClient", return_value=mock_client):
-        resp = await async_client.get("/api/v1/books/stores?title=AnyBook", headers=headers)
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert all(item["found"] is None for item in data)
-    assert all(item["product_url"] is None for item in data)
-    assert all(item["url"].startswith("https://www.google.com/search?q=") for item in data)
-
-
-@pytest.mark.asyncio
-async def test_get_stores_missing_api_key_no_http_call(async_client, register_user, auth_headers, monkeypatch):
-    await register_user(email="books_nokey@example.com")
-    headers = await auth_headers(email="books_nokey@example.com")
-
-    monkeypatch.setattr(books_module.settings, "GOOGLE_CSE_API_KEY", "")
-    monkeypatch.setattr(books_module.settings, "GOOGLE_CSE_ID", "")
-
-    with patch("app.services.book_stores_service.httpx.AsyncClient") as patched:
-        resp = await async_client.get("/api/v1/books/stores?title=AnyBook", headers=headers)
-        patched.assert_not_called()
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 5
-    assert all(item["found"] is None for item in data)
-    assert all(item["url"].startswith("https://www.google.com/search?q=") for item in data)
-
-
-@pytest.mark.asyncio
-async def test_get_stores_cache_hit(async_client, register_user, auth_headers, cse_configured):
-    await register_user(email="books_cache@example.com")
-    headers = await auth_headers(email="books_cache@example.com")
-
-    mock_client = _make_per_domain_client("/cached-book-9999.html")
-
-    with patch("app.services.book_stores_service.httpx.AsyncClient", return_value=mock_client):
-        resp1 = await async_client.get("/api/v1/books/stores?title=CachedBook", headers=headers)
-        assert resp1.status_code == 200
-
-    # Second call — every store is served from the per-store cache, so no CSE
-    # request is made even though a client is still opened.
-    mock_client.get.reset_mock()
-    with patch("app.services.book_stores_service.httpx.AsyncClient", return_value=mock_client):
-        resp2 = await async_client.get("/api/v1/books/stores?title=CachedBook", headers=headers)
-        mock_client.get.assert_not_called()
-
-    assert resp2.status_code == 200
-    assert resp2.json() == resp1.json()
+    assert len(results) == 5
+    encoded = quote_plus("Test Book & Co")
+    assert {r["name"] for r in results} == set(_STORE_DOMAINS)
+    for r in results:
+        assert r["found"] is None
+        assert r["product_url"] is None
+        assert _STORE_DOMAINS[r["name"]] in r["url"]
+        assert encoded in r["url"]
 
 
 # ---------------------------------------------------------------------------
@@ -535,34 +445,3 @@ def test_google_books_cache_set_drops_expired_when_full(monkeypatch):
     assert "expired2" not in gbs_module.CACHE
     assert "fresh" in gbs_module.CACHE
     assert "new" in gbs_module.CACHE
-
-
-def test_book_stores_cache_set_evicts_oldest_when_full(monkeypatch):
-    bss_module.CACHE.clear()
-    monkeypatch.setattr(bss_module, "CACHE_MAX_SIZE", 3)
-    future = time.time() + 1000
-    for i in range(3):
-        bss_module.CACHE[f"k{i}"] = ({}, future)
-
-    bss_module._cache_set("new", ({}, future))
-
-    assert "k0" not in bss_module.CACHE  # oldest evicted
-    assert "new" in bss_module.CACHE
-    assert len(bss_module.CACHE) == 3
-
-
-def test_book_stores_cache_set_drops_expired_when_full(monkeypatch):
-    bss_module.CACHE.clear()
-    monkeypatch.setattr(bss_module, "CACHE_MAX_SIZE", 3)
-    future = time.time() + 1000
-    past = time.time() - 1000
-    bss_module.CACHE["expired1"] = ({}, past)
-    bss_module.CACHE["expired2"] = ({}, past)
-    bss_module.CACHE["fresh"] = ({}, future)
-
-    bss_module._cache_set("new", ({}, future))
-
-    assert "expired1" not in bss_module.CACHE
-    assert "expired2" not in bss_module.CACHE
-    assert "fresh" in bss_module.CACHE
-    assert "new" in bss_module.CACHE
