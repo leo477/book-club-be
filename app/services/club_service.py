@@ -520,6 +520,65 @@ async def ban_user_service(
     )
 
 
+async def unban_user_service(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> None:
+    from app.dependencies import require_club_organizer
+
+    await require_club_organizer(club_id, current_user, db)
+
+    result = await db.execute(
+        select(ClubBan).where(ClubBan.club_id == club_id, ClubBan.user_id == user_id)
+    )
+    bans = result.scalars().all()
+    if not bans:
+        raise AppError(404, "No active ban found for this user", "BAN_NOT_FOUND")
+
+    for ban in bans:
+        await db.delete(ban)
+    await db.commit()
+
+
+async def change_member_role_service(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_role: str,
+    current_user: User,
+    db: AsyncSession,
+) -> ClubMember:
+    from app.dependencies import require_club_organizer
+
+    await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
+
+    repo = ClubRepository(db)
+    member = await repo.get_membership(club_id, user_id)
+    if member is None:
+        raise AppError(404, "Member not found", "MEMBER_NOT_FOUND")
+
+    if member.role == new_role:
+        return member
+
+    if new_role == "member":
+        if club.organizer_id == user_id:
+            raise AppError(400, "Cannot demote the club owner", "CANNOT_DEMOTE_OWNER")
+        organizer_count = await db.execute(
+            select(func.count())
+            .select_from(ClubMember)
+            .where(ClubMember.club_id == club_id, ClubMember.role == "organizer")
+        )
+        if organizer_count.scalar_one() <= 1:
+            raise AppError(400, "Cannot demote the last organizer", "LAST_ORGANIZER")
+
+    member.role = new_role
+    await db.commit()
+    await db.refresh(member)
+    return member
+
+
 async def create_event_service(
     body: CreateEventRequest,
     club_id: uuid.UUID,

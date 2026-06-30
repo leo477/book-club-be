@@ -203,6 +203,7 @@ async def override_get_db(test_engine):
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value=None)
     mock_redis.set = AsyncMock()
+    mock_redis.getdel = AsyncMock(return_value=None)
     mock_redis.aclose = AsyncMock()
 
     async def _override_get_redis():

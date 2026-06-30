@@ -257,3 +257,128 @@ async def test_list_bans_organizer_via_club_organizer_id(async_client, register_
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/bans", headers=headers)
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+async def _ban_a_member(async_client, register_user, auth_headers, make_member, org_email, club_name, member_email):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email=org_email, club_name=club_name
+    )
+    await register_user(email=member_email)
+    user_headers = await auth_headers(email=member_email)
+    user_id = await make_member(club_id, user_headers)
+    await async_client.post(
+        f"/api/v1/clubs/{club_id}/members/{user_id}/ban", headers=headers, json={"duration": 1}
+    )
+    return headers, user_headers, club_id, user_id
+
+
+@pytest.mark.asyncio
+async def test_unban_member_success(async_client, register_user, auth_headers, make_member):
+    headers, _user_headers, club_id, user_id = await _ban_a_member(
+        async_client, register_user, auth_headers, make_member, "morg15@example.com", "MClub15", "muser10@example.com"
+    )
+    resp = await async_client.delete(f"/api/v1/clubs/{club_id}/bans/{user_id}", headers=headers)
+    assert resp.status_code == 204
+
+    bans_resp = await async_client.get(f"/api/v1/clubs/{club_id}/bans", headers=headers)
+    assert bans_resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_unban_member_not_organizer(async_client, register_user, auth_headers, make_member):
+    headers, user_headers, club_id, user_id = await _ban_a_member(
+        async_client, register_user, auth_headers, make_member, "morg16@example.com", "MClub16", "muser11@example.com"
+    )
+    resp = await async_client.delete(f"/api/v1/clubs/{club_id}/bans/{user_id}", headers=user_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unban_nonexistent(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg17@example.com", club_name="MClub17"
+    )
+    fake_user_id = str(uuid.uuid4())
+    resp = await async_client.delete(f"/api/v1/clubs/{club_id}/bans/{fake_user_id}", headers=headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_change_member_role_promote(async_client, register_user, auth_headers, make_member):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg18@example.com", club_name="MClub18"
+    )
+    await register_user(email="muser12@example.com")
+    user_headers = await auth_headers(email="muser12@example.com")
+    user_id = await make_member(club_id, user_headers)
+
+    resp = await async_client.patch(
+        f"/api/v1/clubs/{club_id}/members/{user_id}/role", headers=headers, json={"role": "organizer"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "organizer"
+
+
+@pytest.mark.asyncio
+async def test_change_member_role_not_organizer(async_client, register_user, auth_headers, make_member):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg19@example.com", club_name="MClub19"
+    )
+    await register_user(email="muser13@example.com")
+    user_headers = await auth_headers(email="muser13@example.com")
+    user_id = await make_member(club_id, user_headers)
+
+    resp = await async_client.patch(
+        f"/api/v1/clubs/{club_id}/members/{user_id}/role", headers=user_headers, json={"role": "organizer"}
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_change_member_role_demote_owner_blocked(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg20@example.com", club_name="MClub20"
+    )
+    me = await async_client.get("/api/v1/users/me", headers=headers)
+    owner_id = me.json()["id"]
+
+    resp = await async_client.patch(
+        f"/api/v1/clubs/{club_id}/members/{owner_id}/role", headers=headers, json={"role": "member"}
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_change_member_role_last_organizer_blocked(
+    async_client, register_user, auth_headers, make_member, db_session
+):
+    import uuid as _uuid
+
+    from sqlalchemy import delete
+
+    from app.models.club_member import ClubMember as ClubMemberModel
+
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg21@example.com", club_name="MClub21"
+    )
+    # Create a second, non-owner organizer.
+    await register_user(email="muser14@example.com")
+    user_headers = await auth_headers(email="muser14@example.com")
+    user_id = await make_member(club_id, user_headers, role="organizer")
+
+    # Remove the owner's membership so the second organizer is the sole organizer.
+    me = await async_client.get("/api/v1/users/me", headers=headers)
+    owner_id = me.json()["id"]
+    await db_session.execute(
+        delete(ClubMemberModel).where(
+            ClubMemberModel.club_id == _uuid.UUID(club_id),
+            ClubMemberModel.user_id == _uuid.UUID(owner_id),
+        )
+    )
+    await db_session.commit()
+
+    # The sole organizer demoting themselves must be blocked.
+    resp = await async_client.patch(
+        f"/api/v1/clubs/{club_id}/members/{user_id}/role", headers=user_headers, json={"role": "member"}
+    )
+    assert resp.status_code == 400
