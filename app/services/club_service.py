@@ -530,9 +530,7 @@ async def unban_user_service(
 
     await require_club_organizer(club_id, current_user, db)
 
-    result = await db.execute(
-        select(ClubBan).where(ClubBan.club_id == club_id, ClubBan.user_id == user_id)
-    )
+    result = await db.execute(select(ClubBan).where(ClubBan.club_id == club_id, ClubBan.user_id == user_id))
     bans = result.scalars().all()
     if not bans:
         raise AppError(404, "No active ban found for this user", "BAN_NOT_FOUND")

@@ -80,10 +80,7 @@ async def list_submissions(
     stmt = stmt.order_by(SupportSubmission.created_at.desc())
     result = await db.execute(stmt)
     is_admin = current_user.role == "admin"
-    return [
-        _build_response(s, hide_author=s.type == "complaint" and not is_admin)
-        for s in result.scalars().all()
-    ]
+    return [_build_response(s, hide_author=s.type == "complaint" and not is_admin) for s in result.scalars().all()]
 
 
 @router.patch("/{submission_id}/status")

@@ -266,9 +266,7 @@ async def _ban_a_member(async_client, register_user, auth_headers, make_member, 
     await register_user(email=member_email)
     user_headers = await auth_headers(email=member_email)
     user_id = await make_member(club_id, user_headers)
-    await async_client.post(
-        f"/api/v1/clubs/{club_id}/members/{user_id}/ban", headers=headers, json={"duration": 1}
-    )
+    await async_client.post(f"/api/v1/clubs/{club_id}/members/{user_id}/ban", headers=headers, json={"duration": 1})
     return headers, user_headers, club_id, user_id
 
 

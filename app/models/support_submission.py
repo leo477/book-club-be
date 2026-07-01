@@ -12,9 +12,7 @@ from app.models.base import AppBase
 class SupportSubmission(AppBase):
     __tablename__ = "support_submissions"
 
-    author_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
-    )
+    author_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     type: Mapped[str] = mapped_column(
         Enum("complaint", "suggestion", "comment", name="support_submission_type_enum"),
         nullable=False,
