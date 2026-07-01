@@ -48,10 +48,17 @@ class UserProfileResponse(BaseModel):
 class AuthResponse(BaseModel):
     user: UserProfileResponse
     accessToken: str
+    refreshToken: str
 
 
 class RefreshResponse(BaseModel):
     accessToken: str
+    refreshToken: str
+
+
+class OAuthExchangeResponse(BaseModel):
+    accessToken: str
+    refreshToken: str
 
 
 class TokenData(BaseModel):

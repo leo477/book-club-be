@@ -98,10 +98,15 @@ async def update_club(
         "isPublic": "is_public",
         "city": "city",
         "coverUrl": "cover_url",
+        "tags": "tags",
+        "meetingDurationMinutes": "meeting_duration_minutes",
     }
     for schema_field, model_attr in field_map.items():
         if schema_field in body.model_fields_set:
             setattr(club, model_attr, getattr(body, schema_field))
+
+    if "afterMeetingVenue" in body.model_fields_set:
+        club.after_meeting_venue = body.afterMeetingVenue.model_dump() if body.afterMeetingVenue else None
 
     await db.commit()
     await db.refresh(club)

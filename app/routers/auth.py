@@ -1,3 +1,4 @@
+import json
 import re
 import secrets
 import string
@@ -5,6 +6,7 @@ import uuid
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
+import redis.asyncio as aioredis
 import structlog
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -14,10 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from supabase_auth.types import User as SupabaseUser
 
 from app.config import Settings
-from app.dependencies import get_current_user, get_db_dep, get_settings_dep
+from app.dependencies import get_current_user, get_db_dep, get_redis, get_settings_dep
+from app.exceptions import AppError
 from app.limiter import limiter
 from app.models.user import User
-from app.schemas.auth import AuthResponse, RefreshResponse, UserProfileResponse
+from app.schemas.auth import AuthResponse, OAuthExchangeResponse, RefreshResponse, UserProfileResponse
 from app.services.auth_service import (
     get_supabase_client,
     supabase_exchange_code,
@@ -35,6 +38,8 @@ router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 _REFRESH_COOKIE = "refresh_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
 _OAUTH_FAILED_PATH = "/login?oauth=failed"
+_OAUTH_HANDOFF_PREFIX = "oauth:handoff:"
+_OAUTH_HANDOFF_TTL = 60
 _DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
 
 
@@ -208,6 +213,7 @@ async def register(
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
+        refreshToken=auth_response.session.refresh_token,
     )
 
 
@@ -237,16 +243,23 @@ async def login(
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
+        refreshToken=auth_response.session.refresh_token,
     )
 
 
+# noinspection PyUnusedLocal
 @router.post("/refresh", status_code=status.HTTP_200_OK)
+@limiter.limit("20/minute")
 async def refresh_token(
+    request: Request,  # slowapi requires this exact parameter name
     response: Response,
     settings: Annotated[Settings, Depends(get_settings_dep)],
     refresh_token_cookie: Annotated[str | None, Cookie(alias=_REFRESH_COOKIE)] = None,
+    refresh_token_body: Annotated[str | None, Body(alias="refreshToken", embed=True)] = None,
 ) -> RefreshResponse:
-    token = refresh_token_cookie
+    # Cookie path is the desktop flow; the body fallback covers mobile browsers that
+    # block the cross-site refresh cookie set on the backend domain.
+    token = refresh_token_cookie or refresh_token_body
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -262,6 +275,7 @@ async def refresh_token(
     _set_refresh_cookie(response, auth_response.session.refresh_token, settings)
     return RefreshResponse(
         accessToken=auth_response.session.access_token,
+        refreshToken=auth_response.session.refresh_token,
     )
 
 
@@ -300,6 +314,7 @@ async def oauth_callback(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings_dep)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
     code: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
     # _resolve_frontend_origin already enforces the allowlist (CORS regex + FRONTEND_URL
@@ -335,9 +350,49 @@ async def oauth_callback(
         logger.exception("Failed to provision user during OAuth callback")
         return _redirect("/login?oauth=failed")
 
-    redirect = _redirect("/auth/callback")
+    # One-time handoff code so the SPA can fetch tokens from the response body, avoiding
+    # reliance on the cross-site refresh cookie that mobile browsers block. The cookie is
+    # still set for desktop backward-compat but is no longer required for login.
+    handoff_code = secrets.token_urlsafe(32)
+    try:
+        await redis.set(
+            f"{_OAUTH_HANDOFF_PREFIX}{handoff_code}",
+            json.dumps(
+                {
+                    "accessToken": auth_response.session.access_token,
+                    "refreshToken": auth_response.session.refresh_token,
+                    "userId": str(auth_response.user.id),
+                }
+            ),
+            ex=_OAUTH_HANDOFF_TTL,
+        )
+    except Exception:  # intentional: a Redis failure must not block the desktop cookie flow
+        logger.exception("Failed to store OAuth handoff code")
+        redirect = _redirect("/auth/callback")
+        _set_refresh_cookie(redirect, auth_response.session.refresh_token, settings)
+        return redirect
+
+    redirect = _redirect(f"/auth/callback?code={handoff_code}")
     _set_refresh_cookie(redirect, auth_response.session.refresh_token, settings)
     return redirect
+
+
+# noinspection PyUnusedLocal
+@router.post("/oauth/exchange", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")
+async def oauth_exchange(
+    request: Request,  # slowapi requires this exact parameter name
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    code: Annotated[str, Body(embed=True)],
+) -> OAuthExchangeResponse:
+    raw = await redis.getdel(f"{_OAUTH_HANDOFF_PREFIX}{code}")
+    if raw is None:
+        raise AppError(status.HTTP_400_BAD_REQUEST, "Invalid or expired OAuth code", "INVALID_OAUTH_CODE")
+    data = json.loads(raw)
+    return OAuthExchangeResponse(
+        accessToken=data["accessToken"],
+        refreshToken=data["refreshToken"],
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

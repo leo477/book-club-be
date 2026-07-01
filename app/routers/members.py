@@ -18,6 +18,7 @@ from app.schemas.auth import build_socials
 from app.schemas.clubs import (
     BanRequest,
     BanResponse,
+    ChangeMemberRoleRequest,
     JoinRequestResponse,
     MemberResponse,
     MyMembershipResponse,
@@ -25,9 +26,11 @@ from app.schemas.clubs import (
 from app.services.club_service import (
     approve_join_request_service,
     ban_user_service,
+    change_member_role_service,
     get_my_membership_service,
     list_join_requests_service,
     reject_join_request_service,
+    unban_user_service,
 )
 
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
@@ -99,6 +102,39 @@ async def ban_member(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> BanResponse:
     return await ban_user_service(club_id, user_id, body, current_user, db)
+
+
+@router.delete("/bans/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unban_member(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> None:
+    await unban_user_service(club_id, user_id, current_user, db)
+
+
+@router.patch("/members/{user_id}/role")
+async def change_member_role(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: ChangeMemberRoleRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> MemberResponse:
+    membership = await change_member_role_service(club_id, user_id, body.role, current_user, db)
+
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one()
+    socials = {k: v for k, v in build_socials(user).items() if v is not None} if user.socials_public else None
+    return MemberResponse(
+        userId=str(user.id),
+        displayName=user.display_name,
+        avatarUrl=user.avatar_url,
+        role=membership.role,
+        socials=socials,
+        socialsPublic=user.socials_public,
+    )
 
 
 @router.get("/bans")
