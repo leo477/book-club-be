@@ -37,7 +37,7 @@ async def test_oauth_callback_invalid_code(no_redirect_client):
 async def test_oauth_callback_success_sets_cookie_and_creates_user(no_redirect_client):
     resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
     assert resp.status_code == 302
-    assert resp.headers["location"].endswith("/auth/callback")
+    assert "/auth/callback?code=" in resp.headers["location"]
     assert "refresh_token" in resp.cookies
 
 
@@ -80,7 +80,7 @@ async def test_oauth_callback_success_redirects_to_resolved_origin(no_redirect_c
         headers={"Cookie": f"fe_origin={_VALID_ORIGIN}"},
     )
     assert resp.status_code == 302
-    assert resp.headers["location"] == f"{_VALID_ORIGIN}/auth/callback"
+    assert resp.headers["location"].startswith(f"{_VALID_ORIGIN}/auth/callback?code=")
     assert "refresh_token" in resp.cookies
 
 
@@ -103,7 +103,7 @@ async def test_oauth_callback_evil_cookie_falls_back_to_frontend_url(no_redirect
         headers={"Cookie": "fe_origin=https://evil.com"},
     )
     assert resp.status_code == 302
-    assert resp.headers["location"] == "http://localhost:4200/auth/callback"
+    assert resp.headers["location"].startswith("http://localhost:4200/auth/callback?code=")
 
 
 @pytest.mark.asyncio
@@ -112,7 +112,7 @@ async def test_register_success(async_client, register_user):
     assert resp.status_code == 201
     data = resp.json()
     assert "user" in data and "accessToken" in data
-    assert "refreshToken" not in data
+    assert data["refreshToken"] == "fake-refresh-token"
     assert data["user"]["email"] == "test@example.com"
     assert "id" in data["user"]
 
@@ -151,6 +151,7 @@ async def test_login_success(async_client, register_user):
     assert resp.status_code == 200
     data = resp.json()
     assert "accessToken" in data
+    assert data["refreshToken"] == "fake-refresh-token"
 
 
 @pytest.mark.asyncio
@@ -259,7 +260,7 @@ async def test_oauth_callback_links_existing_email(no_redirect_client, db_sessio
 
     resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
     assert resp.status_code == 302
-    assert resp.headers["location"].endswith("/auth/callback")
+    assert "/auth/callback?code=" in resp.headers["location"]
     assert "refresh_token" in resp.cookies
 
     db_session.expire_all()  # request committed in its own session; force a fresh DB read
@@ -281,3 +282,39 @@ async def test_oauth_callback_provision_failure_redirects_failed(no_redirect_cli
         resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
     assert resp.status_code == 302
     assert resp.headers["location"].endswith("/login?oauth=failed")
+
+
+@pytest.mark.asyncio
+async def test_oauth_exchange_invalid_code(async_client):
+    resp = await async_client.post("/api/v1/auth/oauth/exchange", json={"code": "missing"})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "INVALID_OAUTH_CODE"
+
+
+@pytest.mark.asyncio
+async def test_oauth_exchange_returns_tokens_and_is_one_time(async_client):
+    import json
+    from unittest.mock import AsyncMock
+
+    from app.dependencies import get_redis
+
+    payload = json.dumps({"accessToken": "access-x", "refreshToken": "refresh-x", "userId": "uid"})
+    mock_redis = AsyncMock()
+    mock_redis.getdel = AsyncMock(return_value=payload)
+    app.dependency_overrides[get_redis] = lambda: mock_redis
+
+    resp = await async_client.post("/api/v1/auth/oauth/exchange", json={"code": "handoff"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {"accessToken": "access-x", "refreshToken": "refresh-x"}
+    mock_redis.getdel.assert_awaited_once_with("oauth:handoff:handoff")
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_body_token(async_client, register_user):
+    await register_user()
+    resp = await async_client.post("/api/v1/auth/refresh", json={"refreshToken": "fake-refresh-token"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["accessToken"]
+    assert data["refreshToken"] == "fake-refresh-token"

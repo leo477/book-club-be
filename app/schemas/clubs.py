@@ -96,6 +96,15 @@ class UpdateClubRequest(BaseModel):
     isPublic: bool | None = None
     city: str | None = Field(default=None, max_length=100)
     coverUrl: str | None = Field(default=None, max_length=500)
+    tags: list[Annotated[str, Field(max_length=50)]] | None = Field(default=None, max_length=20)
+    meetingDurationMinutes: int | None = Field(default=None, ge=1, le=480)
+    afterMeetingVenue: AfterMeetingVenueSchema | None = None
+
+
+class ChangeMemberRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["member", "organizer"]
 
 
 class RescheduleMeetingRequest(BaseModel):
