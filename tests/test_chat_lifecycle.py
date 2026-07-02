@@ -69,9 +69,7 @@ async def test_lifecycle_pass_posts_countdown_for_recently_ended_event(
     await run_event_chat_lifecycle_pass(db_session)
 
     room = (await db_session.execute(select(ChatRoom).where(ChatRoom.event_id == uuid.UUID(event_id)))).scalar_one()
-    messages = (
-        (await db_session.execute(select(ChatMessage).where(ChatMessage.room_id == room.id))).scalars().all()
-    )
+    messages = (await db_session.execute(select(ChatMessage).where(ChatMessage.room_id == room.id))).scalars().all()
     bot_messages = [m for m in messages if m.sender_id == SYSTEM_USER_ID]
     assert len(bot_messages) == 1
     # 5 - 2 days elapsed = ~3 days left; floor() from timedelta.days can read 2 or 3
@@ -92,9 +90,7 @@ async def test_lifecycle_pass_does_not_duplicate_countdown_same_day(
     await run_event_chat_lifecycle_pass(db_session)
 
     room = (await db_session.execute(select(ChatRoom).where(ChatRoom.event_id == uuid.UUID(event_id)))).scalar_one()
-    messages = (
-        (await db_session.execute(select(ChatMessage).where(ChatMessage.room_id == room.id))).scalars().all()
-    )
+    messages = (await db_session.execute(select(ChatMessage).where(ChatMessage.room_id == room.id))).scalars().all()
     bot_messages = [m for m in messages if m.sender_id == SYSTEM_USER_ID]
     assert len(bot_messages) == 1
 
@@ -130,9 +126,7 @@ async def test_lifecycle_pass_ignores_future_and_unrelated_rooms(
     rooms = (await db_session.execute(select(ChatRoom).where(ChatRoom.club_id == uuid.UUID(club_id)))).scalars().all()
     assert len(rooms) == 2  # General + event room, both untouched
     for room in rooms:
-        messages = (
-            (await db_session.execute(select(ChatMessage).where(ChatMessage.room_id == room.id))).scalars().all()
-        )
+        messages = (await db_session.execute(select(ChatMessage).where(ChatMessage.room_id == room.id))).scalars().all()
         assert messages == []
 
 
