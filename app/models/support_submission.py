@@ -1,11 +1,12 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, PrimaryKeyConstraint, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
+from app.database import Base
 from app.models.base import AppBase
 
 
@@ -38,3 +39,16 @@ class SupportSubmission(AppBase):
     )
 
     author = relationship("User", foreign_keys=[author_id])
+    likes = relationship("SupportSubmissionLike", back_populates="submission")
+
+
+class SupportSubmissionLike(Base):
+    __tablename__ = "support_submission_likes"
+    __table_args__ = (PrimaryKeyConstraint("submission_id", "user_id"),)
+
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("support_submissions.id"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+
+    submission = relationship("SupportSubmission", back_populates="likes")

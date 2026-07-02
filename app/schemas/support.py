@@ -30,3 +30,5 @@ class SupportSubmissionResponse(BaseModel):
     status: SupportStatus
     createdAt: datetime | str
     updatedAt: datetime | str
+    likeCount: int
+    likedByMe: bool
