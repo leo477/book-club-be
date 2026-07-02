@@ -15,6 +15,7 @@ class ChatMessageResponse(BaseModel):
     senderName: str
     text: str
     timestamp: datetime | str
+    isSystem: bool = False
 
 
 class SendMessageRequest(BaseModel):

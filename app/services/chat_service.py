@@ -5,6 +5,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import SYSTEM_USER_ID
 from app.dependencies import is_club_organizer, require_club_organizer
 from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
@@ -91,6 +92,7 @@ async def list_messages_service(
             senderName=display_name,
             text=msg.text,
             timestamp=msg.timestamp.isoformat(),
+            isSystem=msg.sender_id == SYSTEM_USER_ID,
         )
         for msg, display_name in rows
     ]
@@ -248,6 +250,20 @@ async def delete_chat_room_service(
     await db.commit()
 
 
+async def get_or_create_event_chat_room(event: Event, db: AsyncSession) -> ChatRoom:
+    """Idempotent get-or-create so every event ends up with exactly one chat room,
+    whether it's auto-created at event creation or lazily requested for an older event."""
+    existing = await db.scalar(select(ChatRoom).where(ChatRoom.event_id == event.id))
+    if existing is not None:
+        return existing
+
+    room = ChatRoom(club_id=event.club_id, event_id=event.id, name=event.title + " · Chat")
+    db.add(room)
+    await db.flush()
+    await db.refresh(room)
+    return room
+
+
 async def create_event_chat_room_service(
     event_id: uuid.UUID,
     current_user: User,
@@ -259,12 +275,7 @@ async def create_event_chat_room_service(
 
     await require_club_organizer(event.club_id, current_user, db)
 
-    existing = await db.scalar(select(ChatRoom).where(ChatRoom.event_id == event_id))
-    if existing is not None:
-        raise AppError(409, "Event chat room already exists", "EVENT_CHAT_ALREADY_EXISTS")
-
-    room = ChatRoom(club_id=event.club_id, event_id=event_id, name=event.title + " · Chat")
-    db.add(room)
+    room = await get_or_create_event_chat_room(event, db)
     await db.commit()
     await db.refresh(room)
     return ChatRoomResponse(id=str(room.id), name=room.name, eventId=str(room.event_id) if room.event_id else None)
