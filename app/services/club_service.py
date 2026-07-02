@@ -586,6 +586,7 @@ async def create_event_service(
     """Create an event for a club (organizer only)."""
     from app.dependencies import require_club_organizer
     from app.models.event import Event, EventAttendee
+    from app.services.chat_service import get_or_create_event_chat_room
     from app.services.event_service import build_event_response
 
     await require_club_organizer(club_id, current_user, db)
@@ -612,6 +613,8 @@ async def create_event_service(
     )
     db.add(event)
     db.add(EventAttendee(event_id=event.id, user_id=current_user.id))
+    await db.flush()
+    await get_or_create_event_chat_room(event, db)
     await db.commit()
     await db.refresh(event)
     return await build_event_response(event, db, current_user.id, club_name=club.name, organizer_id=club.organizer_id)

@@ -1,9 +1,19 @@
 import logging
+import uuid
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+# Fixed id for the unauthenticatable "Book Club Bot" account used to post automated
+# chat messages (e.g. event-chat deletion countdown). Deterministic (uuid5, not a
+# sequential/all-numeric-hex value — SQLite's dynamic typing can silently coerce a
+# TEXT column value into an INTEGER storage class if its hex digits are all 0-9,
+# corrupting round-trips) so it's reproducible without being stored anywhere else.
+# Seeded by migration u1v2w3x4y5z6_seed_system_user; keep this literal in sync with
+# that migration.
+SYSTEM_USER_ID = uuid.uuid5(uuid.NAMESPACE_DNS, "bot.bookclub.internal")
 
 
 class Settings(BaseSettings):
