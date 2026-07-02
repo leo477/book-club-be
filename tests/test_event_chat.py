@@ -33,15 +33,17 @@ async def test_create_event_chat_room(async_client, register_user, auth_headers)
 
 
 @pytest.mark.asyncio
-async def test_create_event_chat_room_duplicate_returns_409(async_client, register_user, auth_headers):
-    """Creating a chat room twice for the same event returns 409."""
+async def test_create_event_chat_room_duplicate_returns_same_room(async_client, register_user, auth_headers):
+    """Creating a chat room twice for the same event is idempotent — the room already
+    exists (auto-created at event creation), so both calls return the same room id."""
     headers, club_id, event_id = await _setup(async_client, register_user, auth_headers, "chat_duplicate@example.com")
 
     first = await async_client.post(f"/api/v1/events/{event_id}/chat/room", headers=headers)
     assert first.status_code == 201
 
     second = await async_client.post(f"/api/v1/events/{event_id}/chat/room", headers=headers)
-    assert second.status_code == 409
+    assert second.status_code == 201
+    assert second.json()["id"] == first.json()["id"]
 
 
 @pytest.mark.asyncio
@@ -58,12 +60,14 @@ async def test_get_event_chat_room_as_organizer(async_client, register_user, aut
 
 
 @pytest.mark.asyncio
-async def test_get_event_chat_room_not_found(async_client, register_user, auth_headers):
-    """GET before creating the room returns 404."""
+async def test_get_event_chat_room_exists_without_explicit_create(async_client, register_user, auth_headers):
+    """GET before ever calling POST still returns 200 — the room is auto-created when
+    the event itself is created, no manual chat-room creation step required."""
     headers, club_id, event_id = await _setup(async_client, register_user, auth_headers, "chat_notfound@example.com")
 
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=headers)
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.json()["eventId"] == event_id
 
 
 @pytest.mark.asyncio

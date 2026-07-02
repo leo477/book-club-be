@@ -47,6 +47,7 @@ class MessagePayload(TypedDict):
     senderName: str
     text: str
     timestamp: str
+    isSystem: bool
 
 
 class BroadcastMessage(TypedDict):
@@ -149,6 +150,7 @@ async def send_message(
         "senderName": current_user.display_name,
         "text": msg.text,
         "timestamp": msg.timestamp.isoformat(),
+        "isSystem": False,
     }
     await manager.broadcast(str(room_id), {"type": "message", "payload": payload})
 
@@ -157,6 +159,7 @@ async def send_message(
         senderId=str(msg.sender_id),
         senderName=current_user.display_name,
         text=msg.text,
+        isSystem=False,
         timestamp=msg.timestamp.isoformat(),
     )
 
@@ -326,6 +329,7 @@ async def websocket_endpoint(
                         "senderName": user.display_name,
                         "text": msg.text,
                         "timestamp": msg.timestamp.isoformat(),
+                        "isSystem": False,
                     },
                 },
             )
