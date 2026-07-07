@@ -5,6 +5,7 @@ from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, TypedDict
 
+import redis.asyncio as aioredis
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -208,6 +209,9 @@ async def get_unread_count(
     return await get_unread_count_service(room_id, current_user, db)
 
 
+_WS_TICKET_PREFIX = "ws:ticket:"
+
+
 async def _ws_authenticate(
     websocket: WebSocket,
     db: AsyncSession,
@@ -220,14 +224,10 @@ async def _ws_authenticate(
     except Exception:  # intentional: any handshake failure closes the socket
         await websocket.close(code=1008)
         return None
-    if not isinstance(raw, dict) or raw.get("type") != "auth" or not raw.get("token"):
+    if not isinstance(raw, dict) or raw.get("type") != "auth" or not (raw.get("ticket") or raw.get("token")):
         await websocket.close(code=1008)
         return None
-    try:
-        token_data = decode_access_token(raw["token"], settings)
-    except HTTPException:
-        await websocket.close(code=1008)
-        return None
+
     # Expire any stale transaction snapshot that may have been inherited from the
     # connection pool (e.g. via pool_pre_ping).  Rolling back here guarantees the
     # next statement opens a brand-new READ-COMMITTED snapshot and therefore sees
@@ -235,8 +235,24 @@ async def _ws_authenticate(
     # this is the root-cause fix for the WS-403-after-join bug.
     await db.rollback()
     repo = ChatRepository(db)
-    user_id = token_data.get("sub")
-    user = await repo.get_user_by_supabase_id(uuid.UUID(str(user_id)))
+
+    if raw.get("ticket"):
+        redis = aioredis.Redis(connection_pool=websocket.app.state.redis_pool)
+        raw_user_id = await redis.getdel(f"{_WS_TICKET_PREFIX}{raw['ticket']}")
+        if not raw_user_id:
+            await websocket.close(code=1008)
+            return None
+        user_id = raw_user_id.decode() if isinstance(raw_user_id, bytes) else raw_user_id
+        user = await repo.get_user_by_id(uuid.UUID(user_id))
+    else:
+        try:
+            token_data = decode_access_token(raw["token"], settings)
+        except HTTPException:
+            await websocket.close(code=1008)
+            return None
+        user_id = token_data.get("sub")
+        user = await repo.get_user_by_supabase_id(uuid.UUID(str(user_id)))
+
     if not user:
         await websocket.close(code=1008)
         return None

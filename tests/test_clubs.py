@@ -25,7 +25,10 @@ async def test_list_clubs_authenticated_sees_private(async_client, register_user
     )
     club_id = priv_resp.json()["id"]
 
-    # Unauthenticated — should NOT see private club
+    # Unauthenticated — should NOT see private club. Clear cookies: the organizer login
+    # above left an access_token cookie on this shared client, which would otherwise
+    # authenticate this "anonymous" request via cookie-first auth.
+    async_client.cookies.clear()
     anon_resp = await async_client.get("/api/v1/clubs")
     anon_ids = [c["id"] for c in anon_resp.json()]
     assert club_id not in anon_ids
@@ -575,6 +578,9 @@ async def test_get_club_stats_unauthenticated(async_client, register_user, auth_
         async_client, register_user, auth_headers, "stats_unauth_org@example.com", "StatsUnauthClub"
     )
 
+    # Clear cookies: the organizer login above left an access_token cookie on this
+    # shared client, which would otherwise authenticate this "anonymous" request.
+    async_client.cookies.clear()
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/stats")
     assert resp.status_code == 401
 

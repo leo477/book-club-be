@@ -1,7 +1,9 @@
 import asyncio
+import re
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 import redis.asyncio as aioredis
 import sentry_sdk
@@ -19,6 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import get_settings
 from app.limiter import limiter
 from app.routers.auth import router as auth_router
+from app.routers.book_vote import router as book_vote_router
 from app.routers.books import router as books_router
 from app.routers.chat import router as chat_router
 from app.routers.clubs import router as clubs_router
@@ -150,6 +153,20 @@ def _rate_limit_exceeded_handler(_request: Request, exc: RateLimitExceeded) -> R
     return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 
+def _origin_allowed(origin: str, allowed_origins: list[str], origin_regex: str) -> bool:
+    return origin in allowed_origins or bool(re.fullmatch(origin_regex, origin))
+
+
+_NO_STORE_PATHS = {
+    "/api/v1/auth/register",
+    "/api/v1/auth/login",
+    "/api/v1/auth/refresh",
+    "/api/v1/auth/oauth/exchange",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/me",
+}
+
+
 # noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
@@ -238,7 +255,30 @@ def create_app() -> FastAPI:
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
         if settings.ENV == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        if request.url.path in _NO_STORE_PATHS:
+            response.headers["Cache-Control"] = "no-store"
         return response
+
+    @app.middleware("http")
+    async def csrf_middleware(request: Request, call_next: _CallNext) -> Response:
+        # Cookie-authenticated state-changing requests need an Origin/Referer check since
+        # browsers attach cookies automatically; Bearer-authenticated requests (no cookie
+        # involved) can't be forged this way and are exempt.
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            auth_header = request.headers.get("Authorization")
+            has_bearer = bool(auth_header and auth_header.startswith("Bearer "))
+            if not has_bearer and request.cookies.get("access_token"):
+                candidate = request.headers.get("origin") or request.headers.get("referer")
+                origin = None
+                if candidate:
+                    parsed = urlparse(candidate)
+                    origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else None
+                if not origin or not _origin_allowed(origin, settings.ALLOWED_ORIGINS, settings.CORS_ORIGIN_REGEX):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": {"error": "Cross-origin request rejected", "code": "CSRF_ORIGIN_MISMATCH"}},
+                    )
+        return await call_next(request)
 
     app.add_middleware(
         CORSMiddleware,
@@ -304,6 +344,7 @@ def create_app() -> FastAPI:
     app.include_router(support_router)
     app.include_router(upload_router)
     app.include_router(books_router)
+    app.include_router(book_vote_router)
 
     return app
 
