@@ -61,5 +61,13 @@ class OAuthExchangeResponse(BaseModel):
     refreshToken: str
 
 
+class WsTicketResponse(BaseModel):
+    ticket: str
+
+
+class SessionStatusResponse(BaseModel):
+    hasSession: bool
+
+
 class TokenData(BaseModel):
     user_id: str

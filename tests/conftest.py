@@ -229,7 +229,14 @@ async def override_get_db(test_engine):
 
 @pytest_asyncio.fixture
 async def async_client(override_get_db):
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", follow_redirects=True) as ac:
+    # Origin mirrors a real same-origin frontend request; the CSRF middleware requires
+    # this on cookie-authenticated state-changing requests.
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Origin": "http://localhost:4200"},
+    ) as ac:
         yield ac
 
 

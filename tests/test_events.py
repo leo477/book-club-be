@@ -219,6 +219,9 @@ async def test_attend_event_unauthenticated(async_client, register_user, auth_he
     club_id = await _create_club(async_client, org_headers, "AttClubUnauth")
     event = await _create_event(async_client, org_headers, club_id)
 
+    # Clear cookies: the organizer login above left an access_token cookie on this
+    # shared client, which would otherwise authenticate this "anonymous" request.
+    async_client.cookies.clear()
     resp = await async_client.post(f"/api/v1/events/{event['id']}/attend")
     assert resp.status_code == 401
 

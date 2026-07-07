@@ -34,11 +34,13 @@ async def test_oauth_callback_invalid_code(no_redirect_client):
 
 
 @pytest.mark.asyncio
-async def test_oauth_callback_success_sets_cookie_and_creates_user(no_redirect_client):
+async def test_oauth_callback_success_redirects_with_handoff_code(no_redirect_client):
     resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
     assert resp.status_code == 302
     assert "/auth/callback?code=" in resp.headers["location"]
-    assert "refresh_token" in resp.cookies
+    # oauth_callback no longer sets cookies on the backend domain; the SPA gets the
+    # session via POST /oauth/exchange using the handoff code above.
+    assert "refresh_token" not in resp.cookies
 
 
 _VALID_ORIGIN = "https://book-club-preview-abc123.vercel.app"
@@ -81,7 +83,7 @@ async def test_oauth_callback_success_redirects_to_resolved_origin(no_redirect_c
     )
     assert resp.status_code == 302
     assert resp.headers["location"].startswith(f"{_VALID_ORIGIN}/auth/callback?code=")
-    assert "refresh_token" in resp.cookies
+    assert "refresh_token" not in resp.cookies
 
 
 @pytest.mark.asyncio
@@ -261,7 +263,7 @@ async def test_oauth_callback_links_existing_email(no_redirect_client, db_sessio
     resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
     assert resp.status_code == 302
     assert "/auth/callback?code=" in resp.headers["location"]
-    assert "refresh_token" in resp.cookies
+    assert "refresh_token" not in resp.cookies
 
     db_session.expire_all()  # request committed in its own session; force a fresh DB read
     row = await db_session.execute(select(User).where(User.email == "oauth@example.com"))
@@ -318,3 +320,162 @@ async def test_refresh_with_body_token(async_client, register_user):
     data = resp.json()
     assert data["accessToken"]
     assert data["refreshToken"] == "fake-refresh-token"
+
+
+def _set_cookie_header(resp, name: str) -> str | None:
+    for header in resp.headers.get_list("set-cookie"):
+        if header.startswith(f"{name}="):
+            return header
+    return None
+
+
+@pytest.mark.asyncio
+async def test_login_sets_both_session_cookies_samesite_lax(async_client, register_user):
+    await register_user()
+    resp = await async_client.post("/api/v1/auth/login", json={"email": "test@example.com", "password": "password123"})
+    assert resp.status_code == 200
+    for name in ("refresh_token", "access_token"):
+        header = _set_cookie_header(resp, name)
+        assert header is not None, f"{name} cookie not set"
+        assert "samesite=lax" in header.lower()
+    assert "httponly" in _set_cookie_header(resp, "refresh_token").lower()
+    assert "httponly" in _set_cookie_header(resp, "access_token").lower()
+
+
+@pytest.mark.asyncio
+async def test_refresh_sets_both_session_cookies(async_client, register_user):
+    await register_user()
+    resp = await async_client.post("/api/v1/auth/refresh", headers={"Cookie": "refresh_token=fake-refresh-token"})
+    assert resp.status_code == 200
+    for name in ("refresh_token", "access_token"):
+        assert _set_cookie_header(resp, name) is not None
+
+
+@pytest.mark.asyncio
+async def test_oauth_exchange_sets_both_session_cookies(async_client):
+    import json
+    from unittest.mock import AsyncMock
+
+    from app.dependencies import get_redis
+
+    payload = json.dumps({"accessToken": "access-x", "refreshToken": "refresh-x", "userId": "uid"})
+    mock_redis = AsyncMock()
+    mock_redis.getdel = AsyncMock(return_value=payload)
+    app.dependency_overrides[get_redis] = lambda: mock_redis
+
+    resp = await async_client.post("/api/v1/auth/oauth/exchange", json={"code": "handoff"})
+    assert resp.status_code == 200
+    for name in ("refresh_token", "access_token"):
+        assert _set_cookie_header(resp, name) is not None
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_both_session_cookies(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
+    resp = await async_client.post("/api/v1/auth/logout", headers=headers)
+    assert resp.status_code == 204
+    for name in ("refresh_token", "access_token"):
+        header = _set_cookie_header(resp, name)
+        assert header is not None
+        assert f'{name}=""' in header or f"{name}=;" in header or "01 Jan 1970" in header
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_accepts_cookie_auth(async_client, register_user):
+    resp = await register_user()
+    token = resp.json()["accessToken"]
+    async_client.cookies.clear()
+    async_client.cookies.set("access_token", token)
+    me_resp = await async_client.get("/api/v1/auth/me")
+    assert me_resp.status_code == 200
+    assert me_resp.json()["email"] == "test@example.com"
+
+
+@pytest.mark.asyncio
+async def test_auth_endpoints_send_no_store_cache_header(async_client, register_user):
+    resp = await register_user()
+    assert resp.headers["cache-control"] == "no-store"
+    me_resp = await async_client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {resp.json()['accessToken']}"}
+    )
+    assert me_resp.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_session_status_false_without_cookie(async_client):
+    resp = await async_client.get("/api/v1/auth/session-status")
+    assert resp.status_code == 200
+    assert resp.json() == {"hasSession": False}
+    assert resp.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_session_status_true_with_refresh_cookie(async_client):
+    async_client.cookies.set("refresh_token", "some-refresh-token")
+    resp = await async_client.get("/api/v1/auth/session-status")
+    assert resp.status_code == 200
+    assert resp.json() == {"hasSession": True}
+    assert resp.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_csrf_blocks_cross_origin_cookie_authenticated_post(async_client, register_user):
+    resp = await register_user()
+    token = resp.json()["accessToken"]
+    async_client.cookies.clear()
+    async_client.cookies.set("access_token", token)
+    bad = await async_client.post("/api/v1/auth/logout", headers={"Origin": "https://evil.com"})
+    assert bad.status_code == 403
+    assert bad.json()["detail"]["code"] == "CSRF_ORIGIN_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_csrf_allows_same_origin_cookie_authenticated_post(async_client, register_user):
+    resp = await register_user()
+    token = resp.json()["accessToken"]
+    async_client.cookies.clear()
+    async_client.cookies.set("access_token", token)
+    ok = await async_client.post("/api/v1/auth/logout", headers={"Origin": "http://localhost:4200"})
+    assert ok.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_csrf_allows_bearer_authenticated_post_cross_origin(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
+    async_client.cookies.clear()
+    ok = await async_client.post("/api/v1/auth/logout", headers={**headers, "Origin": "https://evil.com"})
+    assert ok.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_ws_ticket_mints_and_is_single_use(async_client, register_user):
+    from unittest.mock import AsyncMock
+
+    from app.dependencies import get_redis
+
+    resp = await register_user()
+    token = resp.json()["accessToken"]
+
+    store: dict[str, str] = {}
+
+    async def _set(key, value, ex=None):
+        store[key] = value
+
+    async def _getdel(key):
+        return store.pop(key, None)
+
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(side_effect=_set)
+    mock_redis.getdel = AsyncMock(side_effect=_getdel)
+    app.dependency_overrides[get_redis] = lambda: mock_redis
+
+    ticket_resp = await async_client.post("/api/v1/auth/ws-ticket", headers={"Authorization": f"Bearer {token}"})
+    assert ticket_resp.status_code == 200
+    ticket = ticket_resp.json()["ticket"]
+    assert f"ws:ticket:{ticket}" in store
+
+    consumed = await mock_redis.getdel(f"ws:ticket:{ticket}")
+    assert consumed is not None
+    assert await mock_redis.getdel(f"ws:ticket:{ticket}") is None

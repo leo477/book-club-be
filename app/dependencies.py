@@ -36,11 +36,19 @@ async def get_current_user(
     if cached is not None:
         return cached
 
+    # Explicit Bearer header (Swagger/tooling/API clients) takes priority over an ambient
+    # access_token cookie, so a caller presenting a specific credential is never silently
+    # overridden by whatever session cookie happens to be attached to the request.
     auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise AppError(status.HTTP_401_UNAUTHORIZED, "Not authenticated", "NOT_AUTHENTICATED")
+    request.state._auth_via_bearer = bool(auth_header and auth_header.startswith("Bearer "))
+    token: str | None
+    if auth_header and request.state._auth_via_bearer:
+        token = auth_header.split(" ", 1)[1]
+    else:
+        token = request.cookies.get("access_token")
+        if not token:
+            raise AppError(status.HTTP_401_UNAUTHORIZED, "Not authenticated", "NOT_AUTHENTICATED")
 
-    token = auth_header.split(" ", 1)[1]
     payload = decode_access_token(token, settings)
     user_id: str | None = payload.get("sub")
     if not user_id:
