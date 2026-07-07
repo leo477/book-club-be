@@ -179,7 +179,7 @@ def _clear_access_cookie(response: Response, settings: Settings) -> None:
 def _set_session_marker(response: Response, settings: Settings) -> None:
     # Intentionally JS-readable so the SPA can decide whether to attempt a
     # silent refresh without holding the access token.
-    response.set_cookie(  # NOSONAR
+    response.set_cookie(
         key=_SESSION_MARKER_COOKIE,
         value="1",
         httponly=False,
