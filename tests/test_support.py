@@ -173,5 +173,8 @@ async def test_like_without_auth_returns_401(async_client, auth_headers):
     assert create.status_code == 201, create.text
     submission_id = create.json()["id"]
 
+    # Clear cookies: the author login above left an access_token cookie on this shared
+    # client, which would otherwise authenticate this "anonymous" request.
+    async_client.cookies.clear()
     resp = await async_client.post(f"/api/v1/support/{submission_id}/like")
     assert resp.status_code == 401, resp.text

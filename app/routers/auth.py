@@ -20,7 +20,14 @@ from app.dependencies import get_current_user, get_db_dep, get_redis, get_settin
 from app.exceptions import AppError
 from app.limiter import limiter
 from app.models.user import User
-from app.schemas.auth import AuthResponse, OAuthExchangeResponse, RefreshResponse, UserProfileResponse
+from app.schemas.auth import (
+    AuthResponse,
+    OAuthExchangeResponse,
+    RefreshResponse,
+    SessionStatusResponse,
+    UserProfileResponse,
+    WsTicketResponse,
+)
 from app.services.auth_service import (
     get_supabase_client,
     supabase_exchange_code,
@@ -36,10 +43,13 @@ _AUTH_PREFIX = "/api/v1/auth"
 router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 
 _REFRESH_COOKIE = "refresh_token"
+_ACCESS_COOKIE = "access_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
 _OAUTH_FAILED_PATH = "/login?oauth=failed"
 _OAUTH_HANDOFF_PREFIX = "oauth:handoff:"
 _OAUTH_HANDOFF_TTL = 60
+_WS_TICKET_PREFIX = "ws:ticket:"
+_WS_TICKET_TTL = 60
 _DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
 
 
@@ -129,29 +139,57 @@ async def _get_or_create_user(db: AsyncSession, sb_user: SupabaseUser, email: st
 
 
 def _set_refresh_cookie(response: Response, token: str, settings: Settings) -> None:
-    secure = settings.ENV == "production"
-    samesite: Literal["lax", "none"] = "none" if settings.ENV == "production" else "lax"
     response.set_cookie(
         key=_REFRESH_COOKIE,
         value=token,
         httponly=True,
-        secure=secure,
-        samesite=samesite,
+        secure=settings.ENV == "production",
+        samesite="lax",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path=_AUTH_PREFIX,
     )
 
 
 def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
-    secure = settings.ENV == "production"
-    samesite: Literal["lax", "none"] = "none" if settings.ENV == "production" else "lax"
     response.delete_cookie(
         key=_REFRESH_COOKIE,
         httponly=True,
-        secure=secure,
-        samesite=samesite,
+        secure=settings.ENV == "production",
+        samesite="lax",
         path=_AUTH_PREFIX,
     )
+
+
+def _set_access_cookie(response: Response, token: str, settings: Settings) -> None:
+    response.set_cookie(
+        key=_ACCESS_COOKIE,
+        value=token,
+        httponly=True,
+        secure=settings.ENV == "production",
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/api/v1",
+    )
+
+
+def _clear_access_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        key=_ACCESS_COOKIE,
+        httponly=True,
+        secure=settings.ENV == "production",
+        samesite="lax",
+        path="/api/v1",
+    )
+
+
+def _set_session_cookies(response: Response, access_token: str, refresh_token: str, settings: Settings) -> None:
+    _set_refresh_cookie(response, refresh_token, settings)
+    _set_access_cookie(response, access_token, settings)
+
+
+def _clear_session_cookies(response: Response, settings: Settings) -> None:
+    _clear_refresh_cookie(response, settings)
+    _clear_access_cookie(response, settings)
 
 
 # noinspection PyUnusedLocal
@@ -209,7 +247,7 @@ async def register(
             content={"message": "Check your email to confirm registration", "code": "EMAIL_CONFIRMATION_REQUIRED"},
         )
 
-    _set_refresh_cookie(response, auth_response.session.refresh_token, settings)
+    _set_session_cookies(response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
@@ -239,7 +277,7 @@ async def login(
 
     user = await _get_or_create_user(db, auth_response.user, str(email))
 
-    _set_refresh_cookie(response, auth_response.session.refresh_token, settings)
+    _set_session_cookies(response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
@@ -258,7 +296,8 @@ async def refresh_token(
     refresh_token_body: Annotated[str | None, Body(alias="refreshToken", embed=True)] = None,
 ) -> RefreshResponse:
     # Cookie path is the desktop flow; the body fallback covers mobile browsers that
-    # block the cross-site refresh cookie set on the backend domain.
+    # block the cross-site refresh cookie set on the backend domain. Deprecated: slated
+    # for removal once the cookie-based frontend migration is fully rolled out.
     token = refresh_token_cookie or refresh_token_body
     if not token:
         raise HTTPException(
@@ -272,7 +311,7 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid or expired refresh token", "code": "INVALID_REFRESH_TOKEN"},
         )
-    _set_refresh_cookie(response, auth_response.session.refresh_token, settings)
+    _set_session_cookies(response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
     return RefreshResponse(
         accessToken=auth_response.session.access_token,
         refreshToken=auth_response.session.refresh_token,
@@ -350,9 +389,8 @@ async def oauth_callback(
         logger.exception("Failed to provision user during OAuth callback")
         return _redirect("/login?oauth=failed")
 
-    # One-time handoff code so the SPA can fetch tokens from the response body, avoiding
-    # reliance on the cross-site refresh cookie that mobile browsers block. The cookie is
-    # still set for desktop backward-compat but is no longer required for login.
+    # One-time handoff code so the SPA can fetch tokens from the response body via
+    # oauth_exchange, which establishes the session cookies on the frontend's proxied origin.
     handoff_code = secrets.token_urlsafe(32)
     try:
         await redis.set(
@@ -366,15 +404,11 @@ async def oauth_callback(
             ),
             ex=_OAUTH_HANDOFF_TTL,
         )
-    except Exception:  # intentional: a Redis failure must not block the desktop cookie flow
+    except Exception:  # intentional: a Redis failure must not block the OAuth flow
         logger.exception("Failed to store OAuth handoff code")
-        redirect = _redirect("/auth/callback")
-        _set_refresh_cookie(redirect, auth_response.session.refresh_token, settings)
-        return redirect
+        return _redirect(_OAUTH_FAILED_PATH)
 
-    redirect = _redirect(f"/auth/callback?code={handoff_code}")
-    _set_refresh_cookie(redirect, auth_response.session.refresh_token, settings)
-    return redirect
+    return _redirect(f"/auth/callback?code={handoff_code}")
 
 
 # noinspection PyUnusedLocal
@@ -382,6 +416,8 @@ async def oauth_callback(
 @limiter.limit("10/minute")
 async def oauth_exchange(
     request: Request,  # slowapi requires this exact parameter name
+    response: Response,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
     code: Annotated[str, Body(embed=True)],
 ) -> OAuthExchangeResponse:
@@ -389,6 +425,9 @@ async def oauth_exchange(
     if raw is None:
         raise AppError(status.HTTP_400_BAD_REQUEST, "Invalid or expired OAuth code", "INVALID_OAUTH_CODE")
     data = json.loads(raw)
+    _set_session_cookies(response, data["accessToken"], data["refreshToken"], settings)
+    # Body still returned for backward compat with the currently-deployed frontend bundle;
+    # remove once the cookie-based migration is fully rolled out.
     return OAuthExchangeResponse(
         accessToken=data["accessToken"],
         refreshToken=data["refreshToken"],
@@ -401,8 +440,26 @@ async def logout(
     settings: Annotated[Settings, Depends(get_settings_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> Response:
-    _clear_refresh_cookie(response, settings)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    # Mutate the injected `response`, not a freshly constructed one — a new Response()
+    # here would discard the delete-cookie headers just set on it.
+    _clear_session_cookies(response, settings)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@router.post("/ws-ticket", status_code=status.HTTP_200_OK)
+async def create_ws_ticket(
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> WsTicketResponse:
+    ticket = secrets.token_urlsafe(32)
+    await redis.set(f"{_WS_TICKET_PREFIX}{ticket}", str(current_user.id), ex=_WS_TICKET_TTL)
+    return WsTicketResponse(ticket=ticket)
+
+
+@router.get("/session-status", status_code=status.HTTP_200_OK)
+async def session_status(request: Request) -> SessionStatusResponse:
+    return SessionStatusResponse(hasSession=bool(request.cookies.get(_REFRESH_COOKIE)))
 
 
 @router.get("/me", status_code=status.HTTP_200_OK)

@@ -31,6 +31,10 @@ class ChatRepository:
         result = await self.db.execute(select(User).where(User.supabase_user_id == supabase_user_id))
         return result.scalar_one_or_none()
 
+    async def get_user_by_id(self, user_id: uuid.UUID) -> User | None:
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        return result.scalar_one_or_none()
+
     async def get_membership(self, club_id: uuid.UUID, user_id: uuid.UUID) -> ClubMember | None:
         result = await self.db.execute(
             select(ClubMember).where(ClubMember.club_id == club_id, ClubMember.user_id == user_id)

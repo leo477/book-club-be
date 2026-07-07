@@ -207,3 +207,72 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
         # Expected during test teardown after cancelling the websocket handler task.
         # Intentionally ignored to avoid masking the functional assertions above.
         pass
+
+
+@pytest.mark.asyncio
+async def test_ws_ticket_auth_accepted(async_client, register_user, auth_headers):
+    """WS handshake also accepts the new {"type":"auth","ticket":...} frame shape."""
+    from unittest.mock import AsyncMock, patch
+
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    rooms_resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=headers)
+    room_id = rooms_resp.json()[0]["id"]
+
+    me = await async_client.get("/api/v1/users/me", headers=headers)
+    user_id = me.json()["id"]
+
+    mock_redis = AsyncMock()
+    mock_redis.getdel = AsyncMock(return_value=user_id.encode())
+
+    to_app: asyncio.Queue = asyncio.Queue()
+    from_app: asyncio.Queue = asyncio.Queue()
+
+    ws_scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "scheme": "ws",
+        "path": f"/api/v1/chat/rooms/{room_id}",
+        "raw_path": f"/api/v1/chat/rooms/{room_id}".encode(),
+        "root_path": "",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+        "subprotocols": [],
+        "extensions": {"websocket.http.response": {}},
+        "state": {},
+    }
+
+    async def receive():
+        return await to_app.get()
+
+    async def send(message):
+        await from_app.put(message)
+
+    app.state.redis_pool = None  # only read as an opaque arg; aioredis.Redis is patched below
+    with patch("app.routers.chat.aioredis.Redis", return_value=mock_redis):
+        handler_task = asyncio.create_task(app(ws_scope, receive, send))
+        await to_app.put({"type": "websocket.connect"})
+        first_msg = await asyncio.wait_for(from_app.get(), timeout=5)
+        assert first_msg["type"] == "websocket.accept"
+
+        await to_app.put(
+            {"type": "websocket.receive", "text": json.dumps({"type": "auth", "ticket": "tix"}), "bytes": None}
+        )
+
+        # Drain the presence snapshot/broadcast frames sent right after connect.
+        for _ in range(3):
+            try:
+                await asyncio.wait_for(from_app.get(), timeout=1)
+            except TimeoutError:
+                break
+
+        await to_app.put({"type": "websocket.disconnect", "code": 1000})
+        handler_task.cancel()
+        try:
+            await asyncio.wait_for(handler_task, timeout=2)
+        except (TimeoutError, asyncio.CancelledError):
+            pass
+
+    mock_redis.getdel.assert_awaited_once_with("ws:ticket:tix")
