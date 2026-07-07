@@ -90,9 +90,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         "upgrade",
         "head",
         cwd="/app",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    await proc.wait()
+    stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
+        logger.error(
+            "alembic upgrade head failed",
+            returncode=proc.returncode,
+            stdout=stdout.decode(errors="replace"),
+            stderr=stderr.decode(errors="replace"),
+        )
         raise RuntimeError(f"alembic upgrade head failed with exit code {proc.returncode}")
     logger.info("Database migrations applied")
 
