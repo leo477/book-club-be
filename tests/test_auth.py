@@ -330,30 +330,29 @@ def _set_cookie_header(resp, name: str) -> str | None:
 
 
 @pytest.mark.asyncio
-async def test_login_sets_all_three_session_cookies_samesite_lax(async_client, register_user):
+async def test_login_sets_both_session_cookies_samesite_lax(async_client, register_user):
     await register_user()
     resp = await async_client.post("/api/v1/auth/login", json={"email": "test@example.com", "password": "password123"})
     assert resp.status_code == 200
-    for name in ("refresh_token", "access_token", "bc_session"):
+    for name in ("refresh_token", "access_token"):
         header = _set_cookie_header(resp, name)
         assert header is not None, f"{name} cookie not set"
         assert "samesite=lax" in header.lower()
     assert "httponly" in _set_cookie_header(resp, "refresh_token").lower()
     assert "httponly" in _set_cookie_header(resp, "access_token").lower()
-    assert "httponly" not in _set_cookie_header(resp, "bc_session").lower()
 
 
 @pytest.mark.asyncio
-async def test_refresh_sets_all_three_session_cookies(async_client, register_user):
+async def test_refresh_sets_both_session_cookies(async_client, register_user):
     await register_user()
     resp = await async_client.post("/api/v1/auth/refresh", headers={"Cookie": "refresh_token=fake-refresh-token"})
     assert resp.status_code == 200
-    for name in ("refresh_token", "access_token", "bc_session"):
+    for name in ("refresh_token", "access_token"):
         assert _set_cookie_header(resp, name) is not None
 
 
 @pytest.mark.asyncio
-async def test_oauth_exchange_sets_all_three_session_cookies(async_client):
+async def test_oauth_exchange_sets_both_session_cookies(async_client):
     import json
     from unittest.mock import AsyncMock
 
@@ -366,17 +365,17 @@ async def test_oauth_exchange_sets_all_three_session_cookies(async_client):
 
     resp = await async_client.post("/api/v1/auth/oauth/exchange", json={"code": "handoff"})
     assert resp.status_code == 200
-    for name in ("refresh_token", "access_token", "bc_session"):
+    for name in ("refresh_token", "access_token"):
         assert _set_cookie_header(resp, name) is not None
 
 
 @pytest.mark.asyncio
-async def test_logout_clears_all_three_session_cookies(async_client, register_user, auth_headers):
+async def test_logout_clears_both_session_cookies(async_client, register_user, auth_headers):
     await register_user()
     headers = await auth_headers()
     resp = await async_client.post("/api/v1/auth/logout", headers=headers)
     assert resp.status_code == 204
-    for name in ("refresh_token", "access_token", "bc_session"):
+    for name in ("refresh_token", "access_token"):
         header = _set_cookie_header(resp, name)
         assert header is not None
         assert f'{name}=""' in header or f"{name}=;" in header or "01 Jan 1970" in header
@@ -401,6 +400,23 @@ async def test_auth_endpoints_send_no_store_cache_header(async_client, register_
         "/api/v1/auth/me", headers={"Authorization": f"Bearer {resp.json()['accessToken']}"}
     )
     assert me_resp.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_session_status_false_without_cookie(async_client):
+    resp = await async_client.get("/api/v1/auth/session-status")
+    assert resp.status_code == 200
+    assert resp.json() == {"hasSession": False}
+    assert resp.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_session_status_true_with_refresh_cookie(async_client):
+    async_client.cookies.set("refresh_token", "some-refresh-token")
+    resp = await async_client.get("/api/v1/auth/session-status")
+    assert resp.status_code == 200
+    assert resp.json() == {"hasSession": True}
+    assert resp.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.asyncio

@@ -164,6 +164,7 @@ _NO_STORE_PATHS = {
     "/api/v1/auth/oauth/exchange",
     "/api/v1/auth/logout",
     "/api/v1/auth/me",
+    "/api/v1/auth/session-status",
 }
 
 

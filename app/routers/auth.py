@@ -20,7 +20,14 @@ from app.dependencies import get_current_user, get_db_dep, get_redis, get_settin
 from app.exceptions import AppError
 from app.limiter import limiter
 from app.models.user import User
-from app.schemas.auth import AuthResponse, OAuthExchangeResponse, RefreshResponse, UserProfileResponse, WsTicketResponse
+from app.schemas.auth import (
+    AuthResponse,
+    OAuthExchangeResponse,
+    RefreshResponse,
+    SessionStatusResponse,
+    UserProfileResponse,
+    WsTicketResponse,
+)
 from app.services.auth_service import (
     get_supabase_client,
     supabase_exchange_code,
@@ -37,7 +44,6 @@ router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 
 _REFRESH_COOKIE = "refresh_token"
 _ACCESS_COOKIE = "access_token"
-_SESSION_MARKER_COOKIE = "bc_session"
 _FE_ORIGIN_COOKIE = "fe_origin"
 _OAUTH_FAILED_PATH = "/login?oauth=failed"
 _OAUTH_HANDOFF_PREFIX = "oauth:handoff:"
@@ -176,40 +182,14 @@ def _clear_access_cookie(response: Response, settings: Settings) -> None:
     )
 
 
-def _set_session_marker(response: Response, settings: Settings) -> None:
-    # Intentionally JS-readable so the SPA can decide whether to attempt a
-    # silent refresh without holding the access token.
-    response.set_cookie(
-        key=_SESSION_MARKER_COOKIE,
-        value="1",
-        httponly=False,
-        secure=settings.ENV == "production",
-        samesite="lax",
-        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-        path="/",
-    )
-
-
-def _clear_session_marker(response: Response, settings: Settings) -> None:
-    response.delete_cookie(
-        key=_SESSION_MARKER_COOKIE,
-        httponly=False,
-        secure=settings.ENV == "production",
-        samesite="lax",
-        path="/",
-    )
-
-
 def _set_session_cookies(response: Response, access_token: str, refresh_token: str, settings: Settings) -> None:
     _set_refresh_cookie(response, refresh_token, settings)
     _set_access_cookie(response, access_token, settings)
-    _set_session_marker(response, settings)
 
 
 def _clear_session_cookies(response: Response, settings: Settings) -> None:
     _clear_refresh_cookie(response, settings)
     _clear_access_cookie(response, settings)
-    _clear_session_marker(response, settings)
 
 
 # noinspection PyUnusedLocal
@@ -475,6 +455,11 @@ async def create_ws_ticket(
     ticket = secrets.token_urlsafe(32)
     await redis.set(f"{_WS_TICKET_PREFIX}{ticket}", str(current_user.id), ex=_WS_TICKET_TTL)
     return WsTicketResponse(ticket=ticket)
+
+
+@router.get("/session-status", status_code=status.HTTP_200_OK)
+async def session_status(request: Request) -> SessionStatusResponse:
+    return SessionStatusResponse(hasSession=bool(request.cookies.get(_REFRESH_COOKIE)))
 
 
 @router.get("/me", status_code=status.HTTP_200_OK)
