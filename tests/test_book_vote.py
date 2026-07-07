@@ -162,9 +162,7 @@ async def test_close_round_picks_winner_and_blocks_further_votes(
     option_id = opt_resp.json()["options"][0]["id"]
     await async_client.post(f"/api/v1/clubs/{club_id}/book-vote/options/{option_id}/vote", headers=member_headers)
 
-    close_resp = await async_client.post(
-        f"/api/v1/clubs/{club_id}/book-vote/rounds/{round_id}/close", headers=headers
-    )
+    close_resp = await async_client.post(f"/api/v1/clubs/{club_id}/book-vote/rounds/{round_id}/close", headers=headers)
     assert close_resp.status_code == 200
     body = close_resp.json()
     assert body["status"] == "closed"
@@ -179,7 +177,5 @@ async def test_close_round_picks_winner_and_blocks_further_votes(
 @pytest.mark.asyncio
 async def test_option_not_found(async_client, register_user, auth_headers):
     headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
-    resp = await async_client.post(
-        f"/api/v1/clubs/{club_id}/book-vote/options/{uuid.uuid4()}/vote", headers=headers
-    )
+    resp = await async_client.post(f"/api/v1/clubs/{club_id}/book-vote/options/{uuid.uuid4()}/vote", headers=headers)
     assert resp.status_code == 404

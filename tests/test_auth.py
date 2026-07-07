@@ -397,7 +397,9 @@ async def test_get_current_user_accepts_cookie_auth(async_client, register_user)
 async def test_auth_endpoints_send_no_store_cache_header(async_client, register_user):
     resp = await register_user()
     assert resp.headers["cache-control"] == "no-store"
-    me_resp = await async_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {resp.json()['accessToken']}"})
+    me_resp = await async_client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {resp.json()['accessToken']}"}
+    )
     assert me_resp.headers["cache-control"] == "no-store"
 
 
@@ -407,9 +409,7 @@ async def test_csrf_blocks_cross_origin_cookie_authenticated_post(async_client, 
     token = resp.json()["accessToken"]
     async_client.cookies.clear()
     async_client.cookies.set("access_token", token)
-    bad = await async_client.post(
-        "/api/v1/auth/logout", headers={"Origin": "https://evil.com"}
-    )
+    bad = await async_client.post("/api/v1/auth/logout", headers={"Origin": "https://evil.com"})
     assert bad.status_code == 403
     assert bad.json()["detail"]["code"] == "CSRF_ORIGIN_MISMATCH"
 
@@ -429,9 +429,7 @@ async def test_csrf_allows_bearer_authenticated_post_cross_origin(async_client, 
     await register_user()
     headers = await auth_headers()
     async_client.cookies.clear()
-    ok = await async_client.post(
-        "/api/v1/auth/logout", headers={**headers, "Origin": "https://evil.com"}
-    )
+    ok = await async_client.post("/api/v1/auth/logout", headers={**headers, "Origin": "https://evil.com"})
     assert ok.status_code == 204
 
 
@@ -457,9 +455,7 @@ async def test_ws_ticket_mints_and_is_single_use(async_client, register_user):
     mock_redis.getdel = AsyncMock(side_effect=_getdel)
     app.dependency_overrides[get_redis] = lambda: mock_redis
 
-    ticket_resp = await async_client.post(
-        "/api/v1/auth/ws-ticket", headers={"Authorization": f"Bearer {token}"}
-    )
+    ticket_resp = await async_client.post("/api/v1/auth/ws-ticket", headers={"Authorization": f"Bearer {token}"})
     assert ticket_resp.status_code == 200
     ticket = ticket_resp.json()["ticket"]
     assert f"ws:ticket:{ticket}" in store
