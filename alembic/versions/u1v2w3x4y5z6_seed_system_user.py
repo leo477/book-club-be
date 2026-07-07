@@ -27,7 +27,7 @@ def upgrade() -> None:
             """
             INSERT INTO users (id, email, display_name, password_hash, supabase_user_id, role,
                                 socials_public, created_at)
-            VALUES (:id, 'system@bookclub.internal', 'Book Club Bot', NULL, NULL,
+            VALUES (CAST(:id AS uuid), 'system@bookclub.internal', 'Book Club Bot', NULL, NULL,
                     'user', false, now())
             ON CONFLICT (id) DO NOTHING
             """
@@ -36,4 +36,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(sa.text("DELETE FROM users WHERE id = :id").bindparams(id=_SYSTEM_USER_ID))
+    op.execute(sa.text("DELETE FROM users WHERE id = CAST(:id AS uuid)").bindparams(id=_SYSTEM_USER_ID))
