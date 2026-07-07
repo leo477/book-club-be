@@ -1,4 +1,5 @@
 from app.models.base import TimestampMixin
+from app.models.book_vote import BookVoteOption, BookVoteRound, BookVoteVote
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
 from app.models.club import Club
 from app.models.club_ban import ClubBan
@@ -11,6 +12,9 @@ from app.models.support_submission import SupportSubmission
 from app.models.user import User
 
 __all__ = [
+    "BookVoteOption",
+    "BookVoteRound",
+    "BookVoteVote",
     "ChatMessage",
     "ChatRoom",
     "ChatRoomBan",
