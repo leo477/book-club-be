@@ -68,6 +68,20 @@ async def test_oauth_google_evil_origin_no_cookie(no_redirect_client):
 
 
 @pytest.mark.asyncio
+async def test_oauth_google_mobile_scheme_origin_sets_cookie(no_redirect_client):
+    resp = await no_redirect_client.get("/api/v1/auth/oauth/google", params={"origin": "bookclub://auth"})
+    assert resp.status_code == 302
+    assert _fe_origin_cookie(resp) == "bookclub://auth"
+
+
+@pytest.mark.asyncio
+async def test_oauth_google_untrusted_scheme_no_cookie(no_redirect_client):
+    resp = await no_redirect_client.get("/api/v1/auth/oauth/google", params={"origin": "evil://x"})
+    assert resp.status_code == 302
+    assert _fe_origin_cookie(resp) is None
+
+
+@pytest.mark.asyncio
 async def test_oauth_google_resolves_origin_from_referer(no_redirect_client):
     resp = await no_redirect_client.get("/api/v1/auth/oauth/google", headers={"Referer": f"{_VALID_ORIGIN}/login"})
     assert resp.status_code == 302

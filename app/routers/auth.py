@@ -65,6 +65,7 @@ def _resolve_frontend_origin(candidate: str | None, settings: Settings) -> str |
         re.fullmatch(settings.CORS_ORIGIN_REGEX, origin)
         or origin == settings.FRONTEND_URL
         or origin == "http://localhost:4200"
+        or parsed.scheme == settings.MOBILE_APP_SCHEME
     ):
         return origin
     return None

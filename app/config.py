@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # the browser lands after login; BACKEND_URL is this API's public base URL.
     FRONTEND_URL: str = "http://localhost:4200"
     BACKEND_URL: str = "http://localhost:8000"
+    # Custom URL scheme the React Native app registers for the OAuth deep-link handoff.
+    MOBILE_APP_SCHEME: str = "bookclub"
     PHOTON_URL: str = "https://photon.komoot.io"
     PHOTON_TIMEOUT: int = 8
     SENTRY_DSN: str = ""
