@@ -8,11 +8,13 @@ from typing import Annotated, Any, TypedDict
 import redis.asyncio as aioredis
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.dependencies import get_current_user, get_db_dep, get_settings_dep
 from app.models.chat import ChatMessage, ChatRoom
+from app.models.club_member import ClubMember
 from app.models.user import User
 from app.repositories import ChatRepository
 from app.schemas.chat import (
@@ -38,6 +40,7 @@ from app.services.chat_service import (
     mark_room_as_read_service,
     send_message_service,
 )
+from app.services.push_service import send_expo_push_notifications
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -277,7 +280,7 @@ async def websocket_endpoint(
     result = await _ws_authenticate(websocket, db, settings, room_id)
     if result is None:
         return
-    user, _room = result
+    user, room = result
 
     manager.connect(room_id, websocket, str(user.id))
 
@@ -334,6 +337,24 @@ async def websocket_endpoint(
             db.add(msg)
             await db.commit()
             await db.refresh(msg)
+
+            # Best-effort push notification fan-out to offline club members (Feature:
+            # push notifications). Presence is tracked here via manager.room_presence,
+            # so — unlike the REST send path — we can skip anyone currently online in
+            # the room (no need to notify someone actively viewing the chat).
+            members_result = await db.execute(
+                select(ClubMember.user_id).where(ClubMember.club_id == room.club_id)
+            )
+            online_user_ids = manager.room_presence.get(room_id, set())
+            recipient_ids = [
+                uid for uid in members_result.scalars().all() if uid != user.id and str(uid) not in online_user_ids
+            ]
+            if recipient_ids:
+                asyncio.create_task(  # noqa: RUF006 — fire-and-forget by design
+                    send_expo_push_notifications(
+                        recipient_ids, user.display_name, text[:120], {"type": "chat", "roomId": room_id}, db
+                    )
+                )
 
             await manager.broadcast(
                 room_id,

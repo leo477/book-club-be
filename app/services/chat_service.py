@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -9,6 +10,7 @@ from app.config import SYSTEM_USER_ID
 from app.dependencies import is_club_organizer, require_club_organizer
 from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
+from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.repositories import ChatRepository
@@ -20,6 +22,7 @@ from app.schemas.chat import (
     MarkReadRequest,
     UnreadCountResponse,
 )
+from app.services.push_service import send_expo_push_notifications
 
 
 async def get_room_or_404(room_id: uuid.UUID, db: AsyncSession) -> ChatRoom:
@@ -106,7 +109,7 @@ async def send_message_service(
     current_user: User,
     db: AsyncSession,
 ) -> ChatMessage:
-    await get_room_or_404(room_id, db)
+    room = await get_room_or_404(room_id, db)
 
     if await check_user_ban(room_id, current_user.id, db):
         raise AppError(403, "You are banned from this room", "ROOM_BANNED")
@@ -115,6 +118,29 @@ async def send_message_service(
     db.add(msg)
     await db.commit()
     await db.refresh(msg)
+
+    # Best-effort push notification fan-out (Feature: push notifications). This is the
+    # REST send path — unlike the WebSocket path, there's no access to the connection
+    # manager's room-presence tracking here, so (for simplicity) we notify all other
+    # club members rather than filtering out users currently viewing the room.
+    members_result = await db.execute(
+        select(ClubMember.user_id).where(
+            ClubMember.club_id == room.club_id,
+            ClubMember.user_id != current_user.id,
+        )
+    )
+    recipient_ids = list(members_result.scalars().all())
+    if recipient_ids:
+        asyncio.create_task(  # noqa: RUF006 — fire-and-forget by design, see push_service docstring
+            send_expo_push_notifications(
+                recipient_ids,
+                current_user.display_name,
+                text[:120],
+                {"type": "chat", "roomId": str(room_id)},
+                db,
+            )
+        )
+
     return msg
 
 

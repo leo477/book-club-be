@@ -6,6 +6,7 @@ from app.models.club_ban import ClubBan
 from app.models.club_join_request import ClubJoinRequest
 from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
+from app.models.push_token import PushToken
 from app.models.quiz import Quiz, QuizAttempt, QuizQuestion, QuizSession
 from app.models.randomizer import RandomizerSession
 from app.models.support_submission import SupportSubmission
@@ -24,6 +25,7 @@ __all__ = [
     "ClubMember",
     "Event",
     "EventAttendee",
+    "PushToken",
     "Quiz",
     "QuizAttempt",
     "QuizQuestion",

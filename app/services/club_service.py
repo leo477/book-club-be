@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -33,6 +34,7 @@ from app.schemas.clubs import (
 )
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
 from app.schemas.users import UserStatsResponse
+from app.services.push_service import send_expo_push_notifications
 
 logger = structlog.get_logger(__name__)
 
@@ -425,6 +427,19 @@ async def approve_join_request_service(
             retry_request.decided_by = current_user.id
             retry_request.decided_at = now_utc
             await db.commit()
+
+    # Best-effort push notification to the newly approved member.
+    club = await repo.get_by_id(club_id)
+    if club is not None:
+        asyncio.create_task(  # noqa: RUF006 — fire-and-forget by design
+            send_expo_push_notifications(
+                [user_id],
+                "Join request approved",
+                f"You've been accepted into {club.name}",
+                {"type": "club", "clubId": str(club_id)},
+                db,
+            )
+        )
 
     return await repo.count_members(club_id)
 

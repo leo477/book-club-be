@@ -30,6 +30,7 @@ from app.routers.events import router as events_router
 from app.routers.geocode import router as geocode_router
 from app.routers.health import router as health_router
 from app.routers.members import router as members_router
+from app.routers.notifications import router as notifications_router
 from app.routers.quizzes import router as quizzes_router
 from app.routers.randomizer import router as randomizer_router
 from app.routers.routes import router as routes_router
@@ -199,6 +200,7 @@ def create_app() -> FastAPI:
             {"name": "geocode", "description": "Photon/OSM geocoding autocomplete"},
             {"name": "routes", "description": "Google Routes API walking-route proxy"},
             {"name": "support", "description": "Support submissions — complaints, suggestions, comments"},
+            {"name": "notifications", "description": "Push notification token registration"},
             {"name": "health", "description": "Health check"},
         ],
         docs_url=None,
@@ -343,6 +345,7 @@ def create_app() -> FastAPI:
     app.include_router(users_router)
     app.include_router(clubs_router)
     app.include_router(members_router)
+    app.include_router(notifications_router)
     app.include_router(events_router)
     app.include_router(quizzes_router)
     app.include_router(randomizer_router)
