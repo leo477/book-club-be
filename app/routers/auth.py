@@ -271,7 +271,9 @@ async def register(
             content={"message": "Check your email to confirm registration", "code": "EMAIL_CONFIRMATION_REQUIRED"},
         )
 
-    _set_session_cookies(request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
+    _set_session_cookies(
+        request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
+    )
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
@@ -301,7 +303,9 @@ async def login(
 
     user = await _get_or_create_user(db, auth_response.user, str(email))
 
-    _set_session_cookies(request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
+    _set_session_cookies(
+        request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
+    )
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
@@ -335,7 +339,9 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid or expired refresh token", "code": "INVALID_REFRESH_TOKEN"},
         )
-    _set_session_cookies(request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
+    _set_session_cookies(
+        request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
+    )
     return RefreshResponse(
         accessToken=auth_response.session.access_token,
         refreshToken=auth_response.session.refresh_token,
