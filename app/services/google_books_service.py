@@ -68,7 +68,10 @@ async def search_books(query: str, limit: int = 5, api_key: str = "") -> list[di
     except httpx.HTTPError as exc:
         # Upstream outage/quota exhaustion shouldn't 500 the whole request — degrade to
         # no suggestions instead of leaving the caller with an opaque Internal Server Error.
-        logger.warning("google_books_search_failed", query=query, error=str(exc))
+        # Log only the status (not str(exc)/the request) — httpx's error message embeds the
+        # full request URL, which carries our API key in the query string.
+        status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        logger.warning("google_books_search_failed", query=query, status=status, error_type=type(exc).__name__)
         return []
 
     data: dict[str, Any] = resp.json()
@@ -100,7 +103,8 @@ async def get_book_by_id(book_id: str, api_key: str = "") -> dict[str, Any] | No
                 return None
             resp.raise_for_status()
     except httpx.HTTPError as exc:
-        logger.warning("google_books_lookup_failed", book_id=book_id, error=str(exc))
+        status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        logger.warning("google_books_lookup_failed", book_id=book_id, status=status, error_type=type(exc).__name__)
         return None
 
     item: dict[str, Any] = resp.json()
