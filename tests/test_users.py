@@ -1,5 +1,8 @@
 import pytest
 
+from app.dependencies import get_settings_dep
+from app.main import app
+
 
 @pytest.mark.asyncio
 async def test_get_stats_empty(async_client, register_user, auth_headers):
@@ -27,6 +30,23 @@ async def test_update_role_to_organizer(async_client, register_user, auth_header
     resp = await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
     assert resp.status_code == 200
     assert resp.json()["role"] == "organizer"
+
+
+@pytest.mark.asyncio
+async def test_update_role_forbidden_in_production(async_client, register_user, auth_headers):
+    await register_user()
+    headers = await auth_headers()
+
+    current_settings = app.dependency_overrides[get_settings_dep]()
+    prod_settings = current_settings.model_copy(update={"ENV": "production"})
+    app.dependency_overrides[get_settings_dep] = lambda: prod_settings
+    try:
+        resp = await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+    finally:
+        app.dependency_overrides[get_settings_dep] = lambda: current_settings
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "ROLE_SELF_ASSIGN_DISABLED"
 
 
 @pytest.mark.asyncio

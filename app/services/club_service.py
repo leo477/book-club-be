@@ -470,6 +470,39 @@ async def get_my_membership_service(
     return MyMembershipResponse(isMember=False)
 
 
+async def remove_member_service(
+    club_id: uuid.UUID,
+    user_id: uuid.UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> None:
+    """Remove a member from a club, guarding against removing the owner or the last organizer."""
+    from app.dependencies import require_club_organizer
+
+    await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
+
+    repo = ClubRepository(db)
+    member = await repo.get_membership(club_id, user_id)
+    if member is None:
+        raise AppError(404, "Member not found", "MEMBER_NOT_FOUND")
+
+    if club.organizer_id == user_id:
+        raise AppError(400, "Cannot remove the club owner", "CANNOT_REMOVE_OWNER")
+
+    if member.role == "organizer":
+        organizer_count = await db.execute(
+            select(func.count())
+            .select_from(ClubMember)
+            .where(ClubMember.club_id == club_id, ClubMember.role == "organizer")
+        )
+        if organizer_count.scalar_one() <= 1:
+            raise AppError(400, "Cannot remove the last organizer", "LAST_ORGANIZER")
+
+    await repo.remove_member(club_id, user_id)
+    await db.commit()
+
+
 async def ban_user_service(
     club_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -481,10 +514,25 @@ async def ban_user_service(
     from app.dependencies import require_club_organizer
 
     await require_club_organizer(club_id, current_user, db)
+    club = await get_club_or_404(club_id, db)
 
     user_result = await db.execute(select(User).where(User.id == user_id))
     if not user_result.scalar_one_or_none():
         raise AppError(404, "User not found", "USER_NOT_FOUND")
+
+    if club.organizer_id == user_id:
+        raise AppError(400, "Cannot ban the club owner", "CANNOT_REMOVE_OWNER")
+
+    repo = ClubRepository(db)
+    target_member = await repo.get_membership(club_id, user_id)
+    if target_member is not None and target_member.role == "organizer":
+        organizer_count = await db.execute(
+            select(func.count())
+            .select_from(ClubMember)
+            .where(ClubMember.club_id == club_id, ClubMember.role == "organizer")
+        )
+        if organizer_count.scalar_one() <= 1:
+            raise AppError(400, "Cannot ban the last organizer", "LAST_ORGANIZER")
 
     # M-7: compute expires_at from duration; None = permanent ban
     duration_days_map = {"1": 1, "3": 3, "5": 5}
@@ -506,7 +554,6 @@ async def ban_user_service(
     )
     db.add(ban)
 
-    repo = ClubRepository(db)
     await repo.remove_member(club_id, user_id)
     await db.commit()
     await db.refresh(ban)

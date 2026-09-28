@@ -6,8 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep
+from app.exceptions import AppError
 from app.models.randomizer import RandomizerSession
 from app.models.user import User
+from app.repositories import ClubRepository
 from app.schemas.randomizer import (
     CandidateSchema,
     CreateRandomizerSessionRequest,
@@ -18,6 +20,12 @@ router = APIRouter(
     prefix="/api/v1/clubs/{club_id}/randomizer",
     tags=["randomizer"],
 )
+
+
+async def _require_club_member(club_id: uuid.UUID, current_user: User, db: AsyncSession) -> None:
+    membership = await ClubRepository(db).get_membership(club_id, current_user.id)
+    if membership is None:
+        raise AppError(status.HTTP_403_FORBIDDEN, "Not authorized", "FORBIDDEN")
 
 
 def _build_response(session: RandomizerSession) -> RandomizerSessionResponse:
@@ -38,10 +46,11 @@ def _build_response(session: RandomizerSession) -> RandomizerSessionResponse:
 async def get_history(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    _current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[RandomizerSessionResponse]:
+    await _require_club_member(club_id, current_user, db)
     result = await db.execute(
         select(RandomizerSession)
         .where(RandomizerSession.club_id == club_id)
@@ -60,6 +69,7 @@ async def create_session(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> RandomizerSessionResponse:
+    await _require_club_member(club_id, current_user, db)
     session = RandomizerSession(
         club_id=club_id,
         created_by=current_user.id,

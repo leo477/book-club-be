@@ -68,6 +68,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             if "localhost" in getattr(settings, name):
                 raise RuntimeError(f"{name} must be a public URL in production, got {getattr(settings, name)!r}")
 
+        # Fail fast if Supabase auth isn't configured: without SUPABASE_URL/ANON_KEY/
+        # JWT_SECRET, token verification and the Supabase client can't work in prod.
+        if not settings.supabase_configured:
+            raise RuntimeError("Supabase must be configured in production (SUPABASE_URL/ANON_KEY/JWT_SECRET)")
+
     if settings.SENTRY_DSN:
         sentry_sdk.init(
             dsn=settings.SENTRY_DSN,
