@@ -42,4 +42,3 @@ async def test_lifespan_raises_when_supabase_not_configured_in_production(monkey
     with pytest.raises(RuntimeError, match="Supabase must be configured in production"):
         async with lifespan(None):
             pass
-
