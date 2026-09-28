@@ -3,7 +3,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db_dep
+from app.config import Settings
+from app.dependencies import get_current_user, get_db_dep, get_settings_dep
+from app.exceptions import AppError
 from app.models.user import User
 from app.schemas.auth import UserProfileResponse
 from app.schemas.users import (
@@ -51,7 +53,12 @@ async def update_role(
     body: UpdateRoleRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> UserProfileResponse:
+    # Self-service role assignment is only meant for local dev/test seeding — in
+    # production this would let any authenticated user grant themselves organizer.
+    if settings.ENV == "production":
+        raise AppError(403, "Self-service role assignment is disabled in production", "ROLE_SELF_ASSIGN_DISABLED")
     current_user.role = body.role
     await db.commit()
     await db.refresh(current_user)

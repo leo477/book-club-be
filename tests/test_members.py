@@ -347,6 +347,115 @@ async def test_change_member_role_demote_owner_blocked(async_client, register_us
 
 
 @pytest.mark.asyncio
+async def test_remove_member_owner_blocked(async_client, register_user, auth_headers, make_member):
+    """Bug 2: a delegated organizer must not be able to remove the club owner."""
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg22@example.com", club_name="MClub22"
+    )
+    me = await async_client.get("/api/v1/users/me", headers=headers)
+    owner_id = me.json()["id"]
+
+    # Create a second, delegated organizer.
+    await register_user(email="muser15@example.com")
+    delegate_headers = await auth_headers(email="muser15@example.com")
+    await make_member(club_id, delegate_headers, role="organizer")
+
+    resp = await async_client.delete(f"/api/v1/clubs/{club_id}/members/{owner_id}", headers=delegate_headers)
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "CANNOT_REMOVE_OWNER"
+
+
+@pytest.mark.asyncio
+async def test_remove_member_last_organizer_blocked(async_client, register_user, auth_headers, make_member, db_session):
+    """Bug 2: removing the sole remaining organizer (a non-owner) must be blocked."""
+    import uuid as _uuid
+
+    from sqlalchemy import delete
+
+    from app.models.club_member import ClubMember as ClubMemberModel
+
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg23@example.com", club_name="MClub23"
+    )
+    await register_user(email="muser16@example.com")
+    delegate_headers = await auth_headers(email="muser16@example.com")
+    delegate_id = await make_member(club_id, delegate_headers, role="organizer")
+
+    # Remove the owner's membership row so the delegate is the sole organizer,
+    # mirroring the setup used for the equivalent change-role guard test.
+    me = await async_client.get("/api/v1/users/me", headers=headers)
+    owner_id = me.json()["id"]
+    await db_session.execute(
+        delete(ClubMemberModel).where(
+            ClubMemberModel.club_id == _uuid.UUID(club_id),
+            ClubMemberModel.user_id == _uuid.UUID(owner_id),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.delete(f"/api/v1/clubs/{club_id}/members/{delegate_id}", headers=delegate_headers)
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "LAST_ORGANIZER"
+
+
+@pytest.mark.asyncio
+async def test_ban_member_owner_blocked(async_client, register_user, auth_headers, make_member):
+    """Bug 3: a delegated organizer must not be able to ban the club owner."""
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg24@example.com", club_name="MClub24"
+    )
+    me = await async_client.get("/api/v1/users/me", headers=headers)
+    owner_id = me.json()["id"]
+
+    await register_user(email="muser17@example.com")
+    delegate_headers = await auth_headers(email="muser17@example.com")
+    await make_member(club_id, delegate_headers, role="organizer")
+
+    resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/members/{owner_id}/ban",
+        headers=delegate_headers,
+        json={"duration": 1},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "CANNOT_REMOVE_OWNER"
+
+
+@pytest.mark.asyncio
+async def test_ban_member_last_organizer_blocked(async_client, register_user, auth_headers, make_member, db_session):
+    """Bug 3: banning the sole remaining organizer (a non-owner) must be blocked."""
+    import uuid as _uuid
+
+    from sqlalchemy import delete
+
+    from app.models.club_member import ClubMember as ClubMemberModel
+
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg25@example.com", club_name="MClub25"
+    )
+    await register_user(email="muser18@example.com")
+    delegate_headers = await auth_headers(email="muser18@example.com")
+    delegate_id = await make_member(club_id, delegate_headers, role="organizer")
+
+    me = await async_client.get("/api/v1/users/me", headers=headers)
+    owner_id = me.json()["id"]
+    await db_session.execute(
+        delete(ClubMemberModel).where(
+            ClubMemberModel.club_id == _uuid.UUID(club_id),
+            ClubMemberModel.user_id == _uuid.UUID(owner_id),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/members/{delegate_id}/ban",
+        headers=delegate_headers,
+        json={"duration": 1},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "LAST_ORGANIZER"
+
+
+@pytest.mark.asyncio
 async def test_change_member_role_last_organizer_blocked(
     async_client, register_user, auth_headers, make_member, db_session
 ):
