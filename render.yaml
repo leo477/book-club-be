@@ -39,7 +39,7 @@ services:
     dockerfilePath: Dockerfile
     plan: free
     schedule: "*/10 * * * *"
-    startCommand: "curl -sf https://book-club-be.onrender.com/health || true"
+    dockerCommand: "curl -sf https://book-club-be.onrender.com/health || true"
 
 previews:
   generation: off
