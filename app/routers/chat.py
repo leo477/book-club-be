@@ -250,8 +250,8 @@ async def _ws_authenticate(
         except HTTPException:
             await websocket.close(code=1008)
             return None
-        user_id = token_data.get("sub")
-        user = await repo.get_user_by_supabase_id(uuid.UUID(str(user_id)))
+        user_id = str(token_data.get("sub"))
+        user = await repo.get_user_by_supabase_id(uuid.UUID(user_id))
 
     if not user:
         await websocket.close(code=1008)
