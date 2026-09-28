@@ -65,6 +65,14 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync
+      - name: Alembic upgrade head
+        run: uv run alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_test
+      - name: Alembic migration drift check
+        run: uv run alembic check
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_test
       - name: Run pytest with coverage
         run: uv run pytest -v --tb=short --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=70
         env:
@@ -99,7 +107,6 @@ jobs:
           name: coverage-${{ github.sha }}
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4 # v7.1.0
-        continue-on-error: true
         with:
           args: >
             -Dsonar.qualitygate.wait=true
@@ -177,7 +184,7 @@ jobs:
       - name: Install pip-audit
         run: uv tool install pip-audit
       - name: Run pip-audit
-        run: pip-audit --project . --format=json -o pip-audit-report.json || true
+        run: pip-audit . --format=json -o pip-audit-report.json
       - name: Upload security reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

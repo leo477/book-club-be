@@ -137,6 +137,14 @@ jobs:
         uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
         with:
           sarif_file: trivy-results.sarif
+      - name: Fail on CRITICAL vulnerabilities (fixed, not yet uploaded to Security tab)
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # 0.30.0
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/book-club-be:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL
 
   deploy-render:
     needs: trivy-scan
@@ -159,6 +167,8 @@ jobs:
             core.setOutput('deployment_id', d.data.id);
       - name: Trigger Render deploy
         run: curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
+      - name: Wait for deploy to become healthy
+        run: curl -fsSL --retry 20 --retry-delay 15 --retry-all-errors "${{ secrets.RENDER_APP_URL }}/health"
       - name: Set deployment status success
         if: success()
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
