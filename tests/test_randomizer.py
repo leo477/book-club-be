@@ -41,3 +41,31 @@ async def test_randomizer_history_after_create(async_client, register_user, auth
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=headers)
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_randomizer_history_non_member_forbidden(async_client, register_user, auth_headers):
+    """Bug 1: a non-member must not be able to read another club's randomizer history."""
+    _headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+
+    await register_user(email="outsider@example.com")
+    outsider_headers = await auth_headers(email="outsider@example.com")
+
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=outsider_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_randomizer_session_non_member_forbidden(async_client, register_user, auth_headers):
+    """Bug 1: a non-member must not be able to create a randomizer session for a club."""
+    _headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+
+    await register_user(email="outsider2@example.com")
+    outsider_headers = await auth_headers(email="outsider2@example.com")
+
+    candidates = [{"userId": "u1", "displayName": "Alice", "avatarUrl": None}]
+    payload = {"purpose": "Pick a winner", "candidates": candidates, "result": None}
+    resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/randomizer/sessions", headers=outsider_headers, json=payload
+    )
+    assert resp.status_code == 403

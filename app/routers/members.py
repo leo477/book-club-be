@@ -4,7 +4,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, require_club_organizer
@@ -30,6 +30,7 @@ from app.services.club_service import (
     get_my_membership_service,
     list_join_requests_service,
     reject_join_request_service,
+    remove_member_service,
     unban_user_service,
 )
 
@@ -81,16 +82,7 @@ async def remove_member(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
-    _ = await require_club_organizer(club_id, current_user, db)
-
-    existing = await db.execute(
-        select(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id))
-    )
-    if not existing.scalar_one_or_none():
-        raise AppError(404, "Member not found", "MEMBER_NOT_FOUND")
-
-    await db.execute(delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id)))
-    await db.commit()
+    await remove_member_service(club_id, user_id, current_user, db)
 
 
 @router.post("/members/{user_id}/ban", status_code=status.HTTP_201_CREATED)
