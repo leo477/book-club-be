@@ -4,6 +4,9 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # Values are (payload, expiry_ts) where payload is list[dict] for search
 # and dict for single-item lookups — use Any to avoid a union cache type.
@@ -54,13 +57,22 @@ async def search_books(query: str, limit: int = 5, api_key: str = "") -> list[di
     if cached and now < cached[1]:
         return cached[0]  # type: ignore[no-any-return]
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://www.googleapis.com/books/v1/volumes",
-            params={"q": query, "maxResults": limit, "key": api_key, "fields": _FIELDS},
-            timeout=10.0,
-        )
-        resp.raise_for_status()
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://www.googleapis.com/books/v1/volumes",
+                params={"q": query, "maxResults": limit, "key": api_key, "fields": _FIELDS},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        # Upstream outage/quota exhaustion shouldn't 500 the whole request — degrade to
+        # no suggestions instead of leaving the caller with an opaque Internal Server Error.
+        # Log only the status (not str(exc)/the request) — httpx's error message embeds the
+        # full request URL, which carries our API key in the query string.
+        status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        logger.warning("google_books_search_failed", query=query, status=status, error_type=type(exc).__name__)
+        return []
 
     data: dict[str, Any] = resp.json()
     result: list[dict[str, Any]] = [_map_item(item) for item in data.get("items") or []]
@@ -80,15 +92,20 @@ async def get_book_by_id(book_id: str, api_key: str = "") -> dict[str, Any] | No
 
     safe_book_id = quote(book_id, safe="")
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"https://www.googleapis.com/books/v1/volumes/{safe_book_id}",
-            params={"key": api_key},
-            timeout=10.0,
-        )
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"https://www.googleapis.com/books/v1/volumes/{safe_book_id}",
+                params={"key": api_key},
+                timeout=10.0,
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        logger.warning("google_books_lookup_failed", book_id=book_id, status=status, error_type=type(exc).__name__)
+        return None
 
     item: dict[str, Any] = resp.json()
     if not item or "id" not in item:

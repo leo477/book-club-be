@@ -182,7 +182,31 @@ def _clear_access_cookie(response: Response, settings: Settings) -> None:
     )
 
 
-def _set_session_cookies(response: Response, access_token: str, refresh_token: str, settings: Settings) -> None:
+def _is_trusted_web_origin(request: Request, settings: Settings) -> bool:
+    """True only for requests carrying an Origin/Referer that matches the web frontend.
+
+    Session cookies exist purely for the cookie-authenticated web app; the mobile app
+    is fully Bearer-token based (tokens come from the response body) and never reads
+    them. Native fetch never sends an Origin header, so gating on it keeps cookies out
+    of the mobile app's persistent Android cookie jar — otherwise a stray cookie sticks
+    around and trips the CSRF origin check (main.py) on later unauthenticated calls
+    (login/register) that never intended to carry a cookie at all.
+    """
+    candidate = request.headers.get("origin") or request.headers.get("referer")
+    if not candidate:
+        return False
+    parsed = urlparse(candidate)
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return origin in settings.ALLOWED_ORIGINS or bool(re.fullmatch(settings.CORS_ORIGIN_REGEX, origin))
+
+
+def _set_session_cookies(
+    request: Request, response: Response, access_token: str, refresh_token: str, settings: Settings
+) -> None:
+    if not _is_trusted_web_origin(request, settings):
+        return
     _set_refresh_cookie(response, refresh_token, settings)
     _set_access_cookie(response, access_token, settings)
 
@@ -247,7 +271,9 @@ async def register(
             content={"message": "Check your email to confirm registration", "code": "EMAIL_CONFIRMATION_REQUIRED"},
         )
 
-    _set_session_cookies(response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
+    _set_session_cookies(
+        request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
+    )
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
@@ -277,7 +303,9 @@ async def login(
 
     user = await _get_or_create_user(db, auth_response.user, str(email))
 
-    _set_session_cookies(response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
+    _set_session_cookies(
+        request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
+    )
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
         accessToken=auth_response.session.access_token,
@@ -311,7 +339,9 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid or expired refresh token", "code": "INVALID_REFRESH_TOKEN"},
         )
-    _set_session_cookies(response, auth_response.session.access_token, auth_response.session.refresh_token, settings)
+    _set_session_cookies(
+        request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
+    )
     return RefreshResponse(
         accessToken=auth_response.session.access_token,
         refreshToken=auth_response.session.refresh_token,
@@ -425,7 +455,7 @@ async def oauth_exchange(
     if raw is None:
         raise AppError(status.HTTP_400_BAD_REQUEST, "Invalid or expired OAuth code", "INVALID_OAUTH_CODE")
     data = json.loads(raw)
-    _set_session_cookies(response, data["accessToken"], data["refreshToken"], settings)
+    _set_session_cookies(request, response, data["accessToken"], data["refreshToken"], settings)
     # Body still returned for backward compat with the currently-deployed frontend bundle;
     # remove once the cookie-based migration is fully rolled out.
     return OAuthExchangeResponse(
