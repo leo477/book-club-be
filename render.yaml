@@ -30,7 +30,7 @@ services:
       - key: BACKEND_URL
         value: https://book-club-be.onrender.com
       - key: FRONTEND_URL
-        value: https://book-club-fe.vercel.app
+        value: https://book-club-planer.vercel.app
 
 # The "keep-alive" cron service is managed manually in the Render dashboard,
 # not via this Blueprint: Render requires a paid plan for Blueprint-managed
