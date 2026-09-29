@@ -134,7 +134,7 @@ jobs:
           severity: CRITICAL,HIGH
       - name: Upload Trivy scan SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v3
         with:
           sarif_file: trivy-results.sarif
       - name: Fail on CRITICAL vulnerabilities (fixed, not yet uploaded to Security tab)
