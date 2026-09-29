@@ -43,7 +43,7 @@ async def test_oauth_callback_success_redirects_with_handoff_code(no_redirect_cl
     assert "refresh_token" not in resp.cookies
 
 
-_VALID_ORIGIN = "https://book-club-preview-abc123.vercel.app"
+_VALID_ORIGIN = "https://book-club-planer.vercel.app"
 
 
 def _fe_origin_cookie(resp) -> str | None:
@@ -479,3 +479,47 @@ async def test_ws_ticket_mints_and_is_single_use(async_client, register_user):
     consumed = await mock_redis.getdel(f"ws:ticket:{ticket}")
     assert consumed is not None
     assert await mock_redis.getdel(f"ws:ticket:{ticket}") is None
+
+
+_GOOD_ORIGINS = [
+    "https://book-club-planer.vercel.app",
+    "https://book-club-web-blue.vercel.app",
+    "https://book-club-fe.vercel.app",
+]
+_BAD_ORIGINS = [
+    "https://book-club-evil-x.vercel.app",
+    "http://book-club-planer.vercel.app",
+    "https://book-club-planer.vercel.app.evil.com",
+    "https://xbook-club-planer.vercel.app",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", _GOOD_ORIGINS)
+async def test_origin_allowlist_accepts_known_frontends(no_redirect_client, origin):
+    oauth = await no_redirect_client.get("/api/v1/auth/oauth/google", params={"origin": origin})
+    assert _fe_origin_cookie(oauth) == origin
+
+    preflight = await no_redirect_client.options(
+        "/api/v1/auth/login", headers={"Origin": origin, "Access-Control-Request-Method": "POST"}
+    )
+    assert preflight.headers.get("access-control-allow-origin") == origin
+
+    csrf = await no_redirect_client.post("/api/v1/auth/logout", headers={"Origin": origin, "Cookie": "access_token=x"})
+    assert csrf.status_code != 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", _BAD_ORIGINS)
+async def test_origin_allowlist_rejects_lookalikes(no_redirect_client, origin):
+    oauth = await no_redirect_client.get("/api/v1/auth/oauth/google", params={"origin": origin})
+    assert _fe_origin_cookie(oauth) is None
+
+    preflight = await no_redirect_client.options(
+        "/api/v1/auth/login", headers={"Origin": origin, "Access-Control-Request-Method": "POST"}
+    )
+    assert "access-control-allow-origin" not in preflight.headers
+
+    csrf = await no_redirect_client.post("/api/v1/auth/logout", headers={"Origin": origin, "Cookie": "access_token=x"})
+    assert csrf.status_code == 403
+    assert csrf.json()["detail"]["code"] == "CSRF_ORIGIN_MISMATCH"
