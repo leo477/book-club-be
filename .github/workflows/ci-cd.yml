@@ -116,7 +116,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Trivy scan (table output for logs)
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # 0.30.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.30.0
         with:
           image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/book-club-be:${{ github.sha }}
           format: table
@@ -124,7 +124,7 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # 0.30.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.30.0
         with:
           image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/book-club-be:${{ github.sha }}
           format: sarif
@@ -138,7 +138,7 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
       - name: Fail on CRITICAL vulnerabilities (fixed, not yet uploaded to Security tab)
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # 0.30.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.30.0
         with:
           image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/book-club-be:${{ github.sha }}
           format: table
