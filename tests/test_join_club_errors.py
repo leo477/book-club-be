@@ -103,7 +103,7 @@ async def test_join_club_db_error_rollback_failure_still_returns_503():
 
     with patch("app.routers.clubs.request_join_club_service", side_effect=_boom):
         with pytest.raises(AppError) as exc_info:
-            await join_club(club_id, user, db)
+            await join_club(club_id, user, db, MagicMock())
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail["code"] == "JOIN_DB_ERROR"
