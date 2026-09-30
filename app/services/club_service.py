@@ -24,6 +24,7 @@ from app.schemas.clubs import (
     ChampionInfo,
     ClubResponse,
     ClubStatsResponse,
+    ClubStubResponse,
     CreateClubRequest,
     EventAttendanceStat,
     JoinRequestResponse,
@@ -99,6 +100,29 @@ async def _get_current_champion(club_id: uuid.UUID, db: AsyncSession) -> Champio
         avatarUrl=None,
         wins=1,
         eventTitle=event.title,
+    )
+
+
+async def can_view_club(club: Club, user: User | None, db: AsyncSession) -> bool:
+    if club.is_public:
+        return True
+    if user is None:
+        return False
+    if user.role == "admin" or club.organizer_id == user.id:
+        return True
+    return await ClubRepository(db).get_membership(club.id, user.id) is not None
+
+
+async def require_club_viewable(club_id: uuid.UUID, user: User | None, db: AsyncSession) -> Club:
+    club = await get_club_or_404(club_id, db)
+    if not await can_view_club(club, user, db):
+        raise AppError(403, "Not authorized", "FORBIDDEN")
+    return club
+
+
+async def build_club_stub(club: Club, db: AsyncSession) -> ClubStubResponse:
+    return ClubStubResponse(
+        id=str(club.id), name=club.name, isPublic=False, memberCount=await ClubRepository(db).count_members(club.id)
     )
 
 
