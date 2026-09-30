@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     MAPS_SERVER_API_KEY: str = ""
     MAPS_MAP_ID: str = ""
 
+    # Next.js on-demand revalidation webhook; notifier is disabled unless both are set.
+    WEB_REVALIDATE_URL: str = ""
+    WEB_REVALIDATE_SECRET: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
     @property
