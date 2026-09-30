@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = [
         "http://localhost:4200",
     ]
-    CORS_ORIGIN_REGEX: str = r"^https://book-club-[a-z0-9-]+\.vercel\.app$"
+    CORS_ORIGIN_REGEX: str = r"^https://(book-club-planer|book-club-web-blue|book-club-fe)\.vercel\.app$"
     REDIS_URL: str = "redis://localhost:6379"
     # Public origins used to build OAuth redirect targets. FRONTEND_URL is where
     # the browser lands after login; BACKEND_URL is this API's public base URL.
