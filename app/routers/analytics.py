@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 _MAX_BODY_BYTES = 2048
 
 
-async def _limit_body_size(request: Request) -> None:
+def _limit_body_size(request: Request) -> None:
     # Content-Length only; chunked bodies are still bounded by the field limits.
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > _MAX_BODY_BYTES:
