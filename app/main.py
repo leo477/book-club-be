@@ -20,6 +20,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.limiter import limiter
+from app.routers.analytics import router as analytics_router
 from app.routers.auth import router as auth_router
 from app.routers.book_vote import router as book_vote_router
 from app.routers.books import router as books_router
@@ -36,7 +37,11 @@ from app.routers.routes import router as routes_router
 from app.routers.support import router as support_router
 from app.routers.upload import router as upload_router
 from app.routers.users import router as users_router
-from app.tasks.cleanup import cleanup_expired_event_chat_rooms, cleanup_inactive_chat_rooms
+from app.tasks.cleanup import (
+    cleanup_analytics_events,
+    cleanup_expired_event_chat_rooms,
+    cleanup_inactive_chat_rooms,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -116,17 +121,20 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # On multi-instance deploys only one instance should set RUN_BACKGROUND_TASKS=true.
     cleanup_task: asyncio.Task[None] | None = None
     event_chat_lifecycle_task: asyncio.Task[None] | None = None
+    analytics_cleanup_task: asyncio.Task[None] | None = None
     if settings.RUN_BACKGROUND_TASKS:
         cleanup_task = asyncio.create_task(cleanup_inactive_chat_rooms())
         event_chat_lifecycle_task = asyncio.create_task(cleanup_expired_event_chat_rooms())
+        analytics_cleanup_task = asyncio.create_task(cleanup_analytics_events())
 
     yield
 
-    for task in (cleanup_task, event_chat_lifecycle_task):
+    for task in (cleanup_task, event_chat_lifecycle_task, analytics_cleanup_task):
         if task is not None:
             task.cancel()
     await asyncio.gather(
-        *(t for t in (cleanup_task, event_chat_lifecycle_task) if t is not None), return_exceptions=True
+        *(t for t in (cleanup_task, event_chat_lifecycle_task, analytics_cleanup_task) if t is not None),
+        return_exceptions=True,
     )
 
     await redis_pool.aclose()
@@ -156,7 +164,7 @@ def _build_openapi_schema(app: FastAPI) -> dict:  # type: ignore[type-arg]
         for method, operation in path_item.items():
             if method in ("get", "post", "put", "patch", "delete"):
                 tags = operation.get("tags", [])
-                if "auth" not in tags and "health" not in tags:
+                if not {"auth", "health", "analytics"} & set(tags):
                     operation["security"] = [{"BearerAuth": []}]
     app.openapi_schema = schema
     return app.openapi_schema
@@ -204,6 +212,7 @@ def create_app() -> FastAPI:
             {"name": "geocode", "description": "Photon/OSM geocoding autocomplete"},
             {"name": "routes", "description": "Google Routes API walking-route proxy"},
             {"name": "support", "description": "Support submissions — complaints, suggestions, comments"},
+            {"name": "analytics", "description": "Anonymous first-party canary events"},
             {"name": "health", "description": "Health check"},
         ],
         docs_url=None,
@@ -356,6 +365,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_router)
     app.include_router(config_router)
     app.include_router(support_router)
+    app.include_router(analytics_router)
     app.include_router(upload_router)
     app.include_router(books_router)
     app.include_router(book_vote_router)
