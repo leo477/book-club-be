@@ -90,3 +90,24 @@ async def test_no_notify_on_failed_mutation(async_client, auth_headers, calls):
         resp = await async_client.patch("/api/v1/clubs/00000000-0000-0000-0000-000000000001/pause", headers=other)
     assert resp.status_code == 403
     assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["timeout", "5xx"])
+async def test_downstream_failure_does_not_affect_response(async_client, auth_headers, failure, caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if failure == "timeout":
+            raise httpx.ReadTimeout("slow", request=request)
+        return httpx.Response(503)
+
+    real = httpx.AsyncClient
+    caplog.set_level(logging.DEBUG)
+    with (
+        patch.object(revalidate, "get_settings", return_value=_settings()),
+        patch.object(revalidate.httpx, "AsyncClient", partial(real, transport=httpx.MockTransport(handler))),
+    ):
+        org = await auth_headers(email=f"rv-{failure}@example.com")
+        await async_client.patch("/api/v1/users/me/role", headers=org, json={"role": "organizer"})
+        resp = await async_client.post("/api/v1/clubs", headers=org, json={"name": "RV", "isPublic": True})
+    assert resp.status_code == 201
+    assert "s3cret" not in caplog.text
