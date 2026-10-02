@@ -149,3 +149,33 @@ async def cleanup_inactive_chat_rooms() -> None:
             raise
         except Exception as exc:
             logger.exception("cleanup_inactive_chat_rooms: unexpected error", exc_info=exc)
+
+
+_ANALYTICS_RETENTION = timedelta(days=90)
+
+
+async def run_analytics_cleanup_pass(db: AsyncSession, *, now: datetime | None = None) -> int:
+    from sqlalchemy import delete
+
+    from app.models.analytics_event import AnalyticsEvent
+
+    cutoff = (now or datetime.now(UTC)) - _ANALYTICS_RETENTION
+    result = await db.execute(delete(AnalyticsEvent).where(AnalyticsEvent.created_at < cutoff))
+    await db.commit()
+    return result.rowcount  # type: ignore[attr-defined,no-any-return]
+
+
+async def cleanup_analytics_events() -> None:
+    """Daily: drop canary analytics events older than 90 days."""
+    from app.database import AsyncSessionLocal
+
+    while True:
+        try:
+            await asyncio.sleep(86400)
+            async with AsyncSessionLocal() as db:
+                deleted = await run_analytics_cleanup_pass(db)
+            logger.info("cleanup_analytics_events: deleted old events", count=deleted)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("cleanup_analytics_events: unexpected error", exc_info=exc)
