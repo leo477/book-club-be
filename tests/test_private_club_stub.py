@@ -203,23 +203,29 @@ async def test_private_club_event_attend_and_cancel_allowed_for_member(
     resp = await async_client.post(f"/api/v1/events/{event_id}/attend", headers=member)
     assert resp.status_code == 201
     assert resp.json()["joinRequestStatus"] == "member"
-    assert (await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=member)).status_code == 204
+    resp = await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=member)
+    assert resp.status_code == 204
 
 
 @pytest.mark.asyncio
 async def test_public_club_event_attend_and_cancel_allowed_for_non_member(async_client, auth_headers, make_club):
     _, _, event_id = await make_club(True)
     other = await auth_headers(email="other2@example.com")
-    assert (await async_client.post(f"/api/v1/events/{event_id}/attend", headers=other)).status_code == 201
-    assert (await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=other)).status_code == 204
+    resp = await async_client.post(f"/api/v1/events/{event_id}/attend", headers=other)
+    assert resp.status_code == 201
+    resp = await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=other)
+    assert resp.status_code == 204
 
 
 @pytest.mark.asyncio
 async def test_private_club_organizer_can_attend_and_cancel(async_client, make_club):
     _, org, event_id = await make_club(False)
-    assert (await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=org)).status_code == 204
-    assert (await async_client.post(f"/api/v1/events/{event_id}/attend", headers=org)).status_code == 201
-    assert (await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=org)).status_code == 204
+    resp = await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=org)
+    assert resp.status_code == 204
+    resp = await async_client.post(f"/api/v1/events/{event_id}/attend", headers=org)
+    assert resp.status_code == 201
+    resp = await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=org)
+    assert resp.status_code == 204
 
 
 @pytest.mark.asyncio
