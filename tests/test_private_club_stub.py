@@ -140,3 +140,36 @@ async def test_private_club_event_hidden_from_global_endpoints(async_client, aut
     assert (await async_client.get(f"/api/v1/events/{event_id}", headers=other)).status_code == 404
     assert len((await async_client.get("/api/v1/events", headers=org)).json()) == 1
     assert (await async_client.get(f"/api/v1/events/{event_id}", headers=org)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_private_club_event_attend_and_cancel_denied_for_non_member(async_client, auth_headers, make_club):
+    _, _, event_id = await make_club(False)
+    stranger = await auth_headers(email="stranger2@example.com")
+    resp = await async_client.post(f"/api/v1/events/{event_id}/attend", headers=stranger)
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "EVENT_NOT_FOUND"
+    resp = await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=stranger)
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "EVENT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_private_club_event_attend_and_cancel_allowed_for_member(
+    async_client, auth_headers, make_member, make_club
+):
+    club_id, _, event_id = await make_club(False)
+    member = await auth_headers(email="member2@example.com")
+    await make_member(club_id, member)
+    resp = await async_client.post(f"/api/v1/events/{event_id}/attend", headers=member)
+    assert resp.status_code == 201
+    assert resp.json()["joinRequestStatus"] == "member"
+    assert (await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=member)).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_public_club_event_attend_and_cancel_allowed_for_non_member(async_client, auth_headers, make_club):
+    _, _, event_id = await make_club(True)
+    other = await auth_headers(email="other2@example.com")
+    assert (await async_client.post(f"/api/v1/events/{event_id}/attend", headers=other)).status_code == 201
+    assert (await async_client.delete(f"/api/v1/events/{event_id}/attend", headers=other)).status_code == 204
