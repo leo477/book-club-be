@@ -129,11 +129,11 @@ async def create_chat_room(
 async def get_messages(
     room_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    _current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
     before_id: str | None = None,
     limit: int = 50,
 ) -> list[ChatMessageResponse]:
-    return await list_messages_service(room_id, db, before_id=before_id, limit=limit)
+    return await list_messages_service(room_id, current_user, db, before_id=before_id, limit=limit)
 
 
 @router.post("/chat/rooms/{room_id}/messages", status_code=status.HTTP_201_CREATED)
