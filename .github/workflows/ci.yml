@@ -110,7 +110,7 @@ jobs:
       - name: Download coverage report
         if: github.actor != 'dependabot[bot]' && !(github.event_name == 'push' && github.ref == 'refs/heads/develop')
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: coverage-${{ github.sha }}
       - name: SonarCloud Scan
