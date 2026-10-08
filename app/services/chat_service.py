@@ -20,6 +20,7 @@ from app.schemas.chat import (
     MarkReadRequest,
     UnreadCountResponse,
 )
+from app.services.club_service import can_view_club, get_club_or_404
 
 
 async def get_room_or_404(room_id: uuid.UUID, db: AsyncSession) -> ChatRoom:
@@ -273,6 +274,9 @@ async def create_event_chat_room_service(
     if event is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
+    club = await get_club_or_404(event.club_id, db)
+    if not await can_view_club(club, current_user, db):
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
     await require_club_organizer(event.club_id, current_user, db)
 
     room = await get_or_create_event_chat_room(event, db)
