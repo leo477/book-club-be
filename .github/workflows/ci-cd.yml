@@ -152,7 +152,7 @@ jobs:
     steps:
       - name: Create GitHub deployment
         id: deployment
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
         with:
           script: |
             const d = await github.rest.repos.createDeployment({
@@ -171,7 +171,7 @@ jobs:
         run: curl -fsSL --retry 20 --retry-delay 15 --retry-all-errors "${{ secrets.RENDER_APP_URL }}/health"
       - name: Set deployment status success
         if: success()
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
         with:
           script: |
             await github.rest.repos.createDeploymentStatus({
@@ -184,7 +184,7 @@ jobs:
             });
       - name: Set deployment status failure
         if: failure()
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
         with:
           script: |
             await github.rest.repos.createDeploymentStatus({
