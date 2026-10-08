@@ -161,7 +161,7 @@ async def test_create_session(async_client, register_user, auth_headers):
     resp = await async_client.post(
         f"/api/v1/quizzes/{quiz_id}/sessions",
         headers=headers,
-        json={"eventId": str(uuid.uuid4())},
+        json={},
     )
     assert resp.status_code == 201
     data = resp.json()
@@ -193,7 +193,7 @@ async def test_get_active_session(async_client, register_user, auth_headers):
     await async_client.post(
         f"/api/v1/quizzes/{quiz_id}/sessions",
         headers=headers,
-        json={"eventId": str(uuid.uuid4())},
+        json={},
     )
     resp = await async_client.get(f"/api/v1/quizzes/{quiz_id}/sessions/active", headers=headers)
     assert resp.status_code == 200
@@ -223,7 +223,7 @@ async def test_get_leaderboard(async_client, register_user, auth_headers):
     session_resp = await async_client.post(
         f"/api/v1/quizzes/{quiz_id}/sessions",
         headers=headers,
-        json={"eventId": str(uuid.uuid4())},
+        json={},
     )
     session_id = session_resp.json()["id"]
     # Submit an attempt as member
@@ -253,7 +253,7 @@ async def test_close_session(async_client, register_user, auth_headers):
     session_resp = await async_client.post(
         f"/api/v1/quizzes/{quiz_id}/sessions",
         headers=headers,
-        json={"eventId": str(uuid.uuid4())},
+        json={},
     )
     session_id = session_resp.json()["id"]
     resp = await async_client.patch(f"/api/v1/quizzes/{quiz_id}/sessions/{session_id}/close", headers=headers)

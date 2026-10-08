@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import AppError
 from app.models.event import Event, EventAttendee
 from app.models.user import User
-from app.repositories import EventRepository
+from app.repositories import ClubRepository, EventRepository
 from app.schemas.events import AfterMeetingVenueSchema, AttendEventResponse, EventResponse
 
 
@@ -215,6 +215,9 @@ async def attend_event_service(
     repo = EventRepository(db)
     event = await get_event_or_404(event_id, db)
     await _require_event_visible(event, current_user, db)
+
+    if await ClubRepository(db).is_banned(event.club_id, current_user.id):
+        raise AppError(http_status.HTTP_403_FORBIDDEN, "You are banned from this club", "CLUB_BANNED")
 
     if event.status == "cancelled":
         raise AppError(http_status.HTTP_400_BAD_REQUEST, "Cannot attend a cancelled event", "EVENT_CANCELLED")
