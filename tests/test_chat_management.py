@@ -98,14 +98,14 @@ async def test_delete_message_not_found(async_client, register_user, auth_header
 
 
 @pytest.mark.asyncio
-async def test_organizer_can_delete_member_message(async_client, register_user, auth_headers):
+async def test_organizer_can_delete_member_message(async_client, register_user, auth_headers, make_member):
     headers, club_id = await create_organizer_with_club(
         async_client, register_user, auth_headers, email="dm_org2@example.com"
     )
     room_id = await create_room(async_client, headers, club_id)
     await register_user(email="dm_member@example.com")
     headers2 = await auth_headers(email="dm_member@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
+    await make_member(club_id, headers2)
     send_resp = await async_client.post(
         f"/api/v1/chat/rooms/{room_id}/messages",
         headers=headers2,
@@ -118,14 +118,14 @@ async def test_organizer_can_delete_member_message(async_client, register_user, 
 
 
 @pytest.mark.asyncio
-async def test_member_cannot_delete_other_member_message(async_client, register_user, auth_headers):
+async def test_member_cannot_delete_other_member_message(async_client, register_user, auth_headers, make_member):
     headers, club_id = await create_organizer_with_club(
         async_client, register_user, auth_headers, email="dm_org3@example.com"
     )
     room_id = await create_room(async_client, headers, club_id)
     await register_user(email="dm_member1@example.com")
     headers1 = await auth_headers(email="dm_member1@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers1)
+    await make_member(club_id, headers1)
     send_resp = await async_client.post(
         f"/api/v1/chat/rooms/{room_id}/messages",
         headers=headers1,
@@ -134,7 +134,7 @@ async def test_member_cannot_delete_other_member_message(async_client, register_
     msg_id = send_resp.json()["id"]
     await register_user(email="dm_member2@example.com")
     headers2 = await auth_headers(email="dm_member2@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
+    await make_member(club_id, headers2)
     resp = await async_client.delete(f"/api/v1/chat/rooms/{room_id}/messages/{msg_id}", headers=headers2)
     assert resp.status_code == 403
 
