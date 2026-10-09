@@ -33,33 +33,38 @@ async def _resolve_candidates(
     club_id: uuid.UUID, body: CreateRandomizerSessionRequest, db: AsyncSession
 ) -> tuple[list[CandidateSchema], CandidateSchema | None]:
     ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
     for c in body.candidates:
         try:
             candidate_id = uuid.UUID(c.userId)
         except ValueError:
-            raise AppError(422, "Invalid candidate id", "INVALID_CANDIDATE") from None
-        if candidate_id in ids:
-            raise AppError(422, "Duplicate candidate", "DUPLICATE_CANDIDATE")
+            raise AppError(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid candidate id", "INVALID_CANDIDATE") from None
+        if candidate_id in seen:
+            raise AppError(status.HTTP_422_UNPROCESSABLE_CONTENT, "Duplicate candidate", "DUPLICATE_CANDIDATE")
+        seen.add(candidate_id)
         ids.append(candidate_id)
     rows = await db.execute(
-        select(User)
+        select(User.id, User.display_name, User.avatar_url)
         .join(ClubMember, ClubMember.user_id == User.id)
         .where(ClubMember.club_id == club_id, User.id.in_(ids))
     )
-    users = {u.id: u for u in rows.scalars().all()}
-    if len(users) != len(ids):
-        raise AppError(422, "Candidates must be members of this club", "CANDIDATE_NOT_MEMBER")
     resolved = {
-        str(uid): CandidateSchema(userId=str(uid), displayName=u.display_name, avatarUrl=u.avatar_url)
-        for uid, u in users.items()
+        str(row.id): CandidateSchema(userId=str(row.id), displayName=row.display_name, avatarUrl=row.avatar_url)
+        for row in rows
     }
+    if len(resolved) != len(ids):
+        raise AppError(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Candidates must be members of this club", "CANDIDATE_NOT_MEMBER"
+        )
     candidates = [resolved[str(i)] for i in ids]
     result = None
     if body.result is not None:
         try:
             result = resolved[str(uuid.UUID(body.result.userId))]
         except (ValueError, KeyError):
-            raise AppError(422, "Result must be one of the candidates", "RESULT_NOT_CANDIDATE") from None
+            raise AppError(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "Result must be one of the candidates", "RESULT_NOT_CANDIDATE"
+            ) from None
     return candidates, result
 
 
