@@ -123,7 +123,8 @@ def _invalid_token() -> HTTPException:
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        alg = jwt.get_unverified_header(token).get("alg")  # NOSONAR: alg picks pinned algo; jwt.decode verifies
+        # Header alg only selects the pinned algorithm; jwt.decode verifies the signature.
+        alg = jwt.get_unverified_header(token).get("alg")  # NOSONAR(python:S5659)
         if alg == "HS256":
             if not settings.SUPABASE_JWT_SECRET:
                 logger.warning(_JWT_DECODE_FAILED, error="HS256 token but no JWT secret configured")
