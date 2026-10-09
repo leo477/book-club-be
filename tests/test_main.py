@@ -44,6 +44,18 @@ async def test_lifespan_raises_when_supabase_not_configured_in_production(monkey
             pass
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"SUPABASE_JWT_SECRET": ""}, True),
+        ({"SUPABASE_URL": ""}, False),
+        ({"SUPABASE_ANON_KEY": ""}, False),
+    ],
+)
+def test_supabase_configured(overrides, expected):
+    assert _make_settings(**overrides).supabase_configured is expected
+
+
 def test_redis_log_fields_exclude_credentials():
     fields = _redis_log_fields("rediss://default:s3cret@redis.example.com:6380/0")
     assert fields == {"host": "redis.example.com", "port": 6380}
