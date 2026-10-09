@@ -165,12 +165,11 @@ jobs:
               description: 'Render deployment',
             });
             core.setOutput('deployment_id', d.data.id);
-      - name: Trigger Render deploy
-        run: curl -fsSL -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
-      - name: Wait for deploy to become healthy
-        run: curl -fsSL --retry 20 --retry-delay 15 --retry-all-errors "${{ secrets.RENDER_APP_URL }}/health"
-      - name: Set deployment status success
-        if: success()
+      # Render itself deploys this commit (autoDeployTrigger: checksPass in
+      # render.yaml) once the GitHub checks pass. There is deliberately no
+      # health poll here: /health of the previous instance keeps returning 200
+      # while a new build fails, so it cannot prove this commit is live.
+      - name: Mark deployment as queued on Render
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
         with:
           script: |
@@ -178,19 +177,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               deployment_id: ${{ steps.deployment.outputs.deployment_id }},
-              state: 'success',
+              state: 'queued',
               environment_url: '${{ secrets.RENDER_APP_URL }}',
-              description: 'Deployed to Render',
-            });
-      - name: Set deployment status failure
-        if: failure()
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
-        with:
-          script: |
-            await github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: ${{ steps.deployment.outputs.deployment_id }},
-              state: 'failure',
-              description: 'Render deploy failed',
+              description: 'Handed off to Render auto-deploy; confirm in the Render dashboard',
             });

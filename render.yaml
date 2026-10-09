@@ -1,16 +1,27 @@
+# Blueprint for the production service. sync:false values are asked for only
+# at initial Blueprint creation and are otherwise managed in the dashboard.
+# See docs/RENDER-DEPLOY.md.
 services:
   - type: web
     name: book-club-be
-    env: docker
-    dockerfilePath: Dockerfile
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: free
-    autoDeploy: true
+    region: frankfurt # immutable after creation; matches the live service
+    numInstances: 1
+    branch: main
+    # Deploy only after the commit's GitHub checks pass. This is the single
+    # deploy path (no deploy hook). Replaces the deprecated autoDeploy flag.
+    autoDeployTrigger: checksPass
     healthCheckPath: /health
     envVars:
       - key: ENV
         value: production
       - key: DATABASE_URL
         sync: false
+      # sync:false (not generateValue): the live secret must never be
+      # regenerated, as that would invalidate every issued token.
       - key: SECRET_KEY
         sync: false
       - key: SUPABASE_URL
