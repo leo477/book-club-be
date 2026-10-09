@@ -230,11 +230,12 @@ async def test_randomizer_former_member_rejected(async_client, register_user, au
     base = f"/api/v1/clubs/{club_id}"
     if how == "remove":
         gone = await async_client.delete(f"{base}/members/{bob['id']}", headers=headers)
+        assert gone.status_code == 204
     else:
         gone = await async_client.post(
             f"{base}/members/{bob['id']}/ban", headers=headers, json={"duration": "permanent"}
         )
-    assert gone.status_code in (201, 204)
+        assert gone.status_code == 201
     payload = {"purpose": "p", "candidates": [{"userId": bob["id"], "displayName": "Bob"}]}
     resp = await async_client.post(_url(club_id), headers=headers, json=payload)
     assert resp.status_code == 422
