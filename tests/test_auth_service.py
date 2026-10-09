@@ -188,7 +188,30 @@ def test_decode_jwks_client_is_cached(ec_key, test_settings):
         decode_access_token(token, test_settings)
         decode_access_token(token, test_settings)
     assert len(auth_service._jwks_clients) == 1
-    assert ctor.call_count >= 1
+    assert ctor.call_count == 1
+    assert ctor.call_args.kwargs["timeout"] == 5
+    assert ctor.return_value.get_signing_key_from_jwt.call_count == 2
+
+
+def test_decode_asymmetric_without_supabase_url_rejected(ec_key):
+    token = pyjwt.encode(_claims(), ec_key, algorithm="ES256")
+    settings = Settings.model_construct(SUPABASE_URL="", SUPABASE_ANON_KEY="k")
+    with patch("app.services.auth_service.PyJWKClient") as ctor:
+        with pytest.raises(HTTPException) as exc_info:
+            decode_access_token(token, settings)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+    ctor.assert_not_called()
+
+
+def test_decode_key_type_mismatch_rejected(rsa_key_pair, ec_key, test_settings):
+    private_key, _ = rsa_key_pair
+    token = pyjwt.encode(_claims(), private_key, algorithm="RS256")
+    with patch("app.services.auth_service.PyJWKClient", return_value=_mock_jwks(ec_key.public_key(), "ES256")):
+        with pytest.raises(HTTPException) as exc_info:
+            decode_access_token(token, test_settings)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
 
 
 def test_decode_hs256_without_secret_rejected(test_settings):
