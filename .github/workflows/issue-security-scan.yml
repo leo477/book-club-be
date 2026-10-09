@@ -32,7 +32,7 @@ jobs:
           echo "done=true" >> "$GITHUB_OUTPUT"
 
       - name: Create or close CVE issues
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');

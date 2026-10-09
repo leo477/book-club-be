@@ -55,7 +55,7 @@ class Settings(BaseSettings):
 
     @property
     def supabase_configured(self) -> bool:
-        return bool(self.SUPABASE_URL and self.SUPABASE_ANON_KEY and self.SUPABASE_JWT_SECRET)
+        return bool(self.SUPABASE_URL and self.SUPABASE_ANON_KEY)
 
 
 @lru_cache

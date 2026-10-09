@@ -61,6 +61,11 @@ _API_DESCRIPTION = (
 )
 
 
+def _redis_log_fields(url: str) -> dict[str, str | int | None]:
+    parsed = urlparse(url)
+    return {"host": parsed.hostname, "port": parsed.port}
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
@@ -73,10 +78,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             if "localhost" in getattr(settings, name):
                 raise RuntimeError(f"{name} must be a public URL in production, got {getattr(settings, name)!r}")
 
-        # Fail fast if Supabase auth isn't configured: without SUPABASE_URL/ANON_KEY/
-        # JWT_SECRET, token verification and the Supabase client can't work in prod.
+        # Fail fast if Supabase auth isn't configured: without SUPABASE_URL/ANON_KEY,
+        # token verification and the Supabase client can't work in prod.
         if not settings.supabase_configured:
-            raise RuntimeError("Supabase must be configured in production (SUPABASE_URL/ANON_KEY/JWT_SECRET)")
+            raise RuntimeError("Supabase must be configured in production (SUPABASE_URL/ANON_KEY)")
 
     if settings.SENTRY_DSN:
         sentry_sdk.init(
@@ -93,7 +98,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         decode_responses=False,
     )
     _app.state.redis_pool = redis_pool
-    logger.info("Redis pool created", url=settings.REDIS_URL)
+    logger.info("Redis pool created", **_redis_log_fields(settings.REDIS_URL))
 
     proc = await asyncio.create_subprocess_exec(
         "/app/.venv/bin/alembic",

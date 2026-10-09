@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import AppError
 from app.models.event import Event, EventAttendee
 from app.models.user import User
-from app.repositories import EventRepository
+from app.repositories import ClubRepository, EventRepository
 from app.schemas.events import AfterMeetingVenueSchema, AttendEventResponse, EventResponse
 
 
@@ -177,6 +177,14 @@ async def get_event_or_404(event_id: uuid.UUID, db: AsyncSession) -> Event:
     return event
 
 
+async def _require_event_visible(event: Event, user: User, db: AsyncSession) -> None:
+    from app.services.club_service import can_view_club, get_club_or_404
+
+    club = await get_club_or_404(event.club_id, db)
+    if not await can_view_club(club, user, db):
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
+
+
 async def _resolve_join_request_status(
     repo: EventRepository,
     event: Event,
@@ -206,6 +214,10 @@ async def attend_event_service(
 ) -> AttendEventResponse:
     repo = EventRepository(db)
     event = await get_event_or_404(event_id, db)
+    await _require_event_visible(event, current_user, db)
+
+    if await ClubRepository(db).is_banned(event.club_id, current_user.id):
+        raise AppError(http_status.HTTP_403_FORBIDDEN, "You are banned from this club", "CLUB_BANNED")
 
     if event.status == "cancelled":
         raise AppError(http_status.HTTP_400_BAD_REQUEST, "Cannot attend a cancelled event", "EVENT_CANCELLED")
@@ -260,7 +272,8 @@ async def cancel_attendance_service(
     db: AsyncSession,
 ) -> None:
     repo = EventRepository(db)
-    await get_event_or_404(event_id, db)
+    event = await get_event_or_404(event_id, db)
+    await _require_event_visible(event, current_user, db)
     await repo.remove_attendee(event_id, current_user.id)
     await db.commit()
 
