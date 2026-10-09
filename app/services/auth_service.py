@@ -109,6 +109,7 @@ async def supabase_exchange_code(client: AsyncClient, code: str) -> AuthResponse
 
 
 _ASYMMETRIC_ALGS = frozenset({"ES256", "RS256"})
+_JWT_DECODE_FAILED = "JWT decode failed"
 # Supabase access tokens carry aud="authenticated" (or omit aud); we don't gate on it.
 _DECODE_OPTIONS: Options = {"verify_aud": False}
 
@@ -122,17 +123,17 @@ def _invalid_token() -> HTTPException:
 
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        alg = jwt.get_unverified_header(token).get("alg")
+        alg = jwt.get_unverified_header(token).get("alg")  # NOSONAR: alg picks pinned algo; jwt.decode verifies
         if alg == "HS256":
             if not settings.SUPABASE_JWT_SECRET:
-                logger.warning("JWT decode failed", error="HS256 token but no JWT secret configured")
+                logger.warning(_JWT_DECODE_FAILED, error="HS256 token but no JWT secret configured")
                 raise _invalid_token()
             payload: dict[str, Any] = jwt.decode(
                 token, settings.SUPABASE_JWT_SECRET, algorithms=["HS256"], options=_DECODE_OPTIONS
             )
         elif alg in _ASYMMETRIC_ALGS:
             if not settings.SUPABASE_URL:
-                logger.warning("JWT decode failed", error="SUPABASE_URL not configured")
+                logger.warning(_JWT_DECODE_FAILED, error="SUPABASE_URL not configured")
                 raise _invalid_token()
             jwks_client = _jwks_clients.get(settings.SUPABASE_URL)
             if jwks_client is None:
@@ -141,9 +142,9 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
             signing_key = jwks_client.get_signing_key_from_jwt(token)
             payload = jwt.decode(token, signing_key.key, algorithms=[alg], options=_DECODE_OPTIONS)
         else:
-            logger.warning("JWT decode failed", error="unsupported alg", alg=alg)
+            logger.warning(_JWT_DECODE_FAILED, error="unsupported alg", alg=alg)
             raise _invalid_token()
         return payload
     except (PyJWTError, TypeError) as exc:
-        logger.warning("JWT decode failed", error=str(exc), exc_type=type(exc).__name__)
+        logger.warning(_JWT_DECODE_FAILED, error=str(exc), exc_type=type(exc).__name__)
         raise _invalid_token() from exc
