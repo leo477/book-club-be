@@ -5,6 +5,7 @@ import structlog
 from fastapi import HTTPException, status
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWTError
+from jwt.types import Options
 from supabase import AsyncClient, acreate_client
 from supabase_auth.errors import AuthApiError
 from supabase_auth.types import AuthResponse, CodeExchangeParams, Provider
@@ -107,31 +108,37 @@ async def supabase_exchange_code(client: AsyncClient, code: str) -> AuthResponse
         ) from exc
 
 
+_ASYMMETRIC_ALGS = frozenset({"ES256", "RS256"})
+# Supabase access tokens carry aud="authenticated" (or omit aud); we don't gate on it.
+_DECODE_OPTIONS: Options = {"verify_aud": False}
+
+
+def _invalid_token() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"error": "Invalid or expired token", "code": "INVALID_TOKEN"},
+    )
+
+
 def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
     try:
-        if settings.SUPABASE_JWT_SECRET:
+        alg = jwt.get_unverified_header(token).get("alg")
+        if alg == "HS256":
+            if not settings.SUPABASE_JWT_SECRET:
+                logger.warning("JWT decode failed", error="HS256 token but no JWT secret configured")
+                raise _invalid_token()
             payload: dict[str, Any] = jwt.decode(
-                token,
-                settings.SUPABASE_JWT_SECRET,
-                algorithms=["HS256"],
-                # Supabase access tokens carry aud="authenticated" (or omit aud); we don't gate on it.
-                options={"verify_aud": False},
+                token, settings.SUPABASE_JWT_SECRET, algorithms=["HS256"], options=_DECODE_OPTIONS
             )
-        else:
+        elif alg in _ASYMMETRIC_ALGS:
             jwks_url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
             jwks_client = _jwks_clients.setdefault(settings.SUPABASE_URL, PyJWKClient(jwks_url))
             signing_key = jwks_client.get_signing_key_from_jwt(token)
-            payload = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=[signing_key.algorithm_name],
-                # Supabase access tokens carry aud="authenticated" (or omit aud); we don't gate on it.
-                options={"verify_aud": False},
-            )
+            payload = jwt.decode(token, signing_key.key, algorithms=[alg], options=_DECODE_OPTIONS)
+        else:
+            logger.warning("JWT decode failed", error="unsupported alg", alg=alg)
+            raise _invalid_token()
         return payload
     except PyJWTError as exc:
         logger.warning("JWT decode failed", error=str(exc), exc_type=type(exc).__name__)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Invalid or expired token", "code": "INVALID_TOKEN"},
-        ) from exc
+        raise _invalid_token() from exc
