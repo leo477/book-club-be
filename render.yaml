@@ -17,7 +17,7 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
-      - key: SUPABASE_JWT_SECRET
+      - key: SUPABASE_JWT_SECRET # optional, legacy HS256 only
         sync: false
       - key: REDIS_URL
         sync: false
