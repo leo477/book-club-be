@@ -61,6 +61,11 @@ _API_DESCRIPTION = (
 )
 
 
+def _redis_log_fields(url: str) -> dict[str, str | int | None]:
+    parsed = urlparse(url)
+    return {"host": parsed.hostname, "port": parsed.port}
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
@@ -93,7 +98,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         decode_responses=False,
     )
     _app.state.redis_pool = redis_pool
-    logger.info("Redis pool created", url=settings.REDIS_URL)
+    logger.info("Redis pool created", **_redis_log_fields(settings.REDIS_URL))
 
     proc = await asyncio.create_subprocess_exec(
         "/app/.venv/bin/alembic",

@@ -1,7 +1,7 @@
 import pytest
 
 from app.config import Settings
-from app.main import lifespan
+from app.main import _redis_log_fields, lifespan
 
 
 def _make_settings(**overrides: object) -> Settings:
@@ -42,3 +42,9 @@ async def test_lifespan_raises_when_supabase_not_configured_in_production(monkey
     with pytest.raises(RuntimeError, match="Supabase must be configured in production"):
         async with lifespan(None):
             pass
+
+
+def test_redis_log_fields_exclude_credentials():
+    fields = _redis_log_fields("rediss://default:s3cret@redis.example.com:6380/0")
+    assert fields == {"host": "redis.example.com", "port": 6380}
+    assert "s3cret" not in str(fields)
