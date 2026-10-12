@@ -63,7 +63,7 @@ async def test_removed_member_loses_room_and_attendance(
 
     assert await _attendee_count(async_client, org, event_id) == before - 1
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=mem)
-    assert resp.status_code == (403 if is_public else 404)
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_left_member_loses_room_and_attendance(async_client, register_user
 
     assert await _attendee_count(async_client, org, event_id) == before - 1
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=mem)
-    assert resp.status_code == (403 if is_public else 404)
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ async def test_banned_member_loses_room_and_attendance(
 
     assert await _attendee_count(async_client, org, event_id) == before - 1
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=mem)
-    assert resp.status_code == (403 if is_public else 404)
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -112,7 +112,7 @@ async def test_banned_user_with_stale_attendee_row_denied_on_public_club(
         await session.commit()
 
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=mem)
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

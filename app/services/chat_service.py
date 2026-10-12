@@ -45,7 +45,7 @@ async def require_room_member(room_id: uuid.UUID, user: User, db: AsyncSession) 
     room = await repo.get_room(room_id)
     if room is None:
         raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
-    if user.role != "admin" and await repo.get_membership(room.club_id, user.id) is None:
+    if await repo.get_membership(room.club_id, user.id) is None:
         raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
     return room
 
@@ -304,7 +304,7 @@ async def create_event_chat_room_service(
     event = await db.scalar(select(Event).where(Event.id == event_id))
     if event is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
-    if current_user.role != "admin" and await ChatRepository(db).get_membership(event.club_id, current_user.id) is None:
+    if await ChatRepository(db).get_membership(event.club_id, current_user.id) is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
     club = await get_club_or_404(event.club_id, db)
@@ -340,7 +340,7 @@ async def get_event_chat_room_service(
         )
         is_member = await ChatRepository(db).get_membership(event.club_id, current_user.id) is not None
         if attendee is None or not is_member or await ClubRepository(db).is_banned(event.club_id, current_user.id):
-            raise AppError(403, "Access denied", "FORBIDDEN")
+            raise AppError(404, "Event chat not found", "EVENT_CHAT_NOT_FOUND")
 
     room = await db.scalar(select(ChatRoom).where(ChatRoom.event_id == event_id))
     if room is None:

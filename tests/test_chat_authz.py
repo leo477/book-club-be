@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import WebSocketDisconnect
+from sqlalchemy import select
 
 from app.main import app
+from app.models.user import User
 from app.repositories import ChatRepository
 from app.schemas.chat import normalize_message_text
 from app.services.chat_connections import ConnectionManager, close_rooms_best_effort
@@ -393,7 +395,7 @@ async def test_event_chat_room_requires_current_membership(async_client, registe
     assert (await async_client.get(url, headers=member)).status_code == 200
 
     await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=member)
-    assert (await async_client.get(url, headers=member)).status_code == 403
+    assert (await async_client.get(url, headers=member)).status_code == 404
     assert (await async_client.get(f"/api/v1/events/{uuid.uuid4()}/chat/room", headers=member)).status_code == 404
 
 
@@ -631,3 +633,26 @@ async def test_create_event_chat_room_non_member_gets_uniform_404(async_client, 
 def test_nel_is_rejected_consistently():
     assert normalize_message_text("\x85") is None
     assert normalize_message_text("a\x85") is None
+
+
+@pytest.mark.asyncio
+async def test_global_admin_without_membership_gets_uniform_404(async_client, register_user, auth_headers, db_session):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    msg_id = (
+        await async_client.post(f"/api/v1/chat/rooms/{room_id}/messages", headers=org, json={"text": "hi"})
+    ).json()["id"]
+    admin = await _outsider(register_user, auth_headers, "authz_admin@example.com")
+    me = await async_client.get("/api/v1/users/me", headers=admin)
+    user = (await db_session.execute(select(User).where(User.id == uuid.UUID(me.json()["id"])))).scalar_one()
+    user.role = "admin"
+    await db_session.commit()
+
+    base = f"/api/v1/chat/rooms/{room_id}"
+    results = [
+        await async_client.get(f"{base}/messages", headers=admin),
+        await async_client.post(f"{base}/messages", headers=admin, json={"text": "x"}),
+        await async_client.delete(f"{base}/messages/{msg_id}", headers=admin),
+        await async_client.get(f"{base}/unread-count", headers=admin),
+        await async_client.post(f"{base}/read", headers=admin, json={"last_read_message_id": msg_id}),
+    ]
+    assert [r.status_code for r in results] == [404] * 5
