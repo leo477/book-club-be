@@ -16,7 +16,6 @@ from app.models.chat import ChatMessage, ChatRoom
 from app.models.user import User
 from app.repositories import ChatRepository
 from app.schemas.chat import (
-    MAX_MESSAGE_LENGTH,
     BanFromRoomRequest,
     ChatMessageResponse,
     ChatRoomResponse,
@@ -24,6 +23,7 @@ from app.schemas.chat import (
     MarkReadRequest,
     SendMessageRequest,
     UnreadCountResponse,
+    normalize_message_text,
 )
 from app.services.auth_service import decode_access_token
 from app.services.chat_connections import WS_POLICY_VIOLATION, MessagePayload, manager
@@ -217,6 +217,9 @@ async def _ws_authenticate(
     if await repo.get_membership(room.club_id, user.id) is None:
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
+    if await repo.get_active_ban(room_uuid, user.id, datetime.now(UTC)) is not None:
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
     return user, room
 
 
@@ -266,20 +269,21 @@ async def websocket_endpoint(
     try:
         while True:
             data = await websocket.receive_json()
-            if not isinstance(data, dict):
-                continue
-            text = data.get("text")
-            if not isinstance(text, str) or not text.strip() or len(text) > MAX_MESSAGE_LENGTH:
-                await websocket.send_json(
-                    {"type": "error", "payload": {"code": "INVALID_MESSAGE", "message": "Invalid message text"}}
-                )
-                continue
 
             _now = _time.monotonic()
             _msg_timestamps.append(_now)
             if len(_msg_timestamps) == 10 and (_now - _msg_timestamps[0]) < 10.0:
                 await websocket.send_json(
                     {"type": "error", "payload": {"code": "RATE_LIMITED", "message": "Too many messages"}}
+                )
+                continue
+
+            if not isinstance(data, dict):
+                continue
+            text = normalize_message_text(data.get("text"))
+            if text is None:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"code": "INVALID_MESSAGE", "message": "Invalid message text"}}
                 )
                 continue
 

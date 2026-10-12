@@ -15,6 +15,7 @@
 | Stale snapshot fix | `await db.rollback()` before reads | ✅ Fixes WS-403-after-join |
 | Ban enforcement | Checked on every message with 30s in-memory TTL cache | ✅ Good |
 | Broadcast | Single-process in-memory `ConnectionManager` | ✅ Appropriate for current Render single-instance deployment |
+| Revocation | `manager.kick`/`close_room` close sockets with 1008 on ban, leave, member removal, room/club delete (best-effort, in-process only, so correct for a single worker only) | ✅ Single-instance |
 | Connection cleanup | `finally` block calls `disconnect()` | ✅ Correct |
 
 ---

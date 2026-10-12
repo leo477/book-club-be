@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from sqlalchemy import func as sqlfunc
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,8 @@ from app.schemas.chat import (
     UnreadCountResponse,
 )
 from app.services.chat_connections import manager
+
+logger = structlog.get_logger(__name__)
 
 
 async def get_room_or_404(room_id: uuid.UUID, db: AsyncSession) -> ChatRoom:
@@ -44,8 +47,20 @@ async def require_room_member(room_id: uuid.UUID, user: User, db: AsyncSession) 
 
 
 async def kick_user_from_club_rooms(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> None:
-    for room in await ChatRepository(db).list_rooms(club_id):
-        await manager.kick(str(user_id), str(room.id))
+    """Best-effort: the DB change is already committed, so socket failures must not fail the request."""
+    try:
+        for room in await ChatRepository(db).list_rooms(club_id):
+            await manager.kick(str(user_id), str(room.id))
+    except Exception:  # intentional: see docstring
+        logger.warning("Failed to kick user sockets", club_id=str(club_id), user_id=str(user_id), exc_info=True)
+
+
+async def close_rooms_best_effort(room_ids: list[uuid.UUID]) -> None:
+    for room_id in room_ids:
+        try:
+            await manager.close_room(str(room_id))
+        except Exception:  # intentional: deletion is already committed
+            logger.warning("Failed to close room sockets", room_id=str(room_id), exc_info=True)
 
 
 async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
@@ -144,13 +159,13 @@ async def delete_message_service(
     current_user: User,
     db: AsyncSession,
 ) -> None:
+    room = await require_room_member(room_id, current_user, db)
     repo = ChatRepository(db)
     msg = await repo.get_message(message_id, room_id)
     if msg is None:
         raise AppError(404, "Message not found", "MESSAGE_NOT_FOUND")
 
     if msg.sender_id != current_user.id:
-        room = await get_room_or_404(room_id, db)
         if not await is_club_organizer(room.club_id, current_user.id, db):
             raise AppError(403, "Not authorized to delete this message", "FORBIDDEN")
 
@@ -164,7 +179,7 @@ async def ban_from_room_service(
     current_user: User,
     db: AsyncSession,
 ) -> None:
-    room = await get_room_or_404(room_id, db)
+    room = await require_room_member(room_id, current_user, db)
     await require_club_organizer(room.club_id, current_user, db)
 
     if await ChatRepository(db).get_membership(room.club_id, body.user_id) is None:
@@ -266,7 +281,7 @@ async def delete_chat_room_service(
 ) -> None:
     from sqlalchemy import delete as sa_delete
 
-    room = await get_room_or_404(room_id, db)
+    room = await require_room_member(room_id, current_user, db)
     await require_club_organizer(room.club_id, current_user, db)
 
     await db.execute(sa_delete(MessageRead).where(MessageRead.room_id == room_id))
@@ -274,6 +289,7 @@ async def delete_chat_room_service(
     await db.execute(sa_delete(ChatMessage).where(ChatMessage.room_id == room_id))
     await db.delete(room)
     await db.commit()
+    await close_rooms_best_effort([room_id])
 
 
 async def get_or_create_event_chat_room(event: Event, db: AsyncSession) -> ChatRoom:
@@ -314,6 +330,8 @@ async def get_event_chat_room_service(
 ) -> ChatRoomResponse:
     event = await db.scalar(select(Event).where(Event.id == event_id))
     if event is None:
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
+    if await ChatRepository(db).get_membership(event.club_id, current_user.id) is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
     organizer = await is_club_organizer(event.club_id, current_user.id, db)

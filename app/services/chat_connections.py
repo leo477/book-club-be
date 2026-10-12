@@ -64,15 +64,21 @@ class ConnectionManager:
                 self.disconnect(room_id, connection)
                 logger.warning("Runtime error while broadcasting to a room")
 
-    async def kick(self, user_id: str, room_id: str) -> None:
+    async def _close_all(self, room_id: str, user_id: str | None) -> None:
         for ws in self.active_connections.get(room_id, []).copy():
-            if getattr(ws, "_user_id", None) != user_id:
+            if user_id is not None and getattr(ws, "_user_id", None) != user_id:
                 continue
             self.disconnect(room_id, ws)
             try:
                 await ws.close(code=WS_POLICY_VIOLATION)
-            except RuntimeError:
-                logger.debug("WebSocket already closed during kick")
+            except Exception:  # intentional: a half-dead socket must not block kicking the others
+                logger.debug("WebSocket close failed during kick", exc_info=True)
+
+    async def kick(self, user_id: str, room_id: str) -> None:
+        await self._close_all(room_id, user_id)
+
+    async def close_room(self, room_id: str) -> None:
+        await self._close_all(room_id, None)
 
     async def broadcast_presence(self, room_id: str, user_id: str, status: str) -> None:
         """Broadcast an online/offline event to everyone in the room."""

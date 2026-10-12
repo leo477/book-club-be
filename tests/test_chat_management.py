@@ -163,17 +163,17 @@ async def test_ban_user_from_room(async_client, register_user, auth_headers, mak
 
 
 @pytest.mark.asyncio
-async def test_ban_not_organizer(async_client, register_user, auth_headers):
+async def test_ban_not_organizer(async_client, register_user, auth_headers, make_member):
     headers, club_id = await create_organizer_with_club(
         async_client, register_user, auth_headers, email="ban_org2@example.com"
     )
     room_id = await create_room(async_client, headers, club_id)
     await register_user(email="ban_member@example.com")
     headers2 = await auth_headers(email="ban_member@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=headers2)
+    await make_member(club_id, headers2)
     await register_user(email="ban_target2@example.com")
     target_headers = await auth_headers(email="ban_target2@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=target_headers)
+    await make_member(club_id, target_headers)
     me_resp = await async_client.get("/api/v1/users/me", headers=target_headers)
     target_user_id = me_resp.json()["id"]
     resp = await async_client.post(
