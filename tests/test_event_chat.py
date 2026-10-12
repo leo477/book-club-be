@@ -71,14 +71,14 @@ async def test_get_event_chat_room_exists_without_explicit_create(async_client, 
 
 
 @pytest.mark.asyncio
-async def test_create_event_chat_room_non_organizer(async_client, register_user, auth_headers):
+async def test_create_event_chat_room_non_organizer(async_client, register_user, auth_headers, make_member):
     """A non-organizer club member cannot create a chat room → 403."""
     headers, club_id, event_id = await _setup(async_client, register_user, auth_headers, "chat_org_nonorg@example.com")
 
     # Register a second user and have them join the club
     await register_user(email="chat_member_nonorg@example.com")
     member_headers = await auth_headers(email="chat_member_nonorg@example.com")
-    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=member_headers)
+    await make_member(club_id, member_headers)
 
     resp = await async_client.post(f"/api/v1/events/{event_id}/chat/room", headers=member_headers)
     assert resp.status_code == 403

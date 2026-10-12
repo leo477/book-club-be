@@ -63,7 +63,7 @@ async def test_removed_member_loses_room_and_attendance(
 
     assert await _attendee_count(async_client, org, event_id) == before - 1
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=mem)
-    assert resp.status_code == (403 if is_public else 404)
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_left_member_loses_room_and_attendance(async_client, register_user
 
     assert await _attendee_count(async_client, org, event_id) == before - 1
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=mem)
-    assert resp.status_code == (403 if is_public else 404)
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ async def test_banned_member_loses_room_and_attendance(
 
     assert await _attendee_count(async_client, org, event_id) == before - 1
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=mem)
-    assert resp.status_code == (403 if is_public else 404)
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -112,7 +112,7 @@ async def test_banned_user_with_stale_attendee_row_denied_on_public_club(
         await session.commit()
 
     resp = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=mem)
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -122,9 +122,9 @@ async def test_non_member_cannot_read_or_post_messages(async_client, register_us
 
     await register_user(email="outsider_msg@example.com")
     outsider = await auth_headers(email="outsider_msg@example.com")
-    assert (await async_client.get(f"/api/v1/chat/rooms/{room_id}/messages", headers=outsider)).status_code == 403
+    assert (await async_client.get(f"/api/v1/chat/rooms/{room_id}/messages", headers=outsider)).status_code == 404
     resp = await async_client.post(f"/api/v1/chat/rooms/{room_id}/messages", headers=outsider, json={"text": "hi"})
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
     assert (await async_client.get(f"/api/v1/chat/rooms/{room_id}/messages", headers=mem)).status_code == 200
     resp = await async_client.post(f"/api/v1/chat/rooms/{room_id}/messages", headers=mem, json={"text": "hi"})
@@ -140,6 +140,6 @@ async def test_removed_member_cannot_use_message_endpoints(async_client, registe
     room_id = await _room_id(async_client, org, event_id)
     await async_client.delete(f"/api/v1/clubs/{club_id}/members/{user_id}", headers=org)
 
-    assert (await async_client.get(f"/api/v1/chat/rooms/{room_id}/messages", headers=mem)).status_code == 403
+    assert (await async_client.get(f"/api/v1/chat/rooms/{room_id}/messages", headers=mem)).status_code == 404
     resp = await async_client.post(f"/api/v1/chat/rooms/{room_id}/messages", headers=mem, json={"text": "hi"})
-    assert resp.status_code == 403
+    assert resp.status_code == 404

@@ -30,7 +30,7 @@ async def run_event_chat_lifecycle_pass(db: AsyncSession, *, now: datetime | Non
     from app.config import SYSTEM_USER_ID
     from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
     from app.models.event import Event
-    from app.routers.chat import manager as ws_manager
+    from app.services.chat_connections import manager as ws_manager
 
     now = now or datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)

@@ -1,13 +1,13 @@
 import asyncio
 import time as _time
 import uuid
-from collections import defaultdict, deque
+from collections import deque
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, TypedDict
+from typing import Annotated
 
 import redis.asyncio as aioredis
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -23,8 +23,10 @@ from app.schemas.chat import (
     MarkReadRequest,
     SendMessageRequest,
     UnreadCountResponse,
+    normalize_message_text,
 )
 from app.services.auth_service import decode_access_token
+from app.services.chat_connections import WS_POLICY_VIOLATION, MessagePayload, manager
 from app.services.chat_service import (
     ban_from_room_service,
     create_chat_room_service,
@@ -42,77 +44,16 @@ from app.services.chat_service import (
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
-class MessagePayload(TypedDict):
-    id: str
-    senderId: str
-    senderName: str
-    text: str
-    timestamp: str
-    isSystem: bool
-
-
-class BroadcastMessage(TypedDict):
-    type: str
-    payload: MessagePayload
-
-
-class ConnectionManager:
-    def __init__(self) -> None:
-        self.active_connections: dict[str, list[WebSocket]] = defaultdict(list)
-        # room_id → set of user_id strings currently connected (Feature 4: presence)
-        self.room_presence: dict[str, set[str]] = defaultdict(set)
-
-    def connect(self, room_id: str, websocket: WebSocket, user_id: str) -> None:
-        websocket._user_id = user_id  # type: ignore[attr-defined]
-        self.active_connections[room_id].append(websocket)
-        self.room_presence[room_id].add(user_id)
-
-    def disconnect(self, room_id: str, websocket: WebSocket) -> None:
-        if websocket in self.active_connections[room_id]:
-            self.active_connections[room_id].remove(websocket)
-        # Only remove from presence if this user has no remaining connections in the room.
-        uid: str | None = getattr(websocket, "_user_id", None)
-        if uid:
-            still_connected = any(getattr(ws, "_user_id", None) == uid for ws in self.active_connections[room_id])
-            if not still_connected:
-                self.room_presence[room_id].discard(uid)
-        # Drop empty room keys so they don't accumulate after everyone leaves.
-        if not self.active_connections[room_id]:
-            del self.active_connections[room_id]
-        if not self.room_presence[room_id]:
-            del self.room_presence[room_id]
-
-    def get_presence_snapshot(self, room_id: str) -> list[dict[str, str]]:
-        """Return current online users for the room as a list of presence payloads."""
-        return [{"userId": uid, "status": "online"} for uid in self.room_presence.get(room_id, set())]
-
-    async def broadcast(self, room_id: str, message: dict[str, Any]) -> None:
-        for connection in self.active_connections.get(room_id, []).copy():
-            try:
-                await connection.send_json(message)
-            except WebSocketDisconnect:
-                self.disconnect(room_id, connection)
-                logger.debug("WebSocket disconnected during broadcast")
-            except RuntimeError:
-                self.disconnect(room_id, connection)
-                logger.warning("Runtime error while broadcasting to a room")
-
-    async def broadcast_presence(self, room_id: str, user_id: str, status: str) -> None:
-        """Broadcast an online/offline event to everyone in the room."""
-        await self.broadcast(room_id, {"type": "presence", "payload": {"userId": user_id, "status": status}})
-
-
 logger = structlog.get_logger(__name__)
-manager = ConnectionManager()
 
 
 @router.get("/clubs/{club_id}/chat/rooms", status_code=status.HTTP_200_OK)
 async def get_chat_rooms(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    _current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[ChatRoomResponse]:
-    return await list_chat_rooms_service(club_id, db)
+    return await list_chat_rooms_service(club_id, current_user, db)
 
 
 @router.post("/clubs/{club_id}/chat/rooms", status_code=status.HTTP_201_CREATED)
@@ -131,7 +72,7 @@ async def get_messages(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     current_user: Annotated[User, Depends(get_current_user)],
     before_id: str | None = None,
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[ChatMessageResponse]:
     return await list_messages_service(room_id, current_user, db, before_id=before_id, limit=limit)
 
@@ -222,10 +163,10 @@ async def _ws_authenticate(
     try:
         raw = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
     except Exception:  # intentional: any handshake failure closes the socket
-        await websocket.close(code=1008)
+        await websocket.close(code=WS_POLICY_VIOLATION)
         return None
     if not isinstance(raw, dict) or raw.get("type") != "auth" or not (raw.get("ticket") or raw.get("token")):
-        await websocket.close(code=1008)
+        await websocket.close(code=WS_POLICY_VIOLATION)
         return None
 
     # Expire any stale transaction snapshot that may have been inherited from the
@@ -236,32 +177,48 @@ async def _ws_authenticate(
     await db.rollback()
     repo = ChatRepository(db)
 
+    try:
+        room_uuid = uuid.UUID(room_id)
+    except ValueError:
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
+
     if raw.get("ticket"):
         redis = aioredis.Redis(connection_pool=websocket.app.state.redis_pool)
         raw_user_id = await redis.getdel(f"{_WS_TICKET_PREFIX}{raw['ticket']}")
         if not raw_user_id:
-            await websocket.close(code=1008)
+            await websocket.close(code=WS_POLICY_VIOLATION)
             return None
         user_id = raw_user_id.decode() if isinstance(raw_user_id, bytes) else raw_user_id
-        user = await repo.get_user_by_id(uuid.UUID(user_id))
+        try:
+            user = await repo.get_user_by_id(uuid.UUID(user_id))
+        except ValueError:
+            await websocket.close(code=WS_POLICY_VIOLATION)
+            return None
     else:
         try:
             token_data = decode_access_token(raw["token"], settings)
         except HTTPException:
-            await websocket.close(code=1008)
+            await websocket.close(code=WS_POLICY_VIOLATION)
             return None
-        user_id = str(token_data.get("sub"))
-        user = await repo.get_user_by_supabase_id(uuid.UUID(user_id))
+        try:
+            user = await repo.get_user_by_supabase_id(uuid.UUID(str(token_data.get("sub"))))
+        except ValueError:
+            await websocket.close(code=WS_POLICY_VIOLATION)
+            return None
 
     if not user:
-        await websocket.close(code=1008)
+        await websocket.close(code=WS_POLICY_VIOLATION)
         return None
-    room = await repo.get_room(uuid.UUID(room_id))
+    room = await repo.get_room(room_uuid)
     if not room:
-        await websocket.close(code=1008)
+        await websocket.close(code=WS_POLICY_VIOLATION)
         return None
     if await repo.get_membership(room.club_id, user.id) is None:
-        await websocket.close(code=1008)
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
+    if await repo.get_active_ban(room_uuid, user.id, datetime.now(UTC)) is not None:
+        await websocket.close(code=WS_POLICY_VIOLATION)
         return None
     return user, room
 
@@ -312,15 +269,21 @@ async def websocket_endpoint(
     try:
         while True:
             data = await websocket.receive_json()
-            text = data.get("text", "")
-            if not text:
-                continue
 
             _now = _time.monotonic()
             _msg_timestamps.append(_now)
             if len(_msg_timestamps) == 10 and (_now - _msg_timestamps[0]) < 10.0:
                 await websocket.send_json(
                     {"type": "error", "payload": {"code": "RATE_LIMITED", "message": "Too many messages"}}
+                )
+                continue
+
+            if not isinstance(data, dict):
+                continue
+            text = normalize_message_text(data.get("text"))
+            if text is None:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"code": "INVALID_MESSAGE", "message": "Invalid message text"}}
                 )
                 continue
 

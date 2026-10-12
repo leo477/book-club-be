@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from sqlalchemy import func as sqlfunc
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,10 @@ from app.schemas.chat import (
     MarkReadRequest,
     UnreadCountResponse,
 )
+from app.services.chat_connections import close_rooms_best_effort, manager
 from app.services.club_service import can_view_club, get_club_or_404
+
+logger = structlog.get_logger(__name__)
 
 
 async def get_room_or_404(room_id: uuid.UUID, db: AsyncSession) -> ChatRoom:
@@ -31,11 +35,19 @@ async def get_room_or_404(room_id: uuid.UUID, db: AsyncSession) -> ChatRoom:
     return room
 
 
-async def require_room_member(room: ChatRoom, user: User, db: AsyncSession) -> None:
-    if user.role == "admin":
-        return
-    if await ClubRepository(db).get_membership(room.club_id, user.id) is None:
-        raise AppError(403, "Access denied", "FORBIDDEN")
+async def require_club_member(club_id: uuid.UUID, user: User, db: AsyncSession) -> None:
+    if await ChatRepository(db).get_membership(club_id, user.id) is None:
+        raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
+
+
+async def require_room_member(room_id: uuid.UUID, user: User, db: AsyncSession) -> ChatRoom:
+    repo = ChatRepository(db)
+    room = await repo.get_room(room_id)
+    if room is None:
+        raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
+    if await repo.get_membership(room.club_id, user.id) is None:
+        raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
+    return room
 
 
 async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
@@ -50,7 +62,8 @@ async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSessio
     return ban is not None
 
 
-async def list_chat_rooms_service(club_id: uuid.UUID, db: AsyncSession) -> list[ChatRoomResponse]:
+async def list_chat_rooms_service(club_id: uuid.UUID, current_user: User, db: AsyncSession) -> list[ChatRoomResponse]:
+    await require_club_member(club_id, current_user, db)
     repo = ChatRepository(db)
     rooms = await repo.list_rooms(club_id)
     return [ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms]
@@ -82,7 +95,7 @@ async def list_messages_service(
     before_id: str | None = None,
     limit: int = 50,
 ) -> list[ChatMessageResponse]:
-    await require_room_member(await get_room_or_404(room_id, db), current_user, db)
+    await require_room_member(room_id, current_user, db)
 
     cursor_uuid: uuid.UUID | None = None
     if before_id:
@@ -115,7 +128,7 @@ async def send_message_service(
     current_user: User,
     db: AsyncSession,
 ) -> ChatMessage:
-    await require_room_member(await get_room_or_404(room_id, db), current_user, db)
+    await require_room_member(room_id, current_user, db)
 
     if await check_user_ban(room_id, current_user.id, db):
         raise AppError(403, "You are banned from this room", "ROOM_BANNED")
@@ -133,13 +146,13 @@ async def delete_message_service(
     current_user: User,
     db: AsyncSession,
 ) -> None:
+    room = await require_room_member(room_id, current_user, db)
     repo = ChatRepository(db)
     msg = await repo.get_message(message_id, room_id)
     if msg is None:
         raise AppError(404, "Message not found", "MESSAGE_NOT_FOUND")
 
     if msg.sender_id != current_user.id:
-        room = await get_room_or_404(room_id, db)
         if not await is_club_organizer(room.club_id, current_user.id, db):
             raise AppError(403, "Not authorized to delete this message", "FORBIDDEN")
 
@@ -153,8 +166,11 @@ async def ban_from_room_service(
     current_user: User,
     db: AsyncSession,
 ) -> None:
-    room = await get_room_or_404(room_id, db)
+    room = await require_room_member(room_id, current_user, db)
     await require_club_organizer(room.club_id, current_user, db)
+
+    if await ChatRepository(db).get_membership(room.club_id, body.user_id) is None:
+        raise AppError(404, "User is not a member of this club", "MEMBER_NOT_FOUND")
 
     banned_until = None
     if body.duration_seconds > 0:
@@ -163,12 +179,16 @@ async def ban_from_room_service(
     ban = ChatRoomBan(
         id=uuid.uuid4(),
         room_id=room_id,
-        user_id=uuid.UUID(body.user_id),
+        user_id=body.user_id,
         banned_by=current_user.id,
         banned_until=banned_until,
     )
     db.add(ban)
     await db.commit()
+    try:
+        await manager.kick(str(body.user_id), str(room_id))
+    except Exception:  # intentional: the ban is already committed
+        logger.warning("Failed to kick banned user", room_id=str(room_id), exc_info=True)
 
 
 async def mark_room_as_read_service(
@@ -177,6 +197,7 @@ async def mark_room_as_read_service(
     current_user: User,
     db: AsyncSession,
 ) -> None:
+    await require_room_member(room_id, current_user, db)
     repo = ChatRepository(db)
     try:
         last_read_id = uuid.UUID(body.last_read_message_id)
@@ -210,6 +231,7 @@ async def get_unread_count_service(
     current_user: User,
     db: AsyncSession,
 ) -> UnreadCountResponse:
+    await require_room_member(room_id, current_user, db)
     read_result = await db.execute(
         select(MessageRead).where(
             MessageRead.user_id == current_user.id,
@@ -249,7 +271,7 @@ async def delete_chat_room_service(
 ) -> None:
     from sqlalchemy import delete as sa_delete
 
-    room = await get_room_or_404(room_id, db)
+    room = await require_room_member(room_id, current_user, db)
     await require_club_organizer(room.club_id, current_user, db)
 
     await db.execute(sa_delete(MessageRead).where(MessageRead.room_id == room_id))
@@ -257,6 +279,7 @@ async def delete_chat_room_service(
     await db.execute(sa_delete(ChatMessage).where(ChatMessage.room_id == room_id))
     await db.delete(room)
     await db.commit()
+    await close_rooms_best_effort([room_id])
 
 
 async def get_or_create_event_chat_room(event: Event, db: AsyncSession) -> ChatRoom:
@@ -280,6 +303,8 @@ async def create_event_chat_room_service(
 ) -> ChatRoomResponse:
     event = await db.scalar(select(Event).where(Event.id == event_id))
     if event is None:
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
+    if await ChatRepository(db).get_membership(event.club_id, current_user.id) is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
     club = await get_club_or_404(event.club_id, db)
@@ -313,8 +338,9 @@ async def get_event_chat_room_service(
                 EventAttendee.user_id == current_user.id,
             )
         )
-        if attendee is None or await ClubRepository(db).is_banned(event.club_id, current_user.id):
-            raise AppError(403, "Access denied", "FORBIDDEN")
+        is_member = await ChatRepository(db).get_membership(event.club_id, current_user.id) is not None
+        if attendee is None or not is_member or await ClubRepository(db).is_banned(event.club_id, current_user.id):
+            raise AppError(404, "Event chat not found", "EVENT_CHAT_NOT_FOUND")
 
     room = await db.scalar(select(ChatRoom).where(ChatRoom.event_id == event_id))
     if room is None:
