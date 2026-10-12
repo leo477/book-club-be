@@ -7,9 +7,11 @@ import pytest
 from fastapi import WebSocketDisconnect
 
 from app.main import app
+from app.repositories import ChatRepository
 from app.schemas.chat import normalize_message_text
 from app.services.chat_connections import ConnectionManager
 from app.services.chat_connections import manager as chat_manager
+from app.services.chat_service import close_rooms_best_effort
 
 
 async def _organizer_club_room(async_client, register_user, auth_headers):
@@ -199,13 +201,10 @@ class _WsDriver:
     async def stop(self) -> None:
         await self.to_app.put({"type": "websocket.disconnect", "code": 1000})
         try:
-            await asyncio.wait_for(asyncio.shield(self.task), timeout=1)
+            await asyncio.wait_for(asyncio.shield(self.task), timeout=2)
         except TimeoutError:
             self.task.cancel()
-            try:
-                await self.task
-            except asyncio.CancelledError:
-                pass
+            pytest.fail("websocket handler did not finish after disconnect")
 
 
 @pytest.mark.asyncio
@@ -413,7 +412,7 @@ async def test_ban_and_delete_room_uniform_404_for_non_members(async_client, reg
     ).status_code == 403
 
 
-BAD_TEXTS = ["\x00", "a\x00b", "a\x07", "​", "⠀", "ㅤ", "﻿", " ​⠀ ", "\x1b[31mred"]
+BAD_TEXTS = ["\x85", "a\x85b", "\x9f", "\x00", "a\x00b", "a\x07", "​", "⠀", "ㅤ", "﻿", " ​⠀ ", "\x1b[31mred"]
 
 
 @pytest.mark.asyncio
@@ -495,3 +494,130 @@ async def test_delete_club_closes_room_sockets(async_client, register_user, auth
     finally:
         chat_manager.active_connections.pop(room_id, None)
         chat_manager.room_presence.pop(room_id, None)
+
+
+def _cleanup_rooms(*room_ids: str) -> None:
+    for rid in room_ids:
+        chat_manager.active_connections.pop(rid, None)
+        chat_manager.room_presence.pop(rid, None)
+
+
+async def _member_with_sockets(async_client, register_user, auth_headers, make_member):
+    org, club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    second = (
+        await async_client.post(f"/api/v1/clubs/{club_id}/chat/rooms", headers=org, json={"name": "Second"})
+    ).json()["id"]
+    member = await _outsider(register_user, auth_headers)
+    member_id = await make_member(club_id, member)
+    socks = {room_id: _fake_ws(), second: _fake_ws()}
+    for rid, sock in socks.items():
+        chat_manager.connect(rid, sock, member_id)
+    return org, club_id, member, member_id, socks
+
+
+def _action(kind: str, club_id: str, member_id: str):
+    if kind == "leave":
+        return "delete", f"/api/v1/clubs/{club_id}/leave", {}, "member"
+    if kind == "remove":
+        return "delete", f"/api/v1/clubs/{club_id}/members/{member_id}", {}, "org"
+    return "post", f"/api/v1/clubs/{club_id}/members/{member_id}/ban", {"json": {"duration": "permanent"}}, "org"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["leave", "remove", "club_ban"])
+async def test_membership_removal_closes_sockets_in_all_club_rooms(
+    async_client, register_user, auth_headers, make_member, kind
+):
+    org, club_id, member, member_id, socks = await _member_with_sockets(
+        async_client, register_user, auth_headers, make_member
+    )
+    try:
+        method, url, kwargs, who = _action(kind, club_id, member_id)
+        resp = await getattr(async_client, method)(url, headers=org if who == "org" else member, **kwargs)
+        assert resp.status_code in (201, 204)
+        for sock in socks.values():
+            sock.close.assert_awaited_once_with(code=1008)
+    finally:
+        _cleanup_rooms(*socks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["leave", "remove", "club_ban"])
+@pytest.mark.parametrize("failure", ["kick", "list_rooms"])
+async def test_membership_removal_survives_kick_failure_and_is_committed(
+    async_client, register_user, auth_headers, make_member, kind, failure
+):
+    org, club_id, member, member_id, socks = await _member_with_sockets(
+        async_client, register_user, auth_headers, make_member
+    )
+    room_id = next(iter(socks))
+    target = (chat_manager, "kick") if failure == "kick" else (ChatRepository, "list_rooms")
+    try:
+        method, url, kwargs, who = _action(kind, club_id, member_id)
+        with patch.object(*target, side_effect=RuntimeError("boom")):
+            resp = await getattr(async_client, method)(url, headers=org if who == "org" else member, **kwargs)
+        assert resp.status_code in (201, 204)
+        assert (await async_client.get(f"/api/v1/chat/rooms/{room_id}/messages", headers=member)).status_code == 404
+    finally:
+        _cleanup_rooms(*socks)
+
+
+@pytest.mark.asyncio
+async def test_room_ban_survives_kick_failure(async_client, register_user, auth_headers, make_member):
+    org, club_id, member, member_id, socks = await _member_with_sockets(
+        async_client, register_user, auth_headers, make_member
+    )
+    room_id = next(iter(socks))
+    try:
+        with patch.object(chat_manager, "kick", side_effect=RuntimeError("boom")):
+            resp = await async_client.post(
+                f"/api/v1/chat/rooms/{room_id}/ban", headers=org, json={"user_id": member_id, "duration_seconds": 0}
+            )
+        assert resp.status_code == 204
+        banned = await async_client.post(f"/api/v1/chat/rooms/{room_id}/messages", headers=member, json={"text": "x"})
+        assert banned.status_code == 403
+    finally:
+        _cleanup_rooms(*socks)
+
+
+@pytest.mark.asyncio
+async def test_close_rooms_best_effort_continues_past_failing_room():
+    closed = []
+
+    async def fake_close(room_id):
+        if room_id == "a":
+            raise OSError("boom")
+        closed.append(room_id)
+
+    with patch.object(chat_manager, "close_room", side_effect=fake_close):
+        await close_rooms_best_effort(["a", "b"])  # type: ignore[list-item]
+    assert closed == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_room_delete_returns_204_when_closing_sockets_fails(async_client, register_user, auth_headers):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    with patch.object(chat_manager, "close_room", side_effect=RuntimeError("boom")):
+        assert (await async_client.delete(f"/api/v1/chat/rooms/{room_id}", headers=org)).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_create_event_chat_room_non_member_gets_uniform_404(async_client, register_user, auth_headers):
+    org, club_id, _room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    event_id = (
+        await async_client.post(
+            f"/api/v1/clubs/{club_id}/events",
+            headers=org,
+            json={"title": "Ev", "date": "2030-01-01T18:00:00", "city": "Kyiv"},
+        )
+    ).json()["id"]
+    outsider = await _outsider(register_user, auth_headers)
+    real = await async_client.post(f"/api/v1/events/{event_id}/chat/room", headers=outsider)
+    fake = await async_client.post(f"/api/v1/events/{uuid.uuid4()}/chat/room", headers=outsider)
+    assert real.status_code == fake.status_code == 404
+    assert real.json() == fake.json()
+
+
+def test_nel_is_rejected_consistently():
+    assert normalize_message_text("\x85") is None
+    assert normalize_message_text("a\x85") is None

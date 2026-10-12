@@ -8,7 +8,7 @@ from pydantic_core import PydanticCustomError
 MAX_MESSAGE_LENGTH = 2000
 MAX_BAN_SECONDS = 365 * 24 * 3600
 
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _INVISIBLE = frozenset("\u00ad\u115f\u1160\u180e\u200b\u200c\u200d\u200e\u200f\u2060\u2800\u3164\ufeff")
 
 

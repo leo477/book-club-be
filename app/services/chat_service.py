@@ -198,7 +198,10 @@ async def ban_from_room_service(
     )
     db.add(ban)
     await db.commit()
-    await manager.kick(str(body.user_id), str(room_id))
+    try:
+        await manager.kick(str(body.user_id), str(room_id))
+    except Exception:  # intentional: the ban is already committed
+        logger.warning("Failed to kick banned user", room_id=str(room_id), exc_info=True)
 
 
 async def mark_room_as_read_service(
@@ -313,6 +316,8 @@ async def create_event_chat_room_service(
 ) -> ChatRoomResponse:
     event = await db.scalar(select(Event).where(Event.id == event_id))
     if event is None:
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
+    if await ChatRepository(db).get_membership(event.club_id, current_user.id) is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
     await require_club_organizer(event.club_id, current_user, db)
