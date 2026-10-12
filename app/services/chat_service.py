@@ -20,6 +20,7 @@ from app.schemas.chat import (
     MarkReadRequest,
     UnreadCountResponse,
 )
+from app.services.chat_connections import manager
 
 
 async def get_room_or_404(room_id: uuid.UUID, db: AsyncSession) -> ChatRoom:
@@ -28,6 +29,23 @@ async def get_room_or_404(room_id: uuid.UUID, db: AsyncSession) -> ChatRoom:
     if not room:
         raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
     return room
+
+
+async def require_club_member(club_id: uuid.UUID, user: User, db: AsyncSession) -> None:
+    if await ChatRepository(db).get_membership(club_id, user.id) is None:
+        raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
+
+
+async def require_room_member(room_id: uuid.UUID, user: User, db: AsyncSession) -> ChatRoom:
+    room = await ChatRepository(db).get_room(room_id)
+    if room is None or await ChatRepository(db).get_membership(room.club_id, user.id) is None:
+        raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
+    return room
+
+
+async def kick_user_from_club_rooms(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> None:
+    for room in await ChatRepository(db).list_rooms(club_id):
+        await manager.kick(str(user_id), str(room.id))
 
 
 async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
@@ -42,7 +60,8 @@ async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSessio
     return ban is not None
 
 
-async def list_chat_rooms_service(club_id: uuid.UUID, db: AsyncSession) -> list[ChatRoomResponse]:
+async def list_chat_rooms_service(club_id: uuid.UUID, current_user: User, db: AsyncSession) -> list[ChatRoomResponse]:
+    await require_club_member(club_id, current_user, db)
     repo = ChatRepository(db)
     rooms = await repo.list_rooms(club_id)
     return [ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms]
@@ -69,11 +88,12 @@ async def create_chat_room_service(
 
 async def list_messages_service(
     room_id: uuid.UUID,
+    current_user: User,
     db: AsyncSession,
     before_id: str | None = None,
     limit: int = 50,
 ) -> list[ChatMessageResponse]:
-    await get_room_or_404(room_id, db)
+    await require_room_member(room_id, current_user, db)
 
     cursor_uuid: uuid.UUID | None = None
     if before_id:
@@ -106,7 +126,7 @@ async def send_message_service(
     current_user: User,
     db: AsyncSession,
 ) -> ChatMessage:
-    await get_room_or_404(room_id, db)
+    await require_room_member(room_id, current_user, db)
 
     if await check_user_ban(room_id, current_user.id, db):
         raise AppError(403, "You are banned from this room", "ROOM_BANNED")
@@ -147,6 +167,9 @@ async def ban_from_room_service(
     room = await get_room_or_404(room_id, db)
     await require_club_organizer(room.club_id, current_user, db)
 
+    if await ChatRepository(db).get_membership(room.club_id, body.user_id) is None:
+        raise AppError(404, "User is not a member of this club", "MEMBER_NOT_FOUND")
+
     banned_until = None
     if body.duration_seconds > 0:
         banned_until = datetime.now(UTC) + timedelta(seconds=body.duration_seconds)
@@ -154,12 +177,13 @@ async def ban_from_room_service(
     ban = ChatRoomBan(
         id=uuid.uuid4(),
         room_id=room_id,
-        user_id=uuid.UUID(body.user_id),
+        user_id=body.user_id,
         banned_by=current_user.id,
         banned_until=banned_until,
     )
     db.add(ban)
     await db.commit()
+    await manager.kick(str(body.user_id), str(room_id))
 
 
 async def mark_room_as_read_service(
@@ -168,6 +192,7 @@ async def mark_room_as_read_service(
     current_user: User,
     db: AsyncSession,
 ) -> None:
+    await require_room_member(room_id, current_user, db)
     repo = ChatRepository(db)
     try:
         last_read_id = uuid.UUID(body.last_read_message_id)
@@ -201,6 +226,7 @@ async def get_unread_count_service(
     current_user: User,
     db: AsyncSession,
 ) -> UnreadCountResponse:
+    await require_room_member(room_id, current_user, db)
     read_result = await db.execute(
         select(MessageRead).where(
             MessageRead.user_id == current_user.id,

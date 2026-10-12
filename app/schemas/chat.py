@@ -1,6 +1,10 @@
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
+
+MAX_MESSAGE_LENGTH = 2000
+MAX_BAN_SECONDS = 365 * 24 * 3600
 
 
 class ChatRoomResponse(BaseModel):
@@ -21,7 +25,7 @@ class ChatMessageResponse(BaseModel):
 class SendMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text: str
+    text: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH, pattern=r"\S")
 
 
 class CreateChatRoomRequest(BaseModel):
@@ -33,8 +37,8 @@ class CreateChatRoomRequest(BaseModel):
 class BanFromRoomRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user_id: str
-    duration_seconds: int
+    user_id: uuid.UUID
+    duration_seconds: int = Field(ge=0, le=MAX_BAN_SECONDS)
 
 
 # ── Feature 5: read/unread tracking ──────────────────────────────────────────

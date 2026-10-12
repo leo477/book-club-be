@@ -33,6 +33,7 @@ from app.schemas.clubs import (
 )
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
 from app.schemas.users import UserStatsResponse
+from app.services.chat_service import kick_user_from_club_rooms
 
 logger = structlog.get_logger(__name__)
 
@@ -245,6 +246,7 @@ async def leave_club_service(
         raise AppError(409, "Not a member", "NOT_A_MEMBER")
     await repo.remove_member(club_id, current_user.id)
     await db.commit()
+    await kick_user_from_club_rooms(club_id, current_user.id, db)
 
 
 async def create_club_service(
@@ -501,6 +503,7 @@ async def remove_member_service(
 
     await repo.remove_member(club_id, user_id)
     await db.commit()
+    await kick_user_from_club_rooms(club_id, user_id, db)
 
 
 async def ban_user_service(
@@ -557,6 +560,7 @@ async def ban_user_service(
     await repo.remove_member(club_id, user_id)
     await db.commit()
     await db.refresh(ban)
+    await kick_user_from_club_rooms(club_id, user_id, db)
 
     return BanResponse(
         userId=str(user_id),
