@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,8 +31,10 @@ from app.services.club_service import (
     list_join_requests_service,
     reject_join_request_service,
     remove_member_service,
+    require_club_viewable,
     unban_user_service,
 )
+from app.services.revalidate import schedule_club_revalidate
 
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
@@ -41,11 +43,12 @@ router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 async def list_members(
     club_id: uuid.UUID,
     response: Response,
-    _current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[MemberResponse]:
+    await require_club_viewable(club_id, current_user, db)
     total_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
     total = total_result.scalar_one()
     response.headers["X-Total-Count"] = str(total)
@@ -81,8 +84,10 @@ async def remove_member(
     user_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
+    background_tasks: BackgroundTasks,
 ) -> None:
     await remove_member_service(club_id, user_id, current_user, db)
+    schedule_club_revalidate(background_tasks, club_id)
 
 
 @router.post("/members/{user_id}/ban", status_code=status.HTTP_201_CREATED)
@@ -200,8 +205,10 @@ async def approve_join_request(
     user_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
+    background_tasks: BackgroundTasks,
 ) -> dict[str, int]:
     member_count = await approve_join_request_service(club_id, user_id, current_user, db)
+    schedule_club_revalidate(background_tasks, club_id)
     return {"memberCount": member_count}
 
 

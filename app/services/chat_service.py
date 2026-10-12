@@ -12,7 +12,7 @@ from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
 from app.models.event import Event, EventAttendee
 from app.models.user import User
-from app.repositories import ChatRepository
+from app.repositories import ChatRepository, ClubRepository
 from app.schemas.chat import (
     BanFromRoomRequest,
     ChatMessageResponse,
@@ -21,7 +21,8 @@ from app.schemas.chat import (
     MarkReadRequest,
     UnreadCountResponse,
 )
-from app.services.chat_connections import manager
+from app.services.chat_connections import close_rooms_best_effort, manager
+from app.services.club_service import can_view_club, get_club_or_404
 
 logger = structlog.get_logger(__name__)
 
@@ -40,27 +41,13 @@ async def require_club_member(club_id: uuid.UUID, user: User, db: AsyncSession) 
 
 
 async def require_room_member(room_id: uuid.UUID, user: User, db: AsyncSession) -> ChatRoom:
-    room = await ChatRepository(db).get_room(room_id)
-    if room is None or await ChatRepository(db).get_membership(room.club_id, user.id) is None:
+    repo = ChatRepository(db)
+    room = await repo.get_room(room_id)
+    if room is None:
+        raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
+    if user.role != "admin" and await repo.get_membership(room.club_id, user.id) is None:
         raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
     return room
-
-
-async def kick_user_from_club_rooms(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> None:
-    """Best-effort: the DB change is already committed, so socket failures must not fail the request."""
-    try:
-        for room in await ChatRepository(db).list_rooms(club_id):
-            await manager.kick(str(user_id), str(room.id))
-    except Exception:  # intentional: see docstring
-        logger.warning("Failed to kick user sockets", club_id=str(club_id), user_id=str(user_id), exc_info=True)
-
-
-async def close_rooms_best_effort(room_ids: list[uuid.UUID]) -> None:
-    for room_id in room_ids:
-        try:
-            await manager.close_room(str(room_id))
-        except Exception:  # intentional: deletion is already committed
-            logger.warning("Failed to close room sockets", room_id=str(room_id), exc_info=True)
 
 
 async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> bool:
@@ -317,9 +304,12 @@ async def create_event_chat_room_service(
     event = await db.scalar(select(Event).where(Event.id == event_id))
     if event is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
-    if await ChatRepository(db).get_membership(event.club_id, current_user.id) is None:
+    if current_user.role != "admin" and await ChatRepository(db).get_membership(event.club_id, current_user.id) is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
+    club = await get_club_or_404(event.club_id, db)
+    if not await can_view_club(club, current_user, db):
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
     await require_club_organizer(event.club_id, current_user, db)
 
     room = await get_or_create_event_chat_room(event, db)
@@ -336,18 +326,20 @@ async def get_event_chat_room_service(
     event = await db.scalar(select(Event).where(Event.id == event_id))
     if event is None:
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
-    if await ChatRepository(db).get_membership(event.club_id, current_user.id) is None:
+
+    club = await get_club_or_404(event.club_id, db)
+    if not await can_view_club(club, current_user, db):
         raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
-    organizer = await is_club_organizer(event.club_id, current_user.id, db)
-    if not organizer:
+    if not await is_club_organizer(event.club_id, current_user.id, db):
         attendee = await db.scalar(
             select(EventAttendee).where(
                 EventAttendee.event_id == event_id,
                 EventAttendee.user_id == current_user.id,
             )
         )
-        if attendee is None:
+        is_member = await ChatRepository(db).get_membership(event.club_id, current_user.id) is not None
+        if attendee is None or not is_member or await ClubRepository(db).is_banned(event.club_id, current_user.id):
             raise AppError(403, "Access denied", "FORBIDDEN")
 
     room = await db.scalar(select(ChatRoom).where(ChatRoom.event_id == event_id))

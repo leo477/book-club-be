@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = [
         "http://localhost:4200",
     ]
-    CORS_ORIGIN_REGEX: str = r"^https://book-club-[a-z0-9-]+\.vercel\.app$"
+    CORS_ORIGIN_REGEX: str = r"^https://(book-club-planer|book-club-web-blue|book-club-fe)\.vercel\.app$"
     REDIS_URL: str = "redis://localhost:6379"
     # Public origins used to build OAuth redirect targets. FRONTEND_URL is where
     # the browser lands after login; BACKEND_URL is this API's public base URL.
@@ -47,11 +47,15 @@ class Settings(BaseSettings):
     MAPS_SERVER_API_KEY: str = ""
     MAPS_MAP_ID: str = ""
 
+    # Next.js on-demand revalidation webhook; notifier is disabled unless both are set.
+    WEB_REVALIDATE_URL: str = ""
+    WEB_REVALIDATE_SECRET: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
     @property
     def supabase_configured(self) -> bool:
-        return bool(self.SUPABASE_URL and self.SUPABASE_ANON_KEY and self.SUPABASE_JWT_SECRET)
+        return bool(self.SUPABASE_URL and self.SUPABASE_ANON_KEY)
 
 
 @lru_cache

@@ -1,8 +1,12 @@
+import uuid
 from collections import defaultdict
 from typing import Any, TypedDict
 
 import structlog
 from fastapi import WebSocket, WebSocketDisconnect
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.repositories import ChatRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -86,3 +90,20 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+async def kick_user_from_club_rooms(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> None:
+    """Best-effort: the DB change is already committed, so socket failures must not fail the request."""
+    try:
+        for room in await ChatRepository(db).list_rooms(club_id):
+            await manager.kick(str(user_id), str(room.id))
+    except Exception:  # intentional: see docstring
+        logger.warning("Failed to kick user sockets", club_id=str(club_id), user_id=str(user_id), exc_info=True)
+
+
+async def close_rooms_best_effort(room_ids: list[uuid.UUID]) -> None:
+    for room_id in room_ids:
+        try:
+            await manager.close_room(str(room_id))
+        except Exception:  # intentional: deletion is already committed
+            logger.warning("Failed to close room sockets", room_id=str(room_id), exc_info=True)

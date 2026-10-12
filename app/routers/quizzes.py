@@ -25,6 +25,7 @@ from app.schemas.quizzes import (
     UpdateQuestionRequest,
     UpdateQuizRequest,
 )
+from app.services.event_service import get_event_or_404
 from app.services.quiz_service import (
     count_questions,
     get_active_session,
@@ -315,6 +316,11 @@ async def create_session(
 ) -> QuizSessionResponse:
     quiz = await _get_quiz_or_404(quiz_id, db)
     await require_club_organizer(quiz.club_id, current_user, db)
+
+    if req.eventId is not None:
+        event = await get_event_or_404(req.eventId, db)
+        if event.club_id != quiz.club_id:
+            raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
 
     session = QuizSession(
         id=uuid.uuid4(),

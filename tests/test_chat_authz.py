@@ -9,9 +9,8 @@ from fastapi import WebSocketDisconnect
 from app.main import app
 from app.repositories import ChatRepository
 from app.schemas.chat import normalize_message_text
-from app.services.chat_connections import ConnectionManager
+from app.services.chat_connections import ConnectionManager, close_rooms_best_effort
 from app.services.chat_connections import manager as chat_manager
-from app.services.chat_service import close_rooms_best_effort
 
 
 async def _organizer_club_room(async_client, register_user, auth_headers):
@@ -385,10 +384,8 @@ async def test_event_chat_room_requires_current_membership(async_client, registe
     assert (await async_client.get(url, headers=member)).status_code == 200
 
     await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=member)
-    gone = await async_client.get(url, headers=member)
-    assert gone.status_code == 404
-    unknown = await async_client.get(f"/api/v1/events/{uuid.uuid4()}/chat/room", headers=member)
-    assert gone.json() == unknown.json()
+    assert (await async_client.get(url, headers=member)).status_code == 403
+    assert (await async_client.get(f"/api/v1/events/{uuid.uuid4()}/chat/room", headers=member)).status_code == 404
 
 
 @pytest.mark.asyncio
