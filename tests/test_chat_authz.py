@@ -80,7 +80,8 @@ async def test_member_removed_loses_access(async_client, register_user, auth_hea
     org, club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
     member = await _outsider(register_user, auth_headers)
     await make_member(club_id, member)
-    assert (await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=member)).status_code == 204
+    resp = await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=member)
+    assert resp.status_code == 204
     assert (await async_client.get(f"/api/v1/chat/rooms/{room_id}/messages", headers=member)).status_code == 404
 
 
@@ -136,7 +137,11 @@ async def test_ws_ticket_rate_limited_per_user(async_client, register_user):
     from app.dependencies import get_redis
 
     token = (await register_user()).json()["accessToken"]
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
+
+    def _fake_redis() -> AsyncMock:
+        return AsyncMock()
+
+    app.dependency_overrides[get_redis] = _fake_redis
     codes = [
         (await async_client.post("/api/v1/auth/ws-ticket", headers={"Authorization": f"Bearer {token}"})).status_code
         for _ in range(11)
@@ -306,7 +311,8 @@ async def test_leave_succeeds_and_kicks_remaining_sockets_when_one_close_fails(
     chat_manager.connect(room_id, dead, member_id)
     chat_manager.connect(room_id, alive, member_id)
     try:
-        assert (await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=member)).status_code == 204
+        resp = await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=member)
+        assert resp.status_code == 204
         alive.close.assert_awaited_once_with(code=1008)
     finally:
         chat_manager.active_connections.pop(room_id, None)
@@ -360,11 +366,14 @@ async def test_delete_message_requires_membership(async_client, register_user, a
     ).json()["id"]
     outsider = await _outsider(register_user, auth_headers, "authz_out2@example.com")
     url = f"/api/v1/chat/rooms/{room_id}/messages/{msg_id}"
-    assert (await async_client.delete(url, headers=outsider)).status_code == 404
+    resp = await async_client.delete(url, headers=outsider)
+    assert resp.status_code == 404
 
     await async_client.delete(f"/api/v1/clubs/{club_id}/leave", headers=member)
-    assert (await async_client.delete(url, headers=member)).status_code == 404
-    assert (await async_client.delete(url, headers=org)).status_code == 204
+    resp = await async_client.delete(url, headers=member)
+    assert resp.status_code == 404
+    resp = await async_client.delete(url, headers=org)
+    assert resp.status_code == 204
 
 
 @pytest.mark.asyncio
@@ -403,7 +412,8 @@ async def test_ban_and_delete_room_uniform_404_for_non_members(async_client, reg
     assert real.json() == fake.json()
 
     await make_member(club_id, outsider)
-    assert (await async_client.delete(f"/api/v1/chat/rooms/{room_id}", headers=outsider)).status_code == 403
+    resp = await async_client.delete(f"/api/v1/chat/rooms/{room_id}", headers=outsider)
+    assert resp.status_code == 403
     assert (
         await async_client.post(f"/api/v1/chat/rooms/{room_id}/ban", headers=outsider, json=ban_body)
     ).status_code == 403
@@ -471,7 +481,8 @@ async def test_delete_room_closes_its_sockets(async_client, register_user, auth_
     sock = _fake_ws()
     chat_manager.connect(room_id, sock, "someone")
     try:
-        assert (await async_client.delete(f"/api/v1/chat/rooms/{room_id}", headers=org)).status_code == 204
+        resp = await async_client.delete(f"/api/v1/chat/rooms/{room_id}", headers=org)
+        assert resp.status_code == 204
         sock.close.assert_awaited_once_with(code=1008)
     finally:
         chat_manager.active_connections.pop(room_id, None)
@@ -486,7 +497,8 @@ async def test_delete_club_closes_room_sockets(async_client, register_user, auth
     chat_manager.connect(room_id, sock, "a")
     chat_manager.connect(room_id, other, "b")
     try:
-        assert (await async_client.delete(f"/api/v1/clubs/{club_id}", headers=org)).status_code in (200, 204)
+        resp = await async_client.delete(f"/api/v1/clubs/{club_id}", headers=org)
+        assert resp.status_code in (200, 204)
         other.close.assert_awaited_once_with(code=1008)
     finally:
         chat_manager.active_connections.pop(room_id, None)
@@ -595,7 +607,8 @@ async def test_close_rooms_best_effort_continues_past_failing_room():
 async def test_room_delete_returns_204_when_closing_sockets_fails(async_client, register_user, auth_headers):
     org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
     with patch.object(chat_manager, "close_room", side_effect=RuntimeError("boom")):
-        assert (await async_client.delete(f"/api/v1/chat/rooms/{room_id}", headers=org)).status_code == 204
+        resp = await async_client.delete(f"/api/v1/chat/rooms/{room_id}", headers=org)
+        assert resp.status_code == 204
 
 
 @pytest.mark.asyncio
