@@ -17,7 +17,7 @@ from app.models.club_join_request import ClubJoinRequest
 from app.models.club_member import ClubMember
 from app.models.quiz import QuizAttempt
 from app.models.user import User
-from app.repositories import ClubRepository
+from app.repositories import ChatRepository, ClubRepository
 from app.schemas.clubs import (
     BanRequest,
     BanResponse,
@@ -34,14 +34,17 @@ from app.schemas.clubs import (
 )
 from app.schemas.events import AfterMeetingVenueSchema, CreateEventRequest, EventResponse
 from app.schemas.users import UserStatsResponse
+from app.services.chat_connections import close_rooms_best_effort, kick_user_from_club_rooms
 
 logger = structlog.get_logger(__name__)
 
 
 async def delete_club_cascade(club_id: uuid.UUID, db: AsyncSession) -> None:
     repo = ClubRepository(db)
+    room_ids = [room.id for room in await ChatRepository(db).list_rooms(club_id)]
     await repo.cascade_delete(club_id)
     await db.commit()
+    await close_rooms_best_effort(room_ids)
 
 
 async def get_club_or_404(club_id: uuid.UUID, db: AsyncSession) -> Club:
@@ -269,6 +272,7 @@ async def leave_club_service(
         raise AppError(409, "Not a member", "NOT_A_MEMBER")
     await repo.remove_member(club_id, current_user.id)
     await db.commit()
+    await kick_user_from_club_rooms(club_id, current_user.id, db)
 
 
 async def create_club_service(
@@ -525,6 +529,7 @@ async def remove_member_service(
 
     await repo.remove_member(club_id, user_id)
     await db.commit()
+    await kick_user_from_club_rooms(club_id, user_id, db)
 
 
 async def ban_user_service(
@@ -581,6 +586,7 @@ async def ban_user_service(
     await repo.remove_member(club_id, user_id)
     await db.commit()
     await db.refresh(ban)
+    await kick_user_from_club_rooms(club_id, user_id, db)
 
     return BanResponse(
         userId=str(user_id),
