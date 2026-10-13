@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" <<SQL
+CREATE DATABASE gotrue;
+SQL
+psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d gotrue <<SQL
+CREATE SCHEMA IF NOT EXISTS auth;
+SQL
