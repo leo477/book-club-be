@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +34,7 @@ from app.services.club_service import (
     require_club_viewable,
     unban_user_service,
 )
-from app.services.revalidate import schedule_club_revalidate
+from app.services.revalidate import revalidate_club
 
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
@@ -84,10 +84,9 @@ async def remove_member(
     user_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    background_tasks: BackgroundTasks,
 ) -> None:
     await remove_member_service(club_id, user_id, current_user, db)
-    schedule_club_revalidate(background_tasks, club_id)
+    await revalidate_club(club_id, db)
 
 
 @router.post("/members/{user_id}/ban", status_code=status.HTTP_201_CREATED)
@@ -98,7 +97,9 @@ async def ban_member(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> BanResponse:
-    return await ban_user_service(club_id, user_id, body, current_user, db)
+    response = await ban_user_service(club_id, user_id, body, current_user, db)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.delete("/bans/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -109,6 +110,7 @@ async def unban_member(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await unban_user_service(club_id, user_id, current_user, db)
+    await revalidate_club(club_id, db)
 
 
 @router.patch("/members/{user_id}/role")
@@ -124,7 +126,7 @@ async def change_member_role(
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one()
     socials = {k: v for k, v in build_socials(user).items() if v is not None} if user.socials_public else None
-    return MemberResponse(
+    response = MemberResponse(
         userId=str(user.id),
         displayName=user.display_name,
         avatarUrl=user.avatar_url,
@@ -132,6 +134,8 @@ async def change_member_role(
         socials=socials,
         socialsPublic=user.socials_public,
     )
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.get("/bans")
@@ -205,10 +209,9 @@ async def approve_join_request(
     user_id: uuid.UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    background_tasks: BackgroundTasks,
 ) -> dict[str, int]:
     member_count = await approve_join_request_service(club_id, user_id, current_user, db)
-    schedule_club_revalidate(background_tasks, club_id)
+    await revalidate_club(club_id, db)
     return {"memberCount": member_count}
 
 
@@ -220,6 +223,7 @@ async def reject_join_request(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await reject_join_request_service(club_id, user_id, current_user, db)
+    await revalidate_club(club_id, db)
 
 
 @router.get("/my-membership")
