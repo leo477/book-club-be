@@ -88,11 +88,12 @@ async def test_organizers_can_promote_members(async_client, register_user, auth_
 async def test_plain_member_cannot_act(async_client, register_user, auth_headers, make_member):
     club_id, u = await _setup(async_client, register_user, auth_headers, make_member, "plain")
     h = u["member"]["h"]
-    assert (await async_client.delete(_url(club_id, u["org2"]["id"]), headers=h)).status_code == 403
-    assert (
-        await async_client.post(_url(club_id, u["org2"]["id"], "/ban"), headers=h, json={"duration": 1})
-    ).status_code == 403
-    assert (await async_client.delete(f"/api/v1/clubs/{club_id}", headers=h)).status_code == 403
+    r = await async_client.delete(_url(club_id, u["org2"]["id"]), headers=h)
+    assert r.status_code == 403
+    r = await async_client.post(_url(club_id, u["org2"]["id"], "/ban"), headers=h, json={"duration": 1})
+    assert r.status_code == 403
+    r = await async_client.delete(f"/api/v1/clubs/{club_id}", headers=h)
+    assert r.status_code == 403
 
 
 # owner target is protected from everyone
@@ -116,8 +117,10 @@ async def test_delete_club_owner_only(async_client, register_user, auth_headers,
     resp = await async_client.delete(f"/api/v1/clubs/{club_id}", headers=u["org2"]["h"])
     assert resp.status_code == 403
     assert resp.json()["detail"]["code"] == "OWNER_ONLY"
-    assert (await async_client.get(f"/api/v1/clubs/{club_id}", headers=u["owner"]["h"])).status_code == 200
-    assert (await async_client.delete(f"/api/v1/clubs/{club_id}", headers=u["owner"]["h"])).status_code == 204
+    r = await async_client.get(f"/api/v1/clubs/{club_id}", headers=u["owner"]["h"])
+    assert r.status_code == 200
+    r = await async_client.delete(f"/api/v1/clubs/{club_id}", headers=u["owner"]["h"])
+    assert r.status_code == 204
 
 
 # self-leave and self-demote for a non-owner organizer stay possible
