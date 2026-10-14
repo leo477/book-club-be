@@ -266,10 +266,15 @@ async def leave_club_service(
     current_user: User,
     db: AsyncSession,
 ) -> None:
-    await get_club_or_404(club_id, db)
+    club = await lock_club_for_update(club_id, db)
+    if club.organizer_id == current_user.id:
+        raise AppError(400, "The club owner cannot leave the club", "OWNER_CANNOT_LEAVE")
     repo = ClubRepository(db)
-    if await repo.get_membership(club_id, current_user.id) is None:
+    member = await _get_member_fresh(club_id, current_user.id, db)
+    if member is None:
         raise AppError(409, "Not a member", "NOT_A_MEMBER")
+    if member.role == "organizer" and await _count_organizers(club_id, db) <= 1:
+        raise AppError(400, "Cannot leave as the last organizer", "LAST_ORGANIZER")
     await repo.remove_member(club_id, current_user.id)
     await db.commit()
     await kick_user_from_club_rooms(club_id, current_user.id, db)
@@ -498,6 +503,55 @@ async def get_my_membership_service(
     return MyMembershipResponse(isMember=False)
 
 
+async def lock_club_for_update(club_id: uuid.UUID, db: AsyncSession) -> Club:
+    """Lock the club row (SELECT ... FOR UPDATE) to serialise role/membership mutations.
+
+    Makes the last-organizer check atomic: concurrent demote/kick/ban requests for the
+    same club queue on this lock, and the organizer count read afterwards sees the
+    committed result of the one that went first. SQLAlchemy omits FOR UPDATE on SQLite.
+    """
+    result = await db.execute(
+        select(Club).where(Club.id == club_id).with_for_update().execution_options(populate_existing=True)
+    )
+    club = result.scalar_one_or_none()
+    if club is None:
+        raise AppError(404, "Club not found", "CLUB_NOT_FOUND")
+    return club
+
+
+async def _lock_club_and_recheck_actor(club_id: uuid.UUID, actor: User, db: AsyncSession) -> Club:
+    """Lock the club row, then re-read the actor's membership: they may have been demoted/removed while waiting."""
+    club = await lock_club_for_update(club_id, db)
+    actor_member = await _get_member_fresh(club_id, actor.id, db)
+    if actor_member is None or actor_member.role != "organizer":
+        raise AppError(403, "Not authorized", "FORBIDDEN")
+    return club
+
+
+async def _get_member_fresh(club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> ClubMember | None:
+    result = await db.execute(
+        select(ClubMember)
+        .where(ClubMember.club_id == club_id, ClubMember.user_id == user_id)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _count_organizers(club_id: uuid.UUID, db: AsyncSession) -> int:
+    result = await db.execute(
+        select(func.count())
+        .select_from(ClubMember)
+        .where(ClubMember.club_id == club_id, ClubMember.role == "organizer")
+    )
+    return result.scalar_one()
+
+
+def _require_owner_to_act_on_organizer(club: Club, actor: User) -> None:
+    """Only the club owner (club.organizer_id) may act on another organizer."""
+    if club.organizer_id != actor.id:
+        raise AppError(403, "Only the club owner can manage other organizers", "OWNER_ONLY")
+
+
 async def remove_member_service(
     club_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -508,10 +562,10 @@ async def remove_member_service(
     from app.dependencies import require_club_organizer
 
     await require_club_organizer(club_id, current_user, db)
-    club = await get_club_or_404(club_id, db)
+    club = await _lock_club_and_recheck_actor(club_id, current_user, db)
 
     repo = ClubRepository(db)
-    member = await repo.get_membership(club_id, user_id)
+    member = await _get_member_fresh(club_id, user_id, db)
     if member is None:
         raise AppError(404, "Member not found", "MEMBER_NOT_FOUND")
 
@@ -519,12 +573,9 @@ async def remove_member_service(
         raise AppError(400, "Cannot remove the club owner", "CANNOT_REMOVE_OWNER")
 
     if member.role == "organizer":
-        organizer_count = await db.execute(
-            select(func.count())
-            .select_from(ClubMember)
-            .where(ClubMember.club_id == club_id, ClubMember.role == "organizer")
-        )
-        if organizer_count.scalar_one() <= 1:
+        if user_id != current_user.id:
+            _require_owner_to_act_on_organizer(club, current_user)
+        if await _count_organizers(club_id, db) <= 1:
             raise AppError(400, "Cannot remove the last organizer", "LAST_ORGANIZER")
 
     await repo.remove_member(club_id, user_id)
@@ -543,7 +594,7 @@ async def ban_user_service(
     from app.dependencies import require_club_organizer
 
     await require_club_organizer(club_id, current_user, db)
-    club = await get_club_or_404(club_id, db)
+    club = await _lock_club_and_recheck_actor(club_id, current_user, db)
 
     user_result = await db.execute(select(User).where(User.id == user_id))
     if not user_result.scalar_one_or_none():
@@ -551,16 +602,14 @@ async def ban_user_service(
 
     if club.organizer_id == user_id:
         raise AppError(400, "Cannot ban the club owner", "CANNOT_REMOVE_OWNER")
+    if user_id == current_user.id:
+        raise AppError(400, "Cannot ban yourself", "CANNOT_BAN_SELF")
 
     repo = ClubRepository(db)
-    target_member = await repo.get_membership(club_id, user_id)
+    target_member = await _get_member_fresh(club_id, user_id, db)
     if target_member is not None and target_member.role == "organizer":
-        organizer_count = await db.execute(
-            select(func.count())
-            .select_from(ClubMember)
-            .where(ClubMember.club_id == club_id, ClubMember.role == "organizer")
-        )
-        if organizer_count.scalar_one() <= 1:
+        _require_owner_to_act_on_organizer(club, current_user)
+        if await _count_organizers(club_id, db) <= 1:
             raise AppError(400, "Cannot ban the last organizer", "LAST_ORGANIZER")
 
     # M-7: compute expires_at from duration; None = permanent ban
@@ -627,10 +676,9 @@ async def change_member_role_service(
     from app.dependencies import require_club_organizer
 
     await require_club_organizer(club_id, current_user, db)
-    club = await get_club_or_404(club_id, db)
+    club = await _lock_club_and_recheck_actor(club_id, current_user, db)
 
-    repo = ClubRepository(db)
-    member = await repo.get_membership(club_id, user_id)
+    member = await _get_member_fresh(club_id, user_id, db)
     if member is None:
         raise AppError(404, "Member not found", "MEMBER_NOT_FOUND")
 
@@ -640,12 +688,9 @@ async def change_member_role_service(
     if new_role == "member":
         if club.organizer_id == user_id:
             raise AppError(400, "Cannot demote the club owner", "CANNOT_DEMOTE_OWNER")
-        organizer_count = await db.execute(
-            select(func.count())
-            .select_from(ClubMember)
-            .where(ClubMember.club_id == club_id, ClubMember.role == "organizer")
-        )
-        if organizer_count.scalar_one() <= 1:
+        if user_id != current_user.id:
+            _require_owner_to_act_on_organizer(club, current_user)
+        if await _count_organizers(club_id, db) <= 1:
             raise AppError(400, "Cannot demote the last organizer", "LAST_ORGANIZER")
 
     member.role = new_role

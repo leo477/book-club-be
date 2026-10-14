@@ -421,8 +421,8 @@ async def test_ban_member_owner_blocked(async_client, register_user, auth_header
 
 
 @pytest.mark.asyncio
-async def test_ban_member_last_organizer_blocked(async_client, register_user, auth_headers, make_member, db_session):
-    """Bug 3: banning the sole remaining organizer (a non-owner) must be blocked."""
+async def test_ban_member_self_ban_blocked(async_client, register_user, auth_headers, make_member, db_session):
+    """SCRUM-92: an organizer cannot ban themselves (the ban could not be lifted by them)."""
     import uuid as _uuid
 
     from sqlalchemy import delete
@@ -452,7 +452,7 @@ async def test_ban_member_last_organizer_blocked(async_client, register_user, au
         json={"duration": 1},
     )
     assert resp.status_code == 400
-    assert resp.json()["detail"]["code"] == "LAST_ORGANIZER"
+    assert resp.json()["detail"]["code"] == "CANNOT_BAN_SELF"
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,7 @@ from app.services.club_service import (
     leave_club_service,
     list_clubs_service,
     list_my_clubs_service,
+    lock_club_for_update,
     request_join_club_service,
 )
 from app.services.event_service import build_event_responses_bulk
@@ -181,6 +182,9 @@ async def delete_club(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await require_club_organizer(club_id, current_user, db)
+    club = await lock_club_for_update(club_id, db)
+    if club.organizer_id != current_user.id:
+        raise AppError(403, "Only the club owner can delete the club", "OWNER_ONLY")
     await delete_club_cascade(club_id, db)
     await revalidate_club(club_id, db)
 
