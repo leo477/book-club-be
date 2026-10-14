@@ -74,6 +74,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "postgres: needs a real Postgres (set TEST_POSTGRES_URL); skipped when unset",
+]
 
 [tool.coverage.run]
 source = ["app"]
