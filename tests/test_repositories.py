@@ -869,3 +869,23 @@ async def test_quiz_repo_attempts(db_session):
     since_rows = await repo.get_attempts_with_users_since(quiz.id, past)
     assert len(since_rows) == 1
     assert await repo.get_attempts_with_users_since(quiz.id, future) == []
+
+
+@pytest.mark.asyncio
+async def test_club_repo_count_upcoming_events_uses_valid_statuses(db_session):
+    organizer = _user()
+    db_session.add(organizer)
+    club = _club(organizer_id=organizer.id)
+    db_session.add(club)
+    db_session.add_all(
+        [
+            _event(club_id=club.id, date_offset_days=3, status="scheduled", title="A"),
+            _event(club_id=club.id, date_offset_days=4, status="rescheduled", title="B"),
+            _event(club_id=club.id, date_offset_days=5, status="cancelled", title="C"),
+            _event(club_id=club.id, date_offset_days=-2, status="held", title="D"),
+            _event(club_id=club.id, date_offset_days=-3, status="scheduled", title="E"),
+        ]
+    )
+    await db_session.commit()
+
+    assert await ClubRepository(db_session).count_upcoming_events(club.id, datetime.now(UTC)) == 2
