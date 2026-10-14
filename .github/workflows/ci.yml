@@ -91,6 +91,42 @@ jobs:
         with:
           name: pytest-results-${{ github.sha }}
           path: .pytest_cache/
+
+  test-postgres:
+    name: test-postgres
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: bookclub_pgtest
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d bookclub_pgtest"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync
+      # The tests apply `alembic upgrade head` themselves, then hit real Postgres enums/casts.
+      - name: Run Postgres-marked tests
+        run: uv run pytest -m postgres -v --tb=short
+        env:
+          TEST_POSTGRES_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_pgtest
+          SECRET_KEY: test-secret-key-for-ci-pipeline-32chars
+          ENV: test
+
   sonarcloud:
     name: SonarCloud
     needs: test
