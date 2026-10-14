@@ -312,7 +312,7 @@
 Покинути клуб.
 
 **Response 204**
-**Errors:** 404, 409 not a member
+**Errors:** 400 `OWNER_CANNOT_LEAVE` (the owner can never leave), 400 `LAST_ORGANIZER`, 404, 409 not a member
 
 ---
 
@@ -338,10 +338,10 @@
 ---
 
 ### DELETE `/api/v1/clubs/:id/members/:userId`
-Кікнути учасника (тільки організатор).
+Кікнути учасника (тільки організатор). Кікнути іншого організатора може лише власник клубу (`club.organizer_id`).
 
 **Response 204**
-**Errors:** 403, 404
+**Errors:** 403 (`FORBIDDEN`, або `OWNER_ONLY` для цілі-організатора), 400 `CANNOT_REMOVE_OWNER` / `LAST_ORGANIZER`, 404
 
 ---
 
@@ -364,7 +364,23 @@
   "bannedBy": "string"
 }
 ```
-**Errors:** 403, 404
+Забанити іншого організатора може лише власник клубу.
+**Errors:** 403 (`FORBIDDEN`, або `OWNER_ONLY` для цілі-організатора), 400 `CANNOT_REMOVE_OWNER` / `CANNOT_BAN_SELF` / `LAST_ORGANIZER`, 404
+
+---
+
+### PATCH `/api/v1/clubs/:id/members/:userId/role`
+Змінити роль учасника (`member` | `organizer`). Підвищити до організатора може будь-який організатор; понизити організатора може лише власник клубу.
+
+**Errors:** 403 (`FORBIDDEN`, або `OWNER_ONLY`), 400 `CANNOT_DEMOTE_OWNER` / `LAST_ORGANIZER`, 404
+
+---
+
+### DELETE `/api/v1/clubs/:id`
+Видалити клуб. Лише власник клубу (`club.organizer_id`).
+
+**Response 204**
+**Errors:** 403 (`FORBIDDEN` для не-організатора, `OWNER_ONLY` для іншого організатора), 404
 
 ---
 
