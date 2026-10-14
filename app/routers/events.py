@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,7 @@ from app.services.event_service import (
     get_event_or_404,
     set_event_winner_service,
 )
-from app.services.revalidate import schedule_club_revalidate
+from app.services.revalidate import revalidate_club
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
@@ -132,7 +132,6 @@ async def update_event(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
-    background_tasks: BackgroundTasks,
 ) -> EventResponse:
     event = await get_event_or_404(event_id, db)
     updates = body.model_dump(exclude_unset=True)
@@ -151,8 +150,10 @@ async def update_event(
         await _delete_event_chat_room(event_id, db)
     await db.commit()
     await db.refresh(event)
-    schedule_club_revalidate(background_tasks, event.club_id)
-    return await build_event_response(event, db, current_user.id)
+    club_id = event.club_id
+    response = await build_event_response(event, db, current_user.id)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{event_id}/reschedule")
@@ -162,7 +163,6 @@ async def reschedule_event(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
-    background_tasks: BackgroundTasks,
 ) -> EventResponse:
     event = await get_event_or_404(event_id, db)
     event.date = body.newDate
@@ -173,8 +173,10 @@ async def reschedule_event(
         event.city = body.newCity
     await db.commit()
     await db.refresh(event)
-    schedule_club_revalidate(background_tasks, event.club_id)
-    return await build_event_response(event, db, current_user.id)
+    club_id = event.club_id
+    response = await build_event_response(event, db, current_user.id)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{event_id}/cancel")
@@ -183,7 +185,6 @@ async def cancel_event(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
-    background_tasks: BackgroundTasks,
 ) -> EventResponse:
     event = await get_event_or_404(event_id, db)
     event.status = "cancelled"
@@ -191,8 +192,10 @@ async def cancel_event(
     await _delete_event_chat_room(event_id, db)
     await db.commit()
     await db.refresh(event)
-    schedule_club_revalidate(background_tasks, event.club_id)
-    return await build_event_response(event, db, current_user.id)
+    club_id = event.club_id
+    response = await build_event_response(event, db, current_user.id)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{event_id}/winner")
@@ -202,8 +205,7 @@ async def set_event_winner(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
-    background_tasks: BackgroundTasks,
 ) -> EventResponse:
     result = await set_event_winner_service(event_id, body.winner_id, current_user.id, db)
-    schedule_club_revalidate(background_tasks, result.clubId)
+    await revalidate_club(result.clubId, db)
     return result
