@@ -141,6 +141,7 @@ async def test_randomizer_history_non_member_forbidden(async_client, register_us
 
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=outsider_headers)
     assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio
@@ -157,6 +158,7 @@ async def test_create_randomizer_session_non_member_forbidden(async_client, regi
         f"/api/v1/clubs/{club_id}/randomizer/sessions", headers=outsider_headers, json=payload
     )
     assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio
@@ -273,3 +275,123 @@ async def test_randomizer_history_serves_legacy_oversized_rows(async_client, reg
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=headers)
     assert resp.status_code == 200
     assert resp.json()[0]["candidates"][0]["displayName"] == "n" * 150
+
+
+@pytest.mark.asyncio
+async def test_randomizer_plain_member_forbidden_on_history_and_create(
+    async_client, register_user, auth_headers, make_member
+):
+    """SCRUM-138: randomizer is organizer-only; a plain member gets 403 on both routes."""
+    _headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    bob_headers = await auth_headers(email="bob@example.com", displayName="Bob")
+    await make_member(club_id, bob_headers)
+    bob = await _me(async_client, bob_headers)
+
+    hist = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=bob_headers)
+    assert hist.status_code == 403
+    assert hist.json()["detail"]["code"] == "FORBIDDEN"
+    payload = {"purpose": "p", "candidates": [{"userId": bob["id"], "displayName": "Bob"}]}
+    resp = await async_client.post(_url(club_id), headers=bob_headers, json=payload)
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_randomizer_promoted_organizer_allowed(async_client, register_user, auth_headers, make_member):
+    """SCRUM-138: a non-owner member with the organizer role can read history and create sessions."""
+    _headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    org2_headers = await auth_headers(email="org2@example.com", displayName="Org2")
+    await make_member(club_id, org2_headers, role="organizer")
+    org2 = await _me(async_client, org2_headers)
+
+    payload = {"purpose": "p", "candidates": [{"userId": org2["id"], "displayName": "Org2"}]}
+    resp = await async_client.post(_url(club_id), headers=org2_headers, json=payload)
+    assert resp.status_code == 201
+    hist = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=org2_headers)
+    assert hist.status_code == 200
+    assert len(hist.json()) == 1
+
+
+async def _assert_forbidden_both(async_client, club_id, headers, user_id):
+    hist = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=headers)
+    assert hist.status_code == 403
+    assert hist.json()["detail"]["code"] == "FORBIDDEN"
+    payload = {"purpose": "p", "candidates": [{"userId": user_id, "displayName": "x"}]}
+    resp = await async_client.post(_url(club_id), headers=headers, json=payload)
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "FORBIDDEN"
+
+
+async def _session_count(db_session):
+    from sqlalchemy import func, select
+
+    return (await db_session.execute(select(func.count()).select_from(RandomizerSession))).scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_randomizer_owner_allowed(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    me = await _me(async_client, headers)
+    payload = {"purpose": "p", "candidates": [{"userId": me["id"], "displayName": "x"}]}
+    assert (await async_client.post(_url(club_id), headers=headers, json=payload)).status_code == 201
+    hist = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=headers)
+    assert hist.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_randomizer_banned_member_forbidden(async_client, register_user, auth_headers, make_member):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    bob_headers = await auth_headers(email="bob@example.com", displayName="Bob")
+    await make_member(club_id, bob_headers)
+    bob = await _me(async_client, bob_headers)
+    ban = await async_client.post(
+        f"/api/v1/clubs/{club_id}/members/{bob['id']}/ban", headers=headers, json={"duration": "permanent"}
+    )
+    assert ban.status_code == 201
+    await _assert_forbidden_both(async_client, club_id, bob_headers, bob["id"])
+
+
+@pytest.mark.asyncio
+async def test_randomizer_demoted_organizer_forbidden(async_client, register_user, auth_headers, make_member):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    org2_headers = await auth_headers(email="org2@example.com", displayName="Org2")
+    await make_member(club_id, org2_headers, role="organizer")
+    org2 = await _me(async_client, org2_headers)
+    hist = await async_client.get(f"/api/v1/clubs/{club_id}/randomizer/history", headers=org2_headers)
+    assert hist.status_code == 200
+    demote = await async_client.patch(
+        f"/api/v1/clubs/{club_id}/members/{org2['id']}/role", headers=headers, json={"role": "member"}
+    )
+    assert demote.status_code == 200
+    await _assert_forbidden_both(async_client, club_id, org2_headers, org2["id"])
+
+
+@pytest.mark.asyncio
+async def test_randomizer_nonexistent_club_forbidden(async_client, register_user, auth_headers):
+    headers, _club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    me = await _me(async_client, headers)
+    await _assert_forbidden_both(async_client, str(uuid.uuid4()), headers, me["id"])
+
+
+@pytest.mark.asyncio
+async def test_randomizer_pending_join_request_forbidden(async_client, register_user, auth_headers):
+    _headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    bob_headers = await auth_headers(email="bob@example.com", displayName="Bob")
+    bob = await _me(async_client, bob_headers)
+    join = await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=bob_headers)
+    assert join.status_code == 200
+    await _assert_forbidden_both(async_client, club_id, bob_headers, bob["id"])
+
+
+@pytest.mark.asyncio
+async def test_randomizer_rejected_post_persists_nothing(
+    async_client, register_user, auth_headers, make_member, db_session
+):
+    _headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    bob_headers = await auth_headers(email="bob@example.com", displayName="Bob")
+    await make_member(club_id, bob_headers)
+    bob = await _me(async_client, bob_headers)
+    payload = {"purpose": "p", "candidates": [{"userId": bob["id"], "displayName": "Bob"}]}
+    resp = await async_client.post(_url(club_id), headers=bob_headers, json=payload)
+    assert resp.status_code == 403
+    assert await _session_count(db_session) == 0
