@@ -42,9 +42,18 @@ async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSessio
     return ban is not None
 
 
-async def list_chat_rooms_service(club_id: uuid.UUID, db: AsyncSession) -> list[ChatRoomResponse]:
+async def list_chat_rooms_service(club_id: uuid.UUID, current_user: User, db: AsyncSession) -> list[ChatRoomResponse]:
     repo = ChatRepository(db)
+    membership = await repo.get_membership(club_id, current_user.id)
+    if membership is None:
+        raise AppError(403, "Access denied", "FORBIDDEN")
+
     rooms = await repo.list_rooms(club_id)
+    if membership.role != "organizer":
+        attended = set(
+            (await db.scalars(select(EventAttendee.event_id).where(EventAttendee.user_id == current_user.id))).all()
+        )
+        rooms = [r for r in rooms if r.event_id is None or r.event_id in attended]
     return [ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms]
 
 

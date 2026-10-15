@@ -110,9 +110,9 @@ manager = ConnectionManager()
 async def get_chat_rooms(
     club_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    _current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[ChatRoomResponse]:
-    return await list_chat_rooms_service(club_id, db)
+    return await list_chat_rooms_service(club_id, current_user, db)
 
 
 @router.post("/clubs/{club_id}/chat/rooms", status_code=status.HTTP_201_CREATED)
