@@ -12,7 +12,7 @@ from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
 from app.models.event import Event, EventAttendee
 from app.models.user import User
-from app.repositories import ChatRepository, ClubRepository
+from app.repositories import ChatRepository, ClubRepository, EventRepository
 from app.schemas.chat import (
     BanFromRoomRequest,
     ChatMessageResponse,
@@ -40,12 +40,19 @@ async def require_club_member(club_id: uuid.UUID, user: User, db: AsyncSession) 
         raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
 
 
+async def can_access_room(room: ChatRoom, user_id: uuid.UUID, db: AsyncSession) -> bool:
+    """Club members may use club rooms; event rooms also need organizer status or an attendee row."""
+    membership = await ChatRepository(db).get_membership(room.club_id, user_id)
+    if membership is None:
+        return False
+    if room.event_id is None or membership.role == "organizer":
+        return True
+    return await EventRepository(db).get_attendance(room.event_id, user_id) is not None
+
+
 async def require_room_member(room_id: uuid.UUID, user: User, db: AsyncSession) -> ChatRoom:
-    repo = ChatRepository(db)
-    room = await repo.get_room(room_id)
-    if room is None:
-        raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
-    if await repo.get_membership(room.club_id, user.id) is None:
+    room = await ChatRepository(db).get_room(room_id)
+    if room is None or not await can_access_room(room, user.id, db):
         raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
     return room
 
