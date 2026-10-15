@@ -34,7 +34,8 @@ async def _event_room(async_client, register_user, auth_headers, make_member, ta
 
     attendee = await _user(register_user, auth_headers, f"er_att_{tag}@example.com")
     attendee_id = await make_member(club_id, attendee)
-    assert (await async_client.post(f"/api/v1/events/{event_id}/attend", headers=attendee)).status_code == 201
+    resp = await async_client.post(f"/api/v1/events/{event_id}/attend", headers=attendee)
+    assert resp.status_code == 201
     non_attendee = await _user(register_user, auth_headers, f"er_non_{tag}@example.com")
     non_attendee_id = await make_member(club_id, non_attendee)
     outsider = await _user(register_user, auth_headers, f"er_out_{tag}@example.com")
@@ -95,13 +96,16 @@ async def test_event_room_attendee_allowed(async_client, register_user, auth_hea
     ctx = await _event_room(async_client, register_user, auth_headers, make_member, "att")
     h = ctx["attendee"]
     base = f"/api/v1/chat/rooms/{ctx['room']}"
-    assert (await async_client.get(f"{base}/messages", headers=h)).status_code == 200
+    resp = await async_client.get(f"{base}/messages", headers=h)
+    assert resp.status_code == 200
     sent = await async_client.post(f"{base}/messages", headers=h, json={"text": "hi"})
     assert sent.status_code == 201
-    assert (await async_client.get(f"{base}/unread-count", headers=h)).status_code == 200
+    resp = await async_client.get(f"{base}/unread-count", headers=h)
+    assert resp.status_code == 200
     read = await async_client.post(f"{base}/read", headers=h, json={"last_read_message_id": sent.json()["id"]})
     assert read.status_code == 204
-    assert (await async_client.delete(f"{base}/messages/{sent.json()['id']}", headers=h)).status_code == 204
+    resp = await async_client.delete(f"{base}/messages/{sent.json()['id']}", headers=h)
+    assert resp.status_code == 204
     # non-organizer attendee reaches the organizer check, not the room check
     ban = await async_client.post(
         f"{base}/ban", headers=h, json={"user_id": ctx["non_attendee_id"], "duration_seconds": 60}
@@ -115,18 +119,24 @@ async def test_event_room_organizer_without_attendance_allowed(async_client, reg
     org = ctx["org"]
     base = f"/api/v1/chat/rooms/{ctx['room']}"
     # the organizer is auto-registered as attendee at event creation; drop that row
-    assert (await async_client.delete(f"/api/v1/events/{ctx['event']}/attend", headers=org)).status_code == 204
-    assert (await async_client.get(f"{base}/messages", headers=org)).status_code == 200
-    assert (await async_client.post(f"{base}/messages", headers=org, json={"text": "o"})).status_code == 201
-    assert (await async_client.get(f"{base}/unread-count", headers=org)).status_code == 200
+    resp = await async_client.delete(f"/api/v1/events/{ctx['event']}/attend", headers=org)
+    assert resp.status_code == 204
+    resp = await async_client.get(f"{base}/messages", headers=org)
+    assert resp.status_code == 200
+    resp = await async_client.post(f"{base}/messages", headers=org, json={"text": "o"})
+    assert resp.status_code == 201
+    resp = await async_client.get(f"{base}/unread-count", headers=org)
+    assert resp.status_code == 200
     read = await async_client.post(f"{base}/read", headers=org, json={"last_read_message_id": ctx["msg"]})
     assert read.status_code == 204
     ban = await async_client.post(
         f"{base}/ban", headers=org, json={"user_id": ctx["attendee_id"], "duration_seconds": 60}
     )
     assert ban.status_code == 204
-    assert (await async_client.delete(f"{base}/messages/{ctx['msg']}", headers=org)).status_code == 204
-    assert (await async_client.delete(base, headers=org)).status_code == 204
+    resp = await async_client.delete(f"{base}/messages/{ctx['msg']}", headers=org)
+    assert resp.status_code == 204
+    resp = await async_client.delete(base, headers=org)
+    assert resp.status_code == 204
 
 
 @pytest.mark.asyncio
@@ -151,7 +161,8 @@ async def test_unattend_loses_access_and_kicks_socket(async_client, register_use
         resp = await async_client.delete(f"/api/v1/events/{ctx['event']}/attend", headers=ctx["attendee"])
         assert resp.status_code == 204
         sock.close.assert_awaited_once_with(code=1008)
-        assert (await async_client.get(f"{base}/messages", headers=ctx["attendee"])).status_code == 404
+        resp = await async_client.get(f"{base}/messages", headers=ctx["attendee"])
+        assert resp.status_code == 404
     finally:
         chat_manager.active_connections.pop(ctx["room"], None)
         chat_manager.room_presence.pop(ctx["room"], None)
@@ -197,7 +208,8 @@ async def test_ws_event_room_allowed(async_client, register_user, auth_headers, 
     ctx = await _event_room(async_client, register_user, auth_headers, make_member, f"wa{who}")
     ws = await _handshake(ctx, who)
     try:
-        assert (await ws.recv_json())["type"] == "presence_snapshot"
+        frame = await ws.recv_json()
+        assert frame["type"] == "presence_snapshot"
     finally:
         await ws.stop()
         chat_manager.active_connections.pop(ctx["room"], None)
@@ -212,7 +224,8 @@ async def test_ws_closed_when_membership_removed_after_handshake(
     ctx = await _event_room(async_client, register_user, auth_headers, make_member, "s83")
     ws = await _handshake(ctx, "attendee")
     try:
-        assert (await ws.recv_json())["type"] == "presence_snapshot"
+        frame = await ws.recv_json()
+        assert frame["type"] == "presence_snapshot"
         resp = await async_client.delete(
             f"/api/v1/clubs/{ctx['club']}/members/{ctx['attendee_id']}", headers=ctx["org"]
         )
@@ -238,4 +251,5 @@ async def test_club_room_open_to_any_member_regardless_of_attendance(
     for who in ("attendee", "non_attendee"):
         resp = await async_client.get(f"/api/v1/chat/rooms/{rid}/messages", headers=ctx[who])
         assert resp.status_code == 200, who
-    assert (await async_client.get(f"/api/v1/chat/rooms/{rid}/messages", headers=ctx["outsider"])).status_code == 404
+    resp = await async_client.get(f"/api/v1/chat/rooms/{rid}/messages", headers=ctx["outsider"])
+    assert resp.status_code == 404
