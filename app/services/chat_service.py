@@ -63,9 +63,25 @@ async def check_user_ban(room_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSessio
 
 
 async def list_chat_rooms_service(club_id: uuid.UUID, current_user: User, db: AsyncSession) -> list[ChatRoomResponse]:
-    await require_club_member(club_id, current_user, db)
     repo = ChatRepository(db)
+    membership = await repo.get_membership(club_id, current_user.id)
+    if membership is None:
+        raise AppError(404, "Chat room not found", "ROOM_NOT_FOUND")
+
     rooms = await repo.list_rooms(club_id)
+    event_ids = [r.event_id for r in rooms if r.event_id]
+    if membership.role != "organizer" and event_ids:
+        attended = set(
+            (
+                await db.scalars(
+                    select(EventAttendee.event_id).where(
+                        EventAttendee.user_id == current_user.id,
+                        EventAttendee.event_id.in_(event_ids),
+                    )
+                )
+            ).all()
+        )
+        rooms = [r for r in rooms if r.event_id is None or r.event_id in attended]
     return [ChatRoomResponse(id=str(r.id), name=r.name, eventId=str(r.event_id) if r.event_id else None) for r in rooms]
 
 
