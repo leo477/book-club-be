@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -49,6 +50,19 @@ def _array_result(self, dialect, coltype):
 
 ARRAY.bind_processor = _array_bind  # type: ignore[method-assign]
 ARRAY.result_processor = _array_result  # type: ignore[method-assign]
+
+POSTGRES_TEST_URL = os.environ.get("TEST_POSTGRES_URL")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip `postgres`-marked tests unless TEST_POSTGRES_URL points at a real database."""
+    if POSTGRES_TEST_URL:
+        return
+    skip = pytest.mark.skip(reason="TEST_POSTGRES_URL not set")
+    for item in items:
+        if "postgres" in item.keywords:
+            item.add_marker(skip)
+
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 TEST_JWT_SECRET = "test-supabase-jwt-secret-32characters!!"

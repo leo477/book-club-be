@@ -245,13 +245,8 @@ class ClubRepository:
         result = await self.db.execute(
             select(func.count(Event.id)).where(
                 Event.club_id == club_id,
-                or_(
-                    Event.status == "upcoming",
-                    and_(
-                        Event.date > now,
-                        Event.status.in_(["scheduled", "active", "rescheduled"]),
-                    ),
-                ),
+                Event.date > now,
+                Event.status.in_(["scheduled", "active", "rescheduled"]),
             )
         )
         return int(result.scalar() or 0)

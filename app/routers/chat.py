@@ -29,6 +29,7 @@ from app.services.auth_service import decode_access_token
 from app.services.chat_connections import WS_POLICY_VIOLATION, MessagePayload, manager
 from app.services.chat_service import (
     ban_from_room_service,
+    can_access_room,
     create_chat_room_service,
     create_event_chat_room_service,
     delete_chat_room_service,
@@ -214,7 +215,7 @@ async def _ws_authenticate(
     if not room:
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
-    if await repo.get_membership(room.club_id, user.id) is None:
+    if not await can_access_room(room, user.id, db):
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
     if await repo.get_active_ban(room_uuid, user.id, datetime.now(UTC)) is not None:

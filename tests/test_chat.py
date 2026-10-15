@@ -276,3 +276,81 @@ async def test_ws_ticket_auth_accepted(async_client, register_user, auth_headers
             pass
 
     mock_redis.getdel.assert_awaited_once_with("ws:ticket:tix")
+
+
+async def _club_with_event(async_client, register_user, auth_headers):
+    org_headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    ev = await async_client.post(
+        f"/api/v1/clubs/{club_id}/events",
+        headers=org_headers,
+        json={"title": "Secret Event", "date": "2030-01-01T18:00:00", "city": "Kyiv"},
+    )
+    return org_headers, club_id, ev.json()["id"]
+
+
+async def _user(register_user, auth_headers, email):
+    await register_user(email=email)
+    return await auth_headers(email=email)
+
+
+@pytest.mark.asyncio
+async def test_list_chat_rooms_non_member_not_found(async_client, register_user, auth_headers):
+    _, club_id, _ = await _club_with_event(async_client, register_user, auth_headers)
+    outsider = await _user(register_user, auth_headers, "rooms_outsider@example.com")
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=outsider)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_chat_rooms_banned_user_not_found(async_client, register_user, auth_headers, make_member):
+    org_headers, club_id, _ = await _club_with_event(async_client, register_user, auth_headers)
+    member = await _user(register_user, auth_headers, "rooms_banned@example.com")
+    user_id = await make_member(club_id, member)
+    assert (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=member)).status_code == 200
+    ban = await async_client.post(
+        f"/api/v1/clubs/{club_id}/members/{user_id}/ban", headers=org_headers, json={"duration": "permanent"}
+    )
+    assert ban.status_code == 201
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=member)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_chat_rooms_member_hides_unattended_event_room(
+    async_client, register_user, auth_headers, make_member
+):
+    _, club_id, event_id = await _club_with_event(async_client, register_user, auth_headers)
+    member = await _user(register_user, auth_headers, "rooms_member@example.com")
+    await make_member(club_id, member)
+    rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=member)).json()
+    assert len(rooms) == 1
+    assert rooms[0]["eventId"] is None
+
+    attend = await async_client.post(f"/api/v1/events/{event_id}/attend", headers=member)
+    assert attend.status_code == 201
+    rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=member)).json()
+    assert {r["eventId"] for r in rooms} == {None, event_id}
+
+
+@pytest.mark.asyncio
+async def test_list_chat_rooms_organizer_sees_all(async_client, register_user, auth_headers):
+    org_headers, club_id, event_id = await _club_with_event(async_client, register_user, auth_headers)
+    rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=org_headers)).json()
+    assert {r["eventId"] for r in rooms} == {None, event_id}
+
+
+@pytest.mark.asyncio
+async def test_list_chat_rooms_pending_join_request_not_found(async_client, register_user, auth_headers):
+    _, club_id, _ = await _club_with_event(async_client, register_user, auth_headers)
+    applicant = await _user(register_user, auth_headers, "rooms_pending@example.com")
+    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=applicant)
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=applicant)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_chat_rooms_organizer_non_attendee_sees_event_room(async_client, register_user, auth_headers):
+    org_headers, club_id, event_id = await _club_with_event(async_client, register_user, auth_headers)
+    room = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=org_headers)
+    rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=org_headers)).json()
+    assert any(r["id"] == room.json()["id"] and r["eventId"] == event_id for r in rooms)
