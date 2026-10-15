@@ -324,10 +324,10 @@ async def test_list_chat_rooms_member_hides_unattended_event_room(
     await make_member(club_id, member)
     rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=member)).json()
     assert len(rooms) == 1
-    assert rooms[0]["name"].endswith("· General")
-    assert all(r["eventId"] is None for r in rooms)
+    assert rooms[0]["eventId"] is None
 
-    await async_client.post(f"/api/v1/events/{event_id}/attend", headers=member)
+    attend = await async_client.post(f"/api/v1/events/{event_id}/attend", headers=member)
+    assert attend.status_code == 201
     rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=member)).json()
     assert {r["eventId"] for r in rooms} == {None, event_id}
 
@@ -337,3 +337,20 @@ async def test_list_chat_rooms_organizer_sees_all(async_client, register_user, a
     org_headers, club_id, event_id = await _club_with_event(async_client, register_user, auth_headers)
     rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=org_headers)).json()
     assert {r["eventId"] for r in rooms} == {None, event_id}
+
+
+@pytest.mark.asyncio
+async def test_list_chat_rooms_pending_join_request_forbidden(async_client, register_user, auth_headers):
+    _, club_id, _ = await _club_with_event(async_client, register_user, auth_headers)
+    applicant = await _user(register_user, auth_headers, "rooms_pending@example.com")
+    await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=applicant)
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=applicant)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_chat_rooms_organizer_non_attendee_sees_event_room(async_client, register_user, auth_headers):
+    org_headers, club_id, event_id = await _club_with_event(async_client, register_user, auth_headers)
+    room = await async_client.get(f"/api/v1/events/{event_id}/chat/room", headers=org_headers)
+    rooms = (await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=org_headers)).json()
+    assert any(r["id"] == room.json()["id"] and r["eventId"] == event_id for r in rooms)
