@@ -41,6 +41,13 @@ class ClubResponse(BaseModel):
     currentChampion: ChampionInfo | None = None
 
 
+class ClubStubResponse(BaseModel):
+    id: str
+    name: str
+    isPublic: bool = False
+    memberCount: int
+
+
 class MemberStatRow(BaseModel):
     userId: str
     displayName: str

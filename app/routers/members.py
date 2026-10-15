@@ -31,8 +31,10 @@ from app.services.club_service import (
     list_join_requests_service,
     reject_join_request_service,
     remove_member_service,
+    require_club_viewable,
     unban_user_service,
 )
+from app.services.revalidate import revalidate_club
 
 router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 
@@ -41,11 +43,12 @@ router = APIRouter(prefix="/api/v1/clubs/{club_id}", tags=["members"])
 async def list_members(
     club_id: uuid.UUID,
     response: Response,
-    _current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[MemberResponse]:
+    await require_club_viewable(club_id, current_user, db)
     total_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
     total = total_result.scalar_one()
     response.headers["X-Total-Count"] = str(total)
@@ -83,6 +86,7 @@ async def remove_member(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await remove_member_service(club_id, user_id, current_user, db)
+    await revalidate_club(club_id, db)
 
 
 @router.post("/members/{user_id}/ban", status_code=status.HTTP_201_CREATED)
@@ -93,7 +97,9 @@ async def ban_member(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> BanResponse:
-    return await ban_user_service(club_id, user_id, body, current_user, db)
+    response = await ban_user_service(club_id, user_id, body, current_user, db)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.delete("/bans/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -104,6 +110,7 @@ async def unban_member(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await unban_user_service(club_id, user_id, current_user, db)
+    await revalidate_club(club_id, db)
 
 
 @router.patch("/members/{user_id}/role")
@@ -119,7 +126,7 @@ async def change_member_role(
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one()
     socials = {k: v for k, v in build_socials(user).items() if v is not None} if user.socials_public else None
-    return MemberResponse(
+    response = MemberResponse(
         userId=str(user.id),
         displayName=user.display_name,
         avatarUrl=user.avatar_url,
@@ -127,6 +134,8 @@ async def change_member_role(
         socials=socials,
         socialsPublic=user.socials_public,
     )
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.get("/bans")
@@ -202,6 +211,7 @@ async def approve_join_request(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> dict[str, int]:
     member_count = await approve_join_request_service(club_id, user_id, current_user, db)
+    await revalidate_club(club_id, db)
     return {"memberCount": member_count}
 
 
@@ -213,6 +223,7 @@ async def reject_join_request(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await reject_join_request_service(club_id, user_id, current_user, db)
+    await revalidate_club(club_id, db)
 
 
 @router.get("/my-membership")

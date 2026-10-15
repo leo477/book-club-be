@@ -11,6 +11,7 @@ import structlog
 from fastapi import APIRouter, Body, Cookie, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import EmailStr
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from supabase_auth.types import User as SupabaseUser
@@ -477,8 +478,16 @@ async def logout(
     return response
 
 
+def _user_rate_key(request: Request) -> str:
+    user = getattr(request.state, "_current_user", None)
+    return str(user.id) if user is not None else get_remote_address(request)
+
+
+# noinspection PyUnusedLocal
 @router.post("/ws-ticket", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute", key_func=_user_rate_key)
 async def create_ws_ticket(
+    request: Request,  # slowapi requires this exact parameter name
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> WsTicketResponse:

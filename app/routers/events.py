@@ -5,11 +5,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, get_optional_user, require_event_club_organizer
+from app.exceptions import AppError
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan, MessageRead
+from app.models.club import Club
 from app.models.club_member import ClubMember
 from app.models.event import Event
 from app.models.user import User
@@ -20,6 +22,7 @@ from app.schemas.events import (
     RescheduleEventRequest,
     SetWinnerRequest,
 )
+from app.services.club_service import can_view_club, get_club_or_404
 from app.services.event_service import (
     attend_event_service,
     build_event_response,
@@ -28,6 +31,7 @@ from app.services.event_service import (
     get_event_or_404,
     set_event_winner_service,
 )
+from app.services.revalidate import revalidate_club
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
@@ -64,6 +68,11 @@ async def list_events(
         filters.append(Event.city.ilike(f"%{escaped_city}%", escape="\\"))
     if club_id:
         filters.append(Event.club_id == club_id)
+    if current_user is None or current_user.role != "admin":
+        visible = [Event.club_id.in_(select(Club.id).where(Club.is_public.is_(True)))]
+        if current_user is not None:
+            visible.append(Event.club_id.in_(select(ClubMember.club_id).where(ClubMember.user_id == current_user.id)))
+        filters.append(or_(*visible))
     current_user_id = current_user.id if current_user else None
     return await fetch_enriched_event_list(filters, db, current_user_id, skip, limit)
 
@@ -91,6 +100,9 @@ async def get_event(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> EventResponse:
     event = await get_event_or_404(event_id, db)
+    club = await get_club_or_404(event.club_id, db)
+    if not await can_view_club(club, current_user, db):
+        raise AppError(404, "Event not found", "EVENT_NOT_FOUND")
     current_user_id = current_user.id if current_user else None
     return await build_event_response(event, db, current_user_id)
 
@@ -138,7 +150,10 @@ async def update_event(
         await _delete_event_chat_room(event_id, db)
     await db.commit()
     await db.refresh(event)
-    return await build_event_response(event, db, current_user.id)
+    club_id = event.club_id
+    response = await build_event_response(event, db, current_user.id)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{event_id}/reschedule")
@@ -158,7 +173,10 @@ async def reschedule_event(
         event.city = body.newCity
     await db.commit()
     await db.refresh(event)
-    return await build_event_response(event, db, current_user.id)
+    club_id = event.club_id
+    response = await build_event_response(event, db, current_user.id)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{event_id}/cancel")
@@ -174,7 +192,10 @@ async def cancel_event(
     await _delete_event_chat_room(event_id, db)
     await db.commit()
     await db.refresh(event)
-    return await build_event_response(event, db, current_user.id)
+    club_id = event.club_id
+    response = await build_event_response(event, db, current_user.id)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{event_id}/winner")
@@ -185,4 +206,6 @@ async def set_event_winner(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     _auth: Annotated[ClubMember, Depends(require_event_club_organizer)],
 ) -> EventResponse:
-    return await set_event_winner_service(event_id, body.winner_id, current_user.id, db)
+    result = await set_event_winner_service(event_id, body.winner_id, current_user.id, db)
+    await revalidate_club(result.clubId, db)
+    return result

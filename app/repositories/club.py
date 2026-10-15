@@ -100,6 +100,12 @@ class ClubRepository:
         await self.db.execute(
             delete(ClubMember).where(and_(ClubMember.club_id == club_id, ClubMember.user_id == user_id))
         )
+        future_club_events = select(Event.id).where(Event.club_id == club_id, Event.date > datetime.now(UTC))
+        await self.db.execute(
+            delete(EventAttendee).where(
+                EventAttendee.user_id == user_id, EventAttendee.event_id.in_(future_club_events)
+            )
+        )
 
     async def cascade_delete(self, club_id: uuid.UUID) -> None:
         room_ids_result = await self.db.execute(select(ChatRoom.id).where(ChatRoom.club_id == club_id))
@@ -239,13 +245,8 @@ class ClubRepository:
         result = await self.db.execute(
             select(func.count(Event.id)).where(
                 Event.club_id == club_id,
-                or_(
-                    Event.status == "upcoming",
-                    and_(
-                        Event.date > now,
-                        Event.status.in_(["scheduled", "active", "rescheduled"]),
-                    ),
-                ),
+                Event.date > now,
+                Event.status.in_(["scheduled", "active", "rescheduled"]),
             )
         )
         return int(result.scalar() or 0)

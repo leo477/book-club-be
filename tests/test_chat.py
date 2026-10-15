@@ -294,15 +294,15 @@ async def _user(register_user, auth_headers, email):
 
 
 @pytest.mark.asyncio
-async def test_list_chat_rooms_non_member_forbidden(async_client, register_user, auth_headers):
+async def test_list_chat_rooms_non_member_not_found(async_client, register_user, auth_headers):
     _, club_id, _ = await _club_with_event(async_client, register_user, auth_headers)
     outsider = await _user(register_user, auth_headers, "rooms_outsider@example.com")
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=outsider)
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_list_chat_rooms_banned_user_forbidden(async_client, register_user, auth_headers, make_member):
+async def test_list_chat_rooms_banned_user_not_found(async_client, register_user, auth_headers, make_member):
     org_headers, club_id, _ = await _club_with_event(async_client, register_user, auth_headers)
     member = await _user(register_user, auth_headers, "rooms_banned@example.com")
     user_id = await make_member(club_id, member)
@@ -312,7 +312,7 @@ async def test_list_chat_rooms_banned_user_forbidden(async_client, register_user
     )
     assert ban.status_code == 201
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=member)
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -340,12 +340,12 @@ async def test_list_chat_rooms_organizer_sees_all(async_client, register_user, a
 
 
 @pytest.mark.asyncio
-async def test_list_chat_rooms_pending_join_request_forbidden(async_client, register_user, auth_headers):
+async def test_list_chat_rooms_pending_join_request_not_found(async_client, register_user, auth_headers):
     _, club_id, _ = await _club_with_event(async_client, register_user, auth_headers)
     applicant = await _user(register_user, auth_headers, "rooms_pending@example.com")
     await async_client.post(f"/api/v1/clubs/{club_id}/join", headers=applicant)
     resp = await async_client.get(f"/api/v1/clubs/{club_id}/chat/rooms", headers=applicant)
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

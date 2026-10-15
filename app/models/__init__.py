@@ -1,3 +1,4 @@
+from app.models.analytics_event import AnalyticsEvent
 from app.models.base import TimestampMixin
 from app.models.book_vote import BookVoteOption, BookVoteRound, BookVoteVote
 from app.models.chat import ChatMessage, ChatRoom, ChatRoomBan
@@ -12,6 +13,7 @@ from app.models.support_submission import SupportSubmission
 from app.models.user import User
 
 __all__ = [
+    "AnalyticsEvent",
     "BookVoteOption",
     "BookVoteRound",
     "BookVoteVote",

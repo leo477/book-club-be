@@ -1,24 +1,34 @@
+# Blueprint for the production service. sync:false values are asked for only
+# at initial Blueprint creation and are otherwise managed in the dashboard.
+# See docs/RENDER-DEPLOY.md.
 services:
   - type: web
     name: book-club-be
-    env: docker
-    dockerfilePath: Dockerfile
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: free
-    autoDeploy: true
-    preDeployCommand: alembic upgrade head
+    region: frankfurt # immutable after creation; matches the live service
+    numInstances: 1
+    branch: main
+    # Deploy only after the commit's GitHub checks pass. This is the single
+    # deploy path (no deploy hook). Replaces the deprecated autoDeploy flag.
+    autoDeployTrigger: checksPass
     healthCheckPath: /health
     envVars:
       - key: ENV
         value: production
       - key: DATABASE_URL
         sync: false
+      # sync:false (not generateValue): the live secret must never be
+      # regenerated, as that would invalidate every issued token.
       - key: SECRET_KEY
         sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
-      - key: SUPABASE_JWT_SECRET
+      - key: SUPABASE_JWT_SECRET # optional, legacy HS256 only
         sync: false
       - key: REDIS_URL
         sync: false
@@ -28,18 +38,19 @@ services:
         sync: false
       - key: MAPS_SERVER_API_KEY
         sync: false
+      - key: WEB_REVALIDATE_URL
+        sync: false
+      - key: WEB_REVALIDATE_SECRET
+        sync: false
       - key: BACKEND_URL
         value: https://book-club-be.onrender.com
       - key: FRONTEND_URL
-        value: https://book-club-fe.vercel.app
+        value: https://book-club-planer.vercel.app
 
-  - type: cron
-    name: keep-alive
-    env: docker
-    dockerfilePath: Dockerfile
-    plan: free
-    schedule: "*/10 * * * *"
-    startCommand: "curl -sf https://book-club-be.onrender.com/health || true"
+# The "keep-alive" cron service is managed manually in the Render dashboard,
+# not via this Blueprint: Render requires a paid plan for Blueprint-managed
+# cron services, and this one runs fine on the free plan when created
+# directly in the UI.
 
 previews:
   generation: off

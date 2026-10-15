@@ -312,7 +312,7 @@
 Покинути клуб.
 
 **Response 204**
-**Errors:** 404, 409 not a member
+**Errors:** 400 `OWNER_CANNOT_LEAVE` (the owner can never leave), 400 `LAST_ORGANIZER`, 404, 409 not a member
 
 ---
 
@@ -338,10 +338,10 @@
 ---
 
 ### DELETE `/api/v1/clubs/:id/members/:userId`
-Кікнути учасника (тільки організатор).
+Кікнути учасника (тільки організатор). Кікнути іншого організатора може лише власник клубу (`club.organizer_id`).
 
 **Response 204**
-**Errors:** 403, 404
+**Errors:** 403 (`FORBIDDEN`, або `OWNER_ONLY` для цілі-організатора), 400 `CANNOT_REMOVE_OWNER` / `LAST_ORGANIZER`, 404
 
 ---
 
@@ -364,7 +364,23 @@
   "bannedBy": "string"
 }
 ```
-**Errors:** 403, 404
+Забанити іншого організатора може лише власник клубу.
+**Errors:** 403 (`FORBIDDEN`, або `OWNER_ONLY` для цілі-організатора), 400 `CANNOT_REMOVE_OWNER` / `CANNOT_BAN_SELF` / `LAST_ORGANIZER`, 404
+
+---
+
+### PATCH `/api/v1/clubs/:id/members/:userId/role`
+Змінити роль учасника (`member` | `organizer`). Підвищити до організатора може будь-який організатор; понизити організатора може лише власник клубу.
+
+**Errors:** 403 (`FORBIDDEN`, або `OWNER_ONLY`), 400 `CANNOT_DEMOTE_OWNER` / `LAST_ORGANIZER`, 404
+
+---
+
+### DELETE `/api/v1/clubs/:id`
+Видалити клуб. Лише власник клубу (`club.organizer_id`).
+
+**Response 204**
+**Errors:** 403 (`FORBIDDEN` для не-організатора, `OWNER_ONLY` для іншого організатора), 404
 
 ---
 
@@ -604,6 +620,24 @@ Real-time повідомлення.
 
 ---
 
+## 9. ANALYTICS
+
+### POST `/api/v1/analytics/event`
+Анонімна подія canary (без авторизації, без cookies; IP/UA/user id не зберігаються). Ліміт: 60/хв на IP (429), тіло ≤ 2 KB (413).
+**Body:**
+```json
+{
+  "app": "angular | next",
+  "name": "cohort | join_club | js_error",
+  "bucket": "0-9 (optional, ^\\d{1,2}-\\d{1,2}$)",
+  "kind": "error | unhandledrejection | boundary (лише js_error)",
+  "message": "string ≤ 120 (лише js_error)"
+}
+```
+**Response 204** — порожнє тіло. **422** — невалідне тіло або `kind`/`message` для не-`js_error`.
+
+---
+
 ## Підсумкова таблиця
 
 | # | Метод | Шлях | Опис |
@@ -643,3 +677,4 @@ Real-time повідомлення.
 | 33 | GET | /chat/rooms/:roomId/messages | Повідомлення |
 | 34 | POST | /chat/rooms/:roomId/messages | Надіслати |
 | 35 | WS | /chat/rooms/:roomId | Real-time чат |
+| 36 | POST | /analytics/event | Анонімна canary-подія (204) |

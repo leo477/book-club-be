@@ -16,6 +16,7 @@ from app.models.user import User
 from app.schemas.clubs import (
     ClubResponse,
     ClubStatsResponse,
+    ClubStubResponse,
     CreateClubRequest,
     JoinClubResponse,
     RescheduleMeetingRequest,
@@ -24,6 +25,8 @@ from app.schemas.clubs import (
 from app.schemas.events import CreateEventRequest, EventResponse
 from app.services.club_service import (
     build_club_response,
+    build_club_stub,
+    can_view_club,
     create_club_service,
     create_event_service,
     delete_club_cascade,
@@ -32,9 +35,11 @@ from app.services.club_service import (
     leave_club_service,
     list_clubs_service,
     list_my_clubs_service,
+    lock_club_for_update,
     request_join_club_service,
 )
 from app.services.event_service import build_event_responses_bulk
+from app.services.revalidate import revalidate_club
 
 logger = structlog.get_logger(__name__)
 
@@ -65,10 +70,12 @@ async def list_my_clubs(
 @router.get("/{club_id}")
 async def get_club(
     club_id: uuid.UUID,
-    _current_user: Annotated[User | None, Depends(get_optional_user)],
+    current_user: Annotated[User | None, Depends(get_optional_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-) -> ClubResponse:
+) -> ClubResponse | ClubStubResponse:
     club = await get_club_or_404(club_id, db)
+    if not await can_view_club(club, current_user, db):
+        return await build_club_stub(club, db)
     return await build_club_response(club, db)
 
 
@@ -78,7 +85,9 @@ async def create_club(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> ClubResponse:
-    return await create_club_service(body, current_user, db)
+    created = await create_club_service(body, current_user, db)
+    await revalidate_club(created.id, db)
+    return created
 
 
 @router.patch("/{club_id}")
@@ -110,7 +119,9 @@ async def update_club(
 
     await db.commit()
     await db.refresh(club)
-    return await build_club_response(club, db)
+    response = await build_club_response(club, db)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{club_id}/pause")
@@ -124,7 +135,9 @@ async def pause_club(
     club.status = "paused"
     await db.commit()
     await db.refresh(club)
-    return await build_club_response(club, db)
+    response = await build_club_response(club, db)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{club_id}/cancel")
@@ -139,7 +152,9 @@ async def cancel_club(
     club.cancelled_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(club)
-    return await build_club_response(club, db)
+    response = await build_club_response(club, db)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.patch("/{club_id}/reschedule")
@@ -155,7 +170,9 @@ async def reschedule_club(
     club.status = "active"
     await db.commit()
     await db.refresh(club)
-    return await build_club_response(club, db)
+    response = await build_club_response(club, db)
+    await revalidate_club(club_id, db)
+    return response
 
 
 @router.delete("/{club_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -165,7 +182,11 @@ async def delete_club(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await require_club_organizer(club_id, current_user, db)
+    club = await lock_club_for_update(club_id, db)
+    if club.organizer_id != current_user.id:
+        raise AppError(403, "Only the club owner can delete the club", "OWNER_ONLY")
     await delete_club_cascade(club_id, db)
+    await revalidate_club(club_id, db)
 
 
 @router.post("/{club_id}/join")
@@ -191,6 +212,8 @@ async def join_club(
         raise AppError(503, "Database error while joining club", "JOIN_DB_ERROR") from exc
 
     log.info("join_club succeeded", join_status=join_status)
+    if join_status == "member":
+        await revalidate_club(club_id, db)
     return JoinClubResponse(status=join_status)
 
 
@@ -201,6 +224,7 @@ async def leave_club(
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> None:
     await leave_club_service(club_id, current_user, db)
+    await revalidate_club(club_id, db)
 
 
 @router.get("/{club_id}/events")
@@ -215,6 +239,8 @@ async def list_club_events(
     from app.models.event import Event
 
     club = await get_club_or_404(club_id, db)
+    if not await can_view_club(club, current_user, db):
+        return []
     stmt = select(Event).where(Event.club_id == club_id)
 
     if not include_past:
@@ -237,7 +263,9 @@ async def create_event(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_dep)],
 ) -> EventResponse:
-    return await create_event_service(body, club_id, current_user, db)
+    created = await create_event_service(body, club_id, current_user, db)
+    await revalidate_club(club_id, db)
+    return created
 
 
 @router.get("/{club_id}/stats")

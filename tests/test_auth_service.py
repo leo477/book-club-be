@@ -4,11 +4,19 @@ from unittest.mock import MagicMock, patch
 
 import jwt as pyjwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi import HTTPException
 
 from app.config import Settings
+from app.services import auth_service
 from app.services.auth_service import decode_access_token
+
+
+@pytest.fixture(autouse=True)
+def _clear_jwks_cache():
+    auth_service._jwks_clients.clear()
+    yield
+    auth_service._jwks_clients.clear()
 
 
 @pytest.fixture(scope="module")
@@ -126,3 +134,108 @@ def test_decode_hs256_wrong_secret(hs256_settings):
         decode_access_token(token, hs256_settings)
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+
+
+@pytest.fixture(scope="module")
+def ec_key():
+    return ec.generate_private_key(ec.SECP256R1())
+
+
+def _claims(delta: int = 3600) -> dict:
+    return {"sub": str(uuid.uuid4()), "exp": int(time.time()) + delta}
+
+
+def test_decode_es256_valid_with_secret_configured(ec_key, hs256_settings):
+    claims = _claims()
+    token = pyjwt.encode(claims, ec_key, algorithm="ES256", headers={"kid": "k1"})
+    with patch("app.services.auth_service.PyJWKClient", return_value=_mock_jwks(ec_key.public_key(), "ES256")):
+        payload = decode_access_token(token, hs256_settings)
+    assert payload["sub"] == claims["sub"]
+
+
+def test_decode_es256_expired(ec_key, test_settings):
+    token = pyjwt.encode(_claims(-10), ec_key, algorithm="ES256")
+    with patch("app.services.auth_service.PyJWKClient", return_value=_mock_jwks(ec_key.public_key(), "ES256")):
+        with pytest.raises(HTTPException) as exc_info:
+            decode_access_token(token, test_settings)
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+
+
+def test_decode_es256_tampered(ec_key, test_settings):
+    token = pyjwt.encode(_claims(), ec_key, algorithm="ES256")
+    head, body, sig = token.split(".")
+    forged = pyjwt.encode(_claims(), ec_key, algorithm="ES256").split(".")[1]
+    with patch("app.services.auth_service.PyJWKClient", return_value=_mock_jwks(ec_key.public_key(), "ES256")):
+        with pytest.raises(HTTPException) as exc_info:
+            decode_access_token(f"{head}.{forged}.{sig}", test_settings)
+    assert exc_info.value.status_code == 401
+
+
+def test_decode_es256_jwks_fetch_error(ec_key, test_settings):
+    token = pyjwt.encode(_claims(), ec_key, algorithm="ES256")
+    client = MagicMock()
+    client.get_signing_key_from_jwt.side_effect = pyjwt.PyJWKClientConnectionError("down")
+    with patch("app.services.auth_service.PyJWKClient", return_value=client):
+        with pytest.raises(HTTPException) as exc_info:
+            decode_access_token(token, test_settings)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+
+
+def test_decode_jwks_client_is_cached(ec_key, test_settings):
+    token = pyjwt.encode(_claims(), ec_key, algorithm="ES256")
+    with patch("app.services.auth_service.PyJWKClient", return_value=_mock_jwks(ec_key.public_key(), "ES256")) as ctor:
+        decode_access_token(token, test_settings)
+        decode_access_token(token, test_settings)
+    assert len(auth_service._jwks_clients) == 1
+    assert ctor.call_count == 1
+    assert ctor.call_args.kwargs["timeout"] == 5
+    assert ctor.return_value.get_signing_key_from_jwt.call_count == 2
+
+
+def test_decode_asymmetric_without_supabase_url_rejected(ec_key):
+    token = pyjwt.encode(_claims(), ec_key, algorithm="ES256")
+    settings = Settings.model_construct(SUPABASE_URL="", SUPABASE_ANON_KEY="k")
+    with patch("app.services.auth_service.PyJWKClient") as ctor:
+        with pytest.raises(HTTPException) as exc_info:
+            decode_access_token(token, settings)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+    ctor.assert_not_called()
+
+
+def test_decode_key_type_mismatch_rejected(rsa_key_pair, ec_key, test_settings):
+    private_key, _ = rsa_key_pair
+    token = pyjwt.encode(_claims(), private_key, algorithm="RS256")
+    with patch("app.services.auth_service.PyJWKClient", return_value=_mock_jwks(ec_key.public_key(), "ES256")):
+        with pytest.raises(HTTPException) as exc_info:
+            decode_access_token(token, test_settings)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+
+
+def test_decode_hs256_without_secret_rejected(test_settings):
+    token = pyjwt.encode(_claims(), HS256_SECRET, algorithm="HS256")
+    with pytest.raises(HTTPException) as exc_info:
+        decode_access_token(token, test_settings)
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+
+
+def test_decode_unsupported_alg_rejected(hs256_settings):
+    token = pyjwt.encode(_claims(), HS256_SECRET, algorithm="HS512")
+    with pytest.raises(HTTPException) as exc_info:
+        decode_access_token(token, hs256_settings)
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+
+
+def test_decode_alg_none_rejected(hs256_settings):
+    token = pyjwt.encode(_claims(), None, algorithm="none")
+    with pytest.raises(HTTPException) as exc_info:
+        decode_access_token(token, hs256_settings)
+    assert exc_info.value.detail["code"] == "INVALID_TOKEN"
+
+
+def test_decode_garbage_rejected(hs256_settings):
+    with pytest.raises(HTTPException) as exc_info:
+        decode_access_token("not-a-jwt", hs256_settings)
+    assert exc_info.value.status_code == 401

@@ -23,9 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - name: Install dependencies
@@ -58,9 +58,9 @@ jobs:
           --health-retries 5
     steps:
       - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - name: Install dependencies
@@ -81,32 +81,77 @@ jobs:
           ENV: test
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ github.sha }}
           path: coverage.xml
       - name: Upload pytest results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pytest-results-${{ github.sha }}
           path: .pytest_cache/
+
+  test-postgres:
+    name: test-postgres
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: bookclub_pgtest
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d bookclub_pgtest"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync
+      # The tests apply `alembic upgrade head` themselves, then hit real Postgres enums/casts.
+      - name: Run Postgres-marked tests
+        run: uv run pytest -m postgres -v --tb=short
+        env:
+          TEST_POSTGRES_URL: postgresql+asyncpg://test:test@localhost:5432/bookclub_pgtest
+          SECRET_KEY: test-secret-key-for-ci-pipeline-32chars
+          ENV: test
+
   sonarcloud:
     name: SonarCloud
     needs: test
     runs-on: ubuntu-latest
     steps:
+      # Dependabot-triggered pull_request runs don't get repo secrets (incl.
+      # SONAR_TOKEN), even for same-repo PRs, so the scan can't authenticate.
+      # Skip the analysis steps for those runs instead of failing the
+      # required check; dependency-bump PRs still go through lint/test/CodeQL.
+      # Also skipped on pushes to develop: its Sonar branch was never analysed,
+      # so the quality-gate lookup fails with "Not authorized or project not found".
       - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        if: github.actor != 'dependabot[bot]' && !(github.event_name == 'push' && github.ref == 'refs/heads/develop')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           fetch-depth: 0 # full history for blame/annotations
       - name: Download coverage report
+        if: github.actor != 'dependabot[bot]' && !(github.event_name == 'push' && github.ref == 'refs/heads/develop')
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: coverage-${{ github.sha }}
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4 # v7.1.0
+        if: github.actor != 'dependabot[bot]' && !(github.event_name == 'push' && github.ref == 'refs/heads/develop')
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         with:
           args: >
             -Dsonar.qualitygate.wait=true
@@ -114,7 +159,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       - name: Wait for SonarCloud analysis to complete
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'dependabot[bot]'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
@@ -133,7 +178,7 @@ jobs:
           done
           echo "Timed out waiting for SonarCloud analysis"; exit 1
       - name: Export SonarCloud issues as SARIF
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
@@ -168,8 +213,8 @@ jobs:
           print(f"SARIF generated with {len(results)} issues")
           EOF
       - name: Upload SonarCloud SARIF to Security tab
-        if: github.event_name == 'push'
-        uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: sonar.sarif
           category: sonarcloud
@@ -178,16 +223,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
       - name: Install pip-audit
         run: uv tool install pip-audit
       - name: Run pip-audit
         run: pip-audit . --format=json -o pip-audit-report.json
       - name: Upload security reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: security-reports-${{ github.sha }}
           path: pip-audit-report.json
