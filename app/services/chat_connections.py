@@ -4,8 +4,10 @@ from typing import Any, TypedDict
 
 import structlog
 from fastapi import WebSocket, WebSocketDisconnect
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.chat import ChatRoom
 from app.repositories import ChatRepository
 
 logger = structlog.get_logger(__name__)
@@ -107,3 +109,13 @@ async def close_rooms_best_effort(room_ids: list[uuid.UUID]) -> None:
             await manager.close_room(str(room_id))
         except Exception:  # intentional: deletion is already committed
             logger.warning("Failed to close room sockets", room_id=str(room_id), exc_info=True)
+
+
+async def kick_user_from_event_room(event_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> None:
+    """Best-effort: the un-attend is already committed, so socket failures must not fail the request."""
+    try:
+        room_id = await db.scalar(select(ChatRoom.id).where(ChatRoom.event_id == event_id))
+        if room_id is not None:
+            await manager.kick(str(user_id), str(room_id))
+    except Exception:  # intentional: see docstring
+        logger.warning("Failed to kick user from event room", event_id=str(event_id), exc_info=True)

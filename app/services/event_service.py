@@ -9,11 +9,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.dependencies import is_club_organizer
 from app.exceptions import AppError
 from app.models.event import Event, EventAttendee
 from app.models.user import User
 from app.repositories import ClubRepository, EventRepository
 from app.schemas.events import AfterMeetingVenueSchema, AttendEventResponse, EventResponse
+from app.services.chat_connections import kick_user_from_event_room
 
 
 def _assemble_event_response(
@@ -276,6 +278,8 @@ async def cancel_attendance_service(
     await _require_event_visible(event, current_user, db)
     await repo.remove_attendee(event_id, current_user.id)
     await db.commit()
+    if not await is_club_organizer(event.club_id, current_user.id, db):
+        await kick_user_from_event_room(event_id, current_user.id, db)
 
 
 async def set_event_winner_service(
