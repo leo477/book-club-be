@@ -42,9 +42,10 @@ async def require_club_member(club_id: uuid.UUID, user: User, db: AsyncSession) 
 
 async def can_access_room(room: ChatRoom, user_id: uuid.UUID, db: AsyncSession) -> bool:
     """Club members may use club rooms; event rooms also need organizer status or an attendee row."""
-    if await ChatRepository(db).get_membership(room.club_id, user_id) is None:
+    membership = await ChatRepository(db).get_membership(room.club_id, user_id)
+    if membership is None:
         return False
-    if room.event_id is None or await is_club_organizer(room.club_id, user_id, db):
+    if room.event_id is None or membership.role == "organizer":
         return True
     return await EventRepository(db).get_attendance(room.event_id, user_id) is not None
 

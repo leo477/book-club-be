@@ -111,9 +111,14 @@ async def close_rooms_best_effort(room_ids: list[uuid.UUID]) -> None:
             logger.warning("Failed to close room sockets", room_id=str(room_id), exc_info=True)
 
 
-async def kick_user_from_event_room(event_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> None:
+async def kick_user_from_event_room(
+    event_id: uuid.UUID, club_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession
+) -> None:
     """Best-effort: the un-attend is already committed, so socket failures must not fail the request."""
     try:
+        membership = await ChatRepository(db).get_membership(club_id, user_id)
+        if membership is not None and membership.role == "organizer":
+            return
         room_id = await db.scalar(select(ChatRoom.id).where(ChatRoom.event_id == event_id))
         if room_id is not None:
             await manager.kick(str(user_id), str(room_id))

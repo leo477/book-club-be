@@ -160,8 +160,9 @@ async def test_unattend_loses_access_and_kicks_socket(async_client, register_use
 @pytest.mark.asyncio
 async def test_organizer_unattend_keeps_socket(async_client, register_user, auth_headers, make_member):
     ctx = await _event_room(async_client, register_user, auth_headers, make_member, "orgun")
+    org_id = (await async_client.get("/api/v1/users/me", headers=ctx["org"])).json()["id"]
     sock = _fake_ws()
-    chat_manager.connect(ctx["room"], sock, "org-user")
+    chat_manager.connect(ctx["room"], sock, org_id)
     try:
         await async_client.delete(f"/api/v1/events/{ctx['event']}/attend", headers=ctx["org"])
         sock.close.assert_not_awaited()
@@ -224,3 +225,17 @@ async def test_ws_closed_when_membership_removed_after_handshake(
         await ws.stop()
         chat_manager.active_connections.pop(ctx["room"], None)
         chat_manager.room_presence.pop(ctx["room"], None)
+
+
+@pytest.mark.asyncio
+async def test_club_room_open_to_any_member_regardless_of_attendance(
+    async_client, register_user, auth_headers, make_member
+):
+    ctx = await _event_room(async_client, register_user, auth_headers, make_member, "club")
+    rid = (
+        await async_client.post(f"/api/v1/clubs/{ctx['club']}/chat/rooms", headers=ctx["org"], json={"name": "General"})
+    ).json()["id"]
+    for who in ("attendee", "non_attendee"):
+        resp = await async_client.get(f"/api/v1/chat/rooms/{rid}/messages", headers=ctx[who])
+        assert resp.status_code == 200, who
+    assert (await async_client.get(f"/api/v1/chat/rooms/{rid}/messages", headers=ctx["outsider"])).status_code == 404
