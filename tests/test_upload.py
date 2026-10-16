@@ -89,6 +89,7 @@ async def test_upload_cover_file_too_large(async_client, register_user, auth_hea
     assert resp.status_code == 413
     detail = resp.json()["detail"]
     assert detail["code"] == "FILE_TOO_LARGE"
+    mock_supabase.storage.from_.return_value.upload.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -251,7 +252,9 @@ async def test_upload_cover_declared_type_mismatch_rejected(async_client, regist
     await register_user(email="upload_mismatch@example.com")
     headers = await auth_headers(email="upload_mismatch@example.com")
 
-    with _supabase_patches(_make_mock_supabase()):
+    mock_supabase = _make_mock_supabase()
+
+    with _supabase_patches(mock_supabase):
         resp = await async_client.post(
             "/api/v1/upload/cover",
             headers=headers,
@@ -260,6 +263,36 @@ async def test_upload_cover_declared_type_mismatch_rejected(async_client, regist
 
     assert resp.status_code == 415
     assert resp.json()["detail"]["code"] == "UNSUPPORTED_MEDIA_TYPE"
+    mock_supabase.storage.from_.return_value.upload.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("data", "content_type"),
+    [
+        (b"", "image/png"),
+        (b"RIFF\x00\x00WEB", "image/webp"),
+        (b"RIFF\x00\x00\x00\x00WAVE" + b"\x00" * 8, "image/webp"),
+        (b'<svg xmlns="http://www.w3.org/2000/svg"></svg>', "image/svg+xml"),
+    ],
+    ids=["empty", "short-riff", "riff-wave", "svg"],
+)
+async def test_upload_cover_non_image_content_rejected(async_client, register_user, auth_headers, data, content_type):
+    email = f"upload_reject_{abs(hash((data, content_type)))}@example.com"
+    await register_user(email=email)
+    headers = await auth_headers(email=email)
+    mock_supabase = _make_mock_supabase()
+
+    with _supabase_patches(mock_supabase):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("x.bin", io.BytesIO(data), content_type)},
+        )
+
+    assert resp.status_code == 415
+    assert resp.json()["detail"]["code"] == "UNSUPPORTED_MEDIA_TYPE"
+    mock_supabase.storage.from_.return_value.upload.assert_not_called()
 
 
 @pytest.mark.asyncio
