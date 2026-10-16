@@ -723,6 +723,10 @@ async def test_get_club_no_champion_when_no_held_events(async_client, register_u
         "https://",
         "https://example.com/a b.png",
         "https://example.com/" + "a" * 2048,
+        "https://example.com/" + "a" * (501 - len("https://example.com/")),
+        "https://user:pass@example.com/a.png",
+        "https://example.com\\@evil.com/a.png",
+        "https://example.com:99999/a.png",
     ],
 )
 async def test_club_cover_url_rejected_on_create_and_update(async_client, register_user, auth_headers, bad):

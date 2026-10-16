@@ -758,6 +758,11 @@ BAD_COVER_URLS = [
     "https://example.com/a b.png",
     "https://example.com/a\n.png",
     "https://example.com/" + "a" * 2048,
+    "https://example.com/" + "a" * (501 - len("https://example.com/")),
+    "https://user:pass@example.com/a.png",
+    "https://user@example.com/a.png",
+    "https://example.com\\@evil.com/a.png",
+    "https://example.com:99999/a.png",
 ]
 
 
@@ -798,3 +803,14 @@ async def test_event_cover_url_accepted_on_create_and_update(async_client, regis
     resp = await async_client.patch(f"/api/v1/events/{event['id']}", headers=headers, json={"cover_url": ""})
     assert resp.status_code == 200
     assert resp.json()["coverUrl"] is None
+
+
+@pytest.mark.asyncio
+async def test_event_cover_url_max_length_accepted(async_client, register_user, auth_headers):
+    headers = await _setup_organizer(async_client, register_user, auth_headers, "ev_cover_500@example.com")
+    club_id = await _create_club(async_client, headers, "CoverLenClub")
+    url = "https://example.com/" + "a" * (500 - len("https://example.com/"))
+    assert len(url) == 500
+
+    event = await _create_event(async_client, headers, club_id, {**EVENT_PAYLOAD, "coverUrl": url})
+    assert event["coverUrl"] == url
