@@ -34,6 +34,11 @@ def _supabase_patches(mock_supabase: MagicMock):
         yield
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 16
+GIF = b"GIF89a" + b"\x00" * 16
+WEBP = b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 8
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -44,7 +49,7 @@ async def test_upload_cover_unauthenticated(async_client):
     """No auth token → 401."""
     resp = await async_client.post(
         "/api/v1/upload/cover",
-        files={"file": ("photo.jpg", io.BytesIO(b"fake-image-data"), "image/jpeg")},
+        files={"file": ("photo.jpg", io.BytesIO(JPEG), "image/jpeg")},
     )
     assert resp.status_code == 401
 
@@ -71,7 +76,7 @@ async def test_upload_cover_file_too_large(async_client, register_user, auth_hea
     await register_user(email="upload_toolarge@example.com")
     headers = await auth_headers(email="upload_toolarge@example.com")
 
-    large_content = b"x" * (5 * 1024 * 1024 + 1)  # 5 MB + 1 byte
+    large_content = JPEG + b"x" * (5 * 1024 * 1024)  # 5 MB + 1 byte
     mock_supabase = _make_mock_supabase()
 
     with _supabase_patches(mock_supabase):
@@ -99,7 +104,7 @@ async def test_upload_cover_success(async_client, register_user, auth_headers):
         resp = await async_client.post(
             "/api/v1/upload/cover",
             headers=headers,
-            files={"file": ("photo.jpg", io.BytesIO(b"fake-image-data"), "image/jpeg")},
+            files={"file": ("photo.jpg", io.BytesIO(JPEG), "image/jpeg")},
         )
 
     assert resp.status_code == 200
@@ -112,7 +117,7 @@ async def test_upload_cover_success(async_client, register_user, auth_headers):
 
 @pytest.mark.asyncio
 async def test_upload_cover_no_extension(async_client, register_user, auth_headers):
-    """Filename without a dot → falls back to .jpg extension."""
+    """Filename without a dot → extension comes from the sniffed type."""
     await register_user(email="upload_noext@example.com")
     headers = await auth_headers(email="upload_noext@example.com")
 
@@ -124,16 +129,14 @@ async def test_upload_cover_no_extension(async_client, register_user, auth_heade
             "/api/v1/upload/cover",
             headers=headers,
             # filename has no "." in it
-            files={"file": ("photowithoutext", io.BytesIO(b"fake-image-data"), "image/png")},
+            files={"file": ("photowithoutext", io.BytesIO(PNG), "image/png")},
         )
 
     assert resp.status_code == 200
     data = resp.json()
     assert "url" in data
-    # Verify the path passed to upload ends with .jpg
     call_args = mock_supabase.storage.from_.return_value.upload.call_args
-    path_arg = call_args[0][0]
-    assert path_arg.endswith(".jpg"), f"Expected .jpg fallback, got path: {path_arg}"
+    assert call_args[0][0].endswith(".png")
 
 
 @pytest.mark.asyncio
@@ -148,7 +151,7 @@ async def test_upload_cover_webp(async_client, register_user, auth_headers):
         resp = await async_client.post(
             "/api/v1/upload/cover",
             headers=headers,
-            files={"file": ("image.webp", io.BytesIO(b"RIFF....WEBP"), "image/webp")},
+            files={"file": ("image.webp", io.BytesIO(WEBP), "image/webp")},
         )
 
     assert resp.status_code == 200
@@ -168,7 +171,7 @@ async def test_upload_cover_storage_not_configured(async_client, register_user, 
         resp = await async_client.post(
             "/api/v1/upload/cover",
             headers=headers,
-            files={"file": ("photo.jpg", io.BytesIO(b"fake-image-data"), "image/jpeg")},
+            files={"file": ("photo.jpg", io.BytesIO(JPEG), "image/jpeg")},
         )
 
     assert resp.status_code == 503
@@ -188,9 +191,91 @@ async def test_upload_cover_supabase_error(async_client, register_user, auth_hea
         resp = await async_client.post(
             "/api/v1/upload/cover",
             headers=headers,
-            files={"file": ("photo.jpg", io.BytesIO(b"fake-image-data"), "image/jpeg")},
+            files={"file": ("photo.jpg", io.BytesIO(JPEG), "image/jpeg")},
         )
 
     assert resp.status_code == 502
     detail = resp.json()["detail"]
     assert detail["code"] == "STORAGE_ERROR"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("data", "content_type", "ext"),
+    [
+        (PNG, "image/png", ".png"),
+        (JPEG, "image/jpeg", ".jpg"),
+        (GIF, "image/gif", ".gif"),
+        (WEBP, "image/webp", ".webp"),
+    ],
+)
+async def test_upload_cover_sniffed_types(async_client, register_user, auth_headers, data, content_type, ext):
+    email = f"upload_sniff_{ext[1:]}@example.com"
+    await register_user(email=email)
+    headers = await auth_headers(email=email)
+    mock_supabase = _make_mock_supabase()
+
+    with _supabase_patches(mock_supabase):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("whatever.bin", io.BytesIO(data), content_type)},
+        )
+
+    assert resp.status_code == 200
+    call_args = mock_supabase.storage.from_.return_value.upload.call_args
+    assert call_args[0][0].endswith(ext)
+    assert call_args[0][2] == {"content-type": content_type}
+
+
+@pytest.mark.asyncio
+async def test_upload_cover_html_with_image_header_rejected(async_client, register_user, auth_headers):
+    await register_user(email="upload_html@example.com")
+    headers = await auth_headers(email="upload_html@example.com")
+    mock_supabase = _make_mock_supabase()
+
+    with _supabase_patches(mock_supabase):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("x.html", io.BytesIO(b"<html><script>alert(1)</script></html>"), "image/png")},
+        )
+
+    assert resp.status_code == 415
+    assert resp.json()["detail"]["code"] == "UNSUPPORTED_MEDIA_TYPE"
+    mock_supabase.storage.from_.return_value.upload.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upload_cover_declared_type_mismatch_rejected(async_client, register_user, auth_headers):
+    await register_user(email="upload_mismatch@example.com")
+    headers = await auth_headers(email="upload_mismatch@example.com")
+
+    with _supabase_patches(_make_mock_supabase()):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("a.jpg", io.BytesIO(PNG), "image/jpeg")},
+        )
+
+    assert resp.status_code == 415
+    assert resp.json()["detail"]["code"] == "UNSUPPORTED_MEDIA_TYPE"
+
+
+@pytest.mark.asyncio
+async def test_upload_cover_extension_from_sniffed_type(async_client, register_user, auth_headers):
+    await register_user(email="upload_ext@example.com")
+    headers = await auth_headers(email="upload_ext@example.com")
+    mock_supabase = _make_mock_supabase()
+
+    with _supabase_patches(mock_supabase):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("x.html", io.BytesIO(PNG), "image/png")},
+        )
+
+    assert resp.status_code == 200
+    path_arg = mock_supabase.storage.from_.return_value.upload.call_args[0][0]
+    assert path_arg.endswith(".png")
+    assert "html" not in path_arg
