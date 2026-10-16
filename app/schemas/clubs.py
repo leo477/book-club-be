@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.schemas.events import AfterMeetingVenueSchema
+from app.schemas.validators import CoverUrl
 
 
 class ChampionInfo(BaseModel):
@@ -87,7 +88,7 @@ class CreateClubRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=2000)
     isPublic: bool = True
-    coverUrl: str | None = Field(default=None, max_length=500)
+    coverUrl: CoverUrl = Field(default=None, max_length=500)
     city: str | None = Field(default=None, max_length=100)
     tags: list[Annotated[str, Field(max_length=50)]] = Field(default=[], max_length=20)
     meetingDurationMinutes: int | None = Field(default=None, ge=1, le=480)
@@ -102,7 +103,7 @@ class UpdateClubRequest(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     isPublic: bool | None = None
     city: str | None = Field(default=None, max_length=100)
-    coverUrl: str | None = Field(default=None, max_length=500)
+    coverUrl: CoverUrl = Field(default=None, max_length=500)
     tags: list[Annotated[str, Field(max_length=50)]] | None = Field(default=None, max_length=20)
     meetingDurationMinutes: int | None = Field(default=None, ge=1, le=480)
     afterMeetingVenue: AfterMeetingVenueSchema | None = None
