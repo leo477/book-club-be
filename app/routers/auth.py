@@ -51,6 +51,7 @@ _ACCESS_COOKIE = "access_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
 _OAUTH_CHALLENGE_COOKIE = "oauth_challenge"
 _OAUTH_FAILED_PATH = "/login?oauth=failed"
+_PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _OAUTH_HANDOFF_PREFIX = "oauth:handoff:"
 _OAUTH_HANDOFF_TTL = 60
 _WS_TICKET_PREFIX = "ws:ticket:"
@@ -363,7 +364,7 @@ async def oauth_google(
     request: Request,  # slowapi requires this exact parameter name
     settings: Annotated[Settings, Depends(get_settings_dep)],
     origin: Annotated[str | None, Query()] = None,
-    challenge: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{43}$")] = None,
+    challenge: Annotated[str | None, Query(pattern=_PKCE_CHALLENGE_RE.pattern)] = None,
 ) -> RedirectResponse:
     client = await get_supabase_client(settings)
     redirect_to = f"{settings.BACKEND_URL}{_AUTH_PREFIX}/callback"
@@ -395,6 +396,8 @@ async def oauth_google(
             max_age=600,
             path=_AUTH_PREFIX,
         )
+    else:
+        response.delete_cookie(_OAUTH_CHALLENGE_COOKIE, path=_AUTH_PREFIX)
     return response
 
 
@@ -420,51 +423,55 @@ async def oauth_callback(
 
     if not code:
         return _redirect(_OAUTH_FAILED_PATH)
-    client = await get_supabase_client(settings)
-    # noinspection PyBroadException
-    try:
-        auth_response = await supabase_exchange_code(client, code)
-    except HTTPException:
-        return _redirect(_OAUTH_FAILED_PATH)
-    except Exception:  # intentional: any failure redirects to the OAuth failure page
-        logger.exception("Unexpected error during OAuth code exchange")
-        return _redirect(_OAUTH_FAILED_PATH)
-    if auth_response.user is None or auth_response.session is None:
-        return _redirect(_OAUTH_FAILED_PATH)
-
-    # noinspection PyBroadException
-    try:
-        await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
-    except Exception:  # intentional: provisioning failure redirects to login
-        await db.rollback()
-        logger.exception("Failed to provision user during OAuth callback")
-        return _redirect("/login?oauth=failed")
-
-    challenge = request.cookies.get(_OAUTH_CHALLENGE_COOKIE)
+    raw_challenge = request.cookies.get(_OAUTH_CHALLENGE_COOKIE)
+    challenge = raw_challenge if raw_challenge and _PKCE_CHALLENGE_RE.fullmatch(raw_challenge) else None
     if settings.OAUTH_REQUIRE_PKCE and not challenge:
         return _redirect(_OAUTH_FAILED_PATH)
-
-    # One-time handoff code so the SPA can fetch tokens from the response body via
-    # oauth_exchange, which establishes the session cookies on the frontend's proxied origin.
-    handoff_code = secrets.token_urlsafe(32)
     try:
-        await redis.set(
-            f"{_OAUTH_HANDOFF_PREFIX}{handoff_code}",
-            json.dumps(
-                {
-                    "accessToken": auth_response.session.access_token,
-                    "refreshToken": auth_response.session.refresh_token,
-                    "userId": str(auth_response.user.id),
-                    "challenge": challenge,
-                }
-            ),
-            ex=_OAUTH_HANDOFF_TTL,
-        )
-    except Exception:  # intentional: a Redis failure must not block the OAuth flow
-        logger.exception("Failed to store OAuth handoff code")
-        return _redirect(_OAUTH_FAILED_PATH)
+        client = await get_supabase_client(settings)
+        # noinspection PyBroadException
+        try:
+            auth_response = await supabase_exchange_code(client, code)
+        except HTTPException:
+            return _redirect(_OAUTH_FAILED_PATH)
+        except Exception:  # intentional: any failure redirects to the OAuth failure page
+            logger.exception("Unexpected error during OAuth code exchange")
+            return _redirect(_OAUTH_FAILED_PATH)
+        if auth_response.user is None or auth_response.session is None:
+            return _redirect(_OAUTH_FAILED_PATH)
 
-    return _redirect(f"/auth/callback?code={handoff_code}")
+        # noinspection PyBroadException
+        try:
+            await _get_or_create_user(db, auth_response.user, str(auth_response.user.email))
+        except Exception:  # intentional: provisioning failure redirects to login
+            await db.rollback()
+            logger.exception("Failed to provision user during OAuth callback")
+            return _redirect("/login?oauth=failed")
+
+        # One-time handoff code so the SPA can fetch tokens from the response body via
+        # oauth_exchange, which establishes the session cookies on the frontend's proxied origin.
+        handoff_code = secrets.token_urlsafe(32)
+        try:
+            await redis.set(
+                f"{_OAUTH_HANDOFF_PREFIX}{handoff_code}",
+                json.dumps(
+                    {
+                        "accessToken": auth_response.session.access_token,
+                        "refreshToken": auth_response.session.refresh_token,
+                        "userId": str(auth_response.user.id),
+                        "challenge": challenge,
+                    }
+                ),
+                ex=_OAUTH_HANDOFF_TTL,
+            )
+        except Exception:  # intentional: a Redis failure must not block the OAuth flow
+            logger.exception("Failed to store OAuth handoff code")
+            return _redirect(_OAUTH_FAILED_PATH)
+
+        return _redirect(f"/auth/callback?code={handoff_code}")
+    except Exception:  # intentional: the challenge cookie must be cleared on every exit
+        logger.exception("Unexpected error during OAuth callback")
+        return _redirect(_OAUTH_FAILED_PATH)
 
 
 # noinspection PyUnusedLocal
@@ -476,7 +483,7 @@ async def oauth_exchange(
     settings: Annotated[Settings, Depends(get_settings_dep)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
     code: Annotated[str, Body(embed=True)],
-    code_verifier: Annotated[str | None, Body(embed=True, min_length=43, max_length=128)] = None,
+    code_verifier: Annotated[str | None, Body(embed=True, pattern=r"^[A-Za-z0-9\-._~]{43,128}$")] = None,
 ) -> OAuthExchangeResponse:
     # getdel consumes the code before the verifier check, so a wrong verifier burns it:
     # a code holder gets exactly one guess instead of unlimited retries.
@@ -486,7 +493,11 @@ async def oauth_exchange(
     data = json.loads(raw)
     challenge = data.get("challenge")
     if challenge or settings.OAUTH_REQUIRE_PKCE:
-        if not (challenge and code_verifier and hmac.compare_digest(_pkce_challenge(code_verifier), challenge)):
+        if not (
+            challenge
+            and code_verifier
+            and hmac.compare_digest(_pkce_challenge(code_verifier).encode(), challenge.encode())
+        ):
             raise AppError(status.HTTP_400_BAD_REQUEST, "Invalid or expired OAuth code", "INVALID_OAUTH_CODE")
     _set_session_cookies(request, response, data["accessToken"], data["refreshToken"], settings)
     # Body still returned for backward compat with the currently-deployed frontend bundle;

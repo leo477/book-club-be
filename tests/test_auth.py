@@ -568,7 +568,8 @@ async def test_oauth_google_rejects_malformed_challenge(no_redirect_client):
 @pytest.mark.asyncio
 async def test_oauth_google_without_challenge_sets_no_cookie(no_redirect_client):
     resp = await no_redirect_client.get("/api/v1/auth/oauth/google")
-    assert _set_cookie_header(resp, "oauth_challenge") is None
+    header = _set_cookie_header(resp, "oauth_challenge")
+    assert header is None or 'oauth_challenge=""' in header
 
 
 @pytest.mark.asyncio
@@ -589,15 +590,114 @@ async def test_oauth_callback_stores_challenge_from_cookie(no_redirect_client):
     assert 'oauth_challenge=""' in "".join(resp.headers.get_list("set-cookie"))
 
 
-@pytest.mark.asyncio
-async def test_oauth_callback_requires_challenge_when_enforced(no_redirect_client, monkeypatch):
+def _enforce_pkce():
     from app.config import Settings, get_settings
     from app.dependencies import get_settings_dep
 
     base = get_settings()
     app.dependency_overrides[get_settings_dep] = lambda: Settings(**{**base.model_dump(), "OAUTH_REQUIRE_PKCE": True})
+
+
+def _callback_redis():
+    from unittest.mock import AsyncMock
+
+    from app.dependencies import get_redis
+
+    mock_redis = AsyncMock()
+    app.dependency_overrides[get_redis] = lambda: mock_redis
+    return mock_redis
+
+
+def _challenge_cleared(resp) -> bool:
+    return 'oauth_challenge=""' in "".join(resp.headers.get_list("set-cookie"))
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_requires_challenge_when_enforced(no_redirect_client):
+    _enforce_pkce()
+    mock_redis = _callback_redis()
     resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
     assert resp.headers["location"].endswith("/login?oauth=failed")
+    mock_redis.set.assert_not_awaited()
+    assert _challenge_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_enforced_with_valid_cookie_succeeds(no_redirect_client):
+    _enforce_pkce()
+    mock_redis = _callback_redis()
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"code": "good-code"}, headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}"}
+    )
+    assert "/auth/callback?code=" in resp.headers["location"]
+    mock_redis.set.assert_awaited_once()
+    assert _challenge_cleared(resp)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cookie", [b"oauth_challenge=short", b"oauth_challenge=" + "é".encode() * 43, b"oauth_challenge=" + b"a" * 44]
+)
+@pytest.mark.parametrize("enforced", [False, True])
+async def test_oauth_callback_malformed_cookie_treated_as_absent(no_redirect_client, cookie, enforced):
+    if enforced:
+        _enforce_pkce()
+    mock_redis = _callback_redis()
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"code": "good-code"}, headers={"Cookie": cookie}
+    )
+    assert _challenge_cleared(resp)
+    if enforced:
+        assert resp.headers["location"].endswith("/login?oauth=failed")
+        mock_redis.set.assert_not_awaited()
+    else:
+        assert "/auth/callback?code=" in resp.headers["location"]
+        import json
+
+        assert json.loads(mock_redis.set.await_args.args[1])["challenge"] is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_clears_cookie_on_invalid_code(no_redirect_client):
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"code": "bad"}, headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}"}
+    )
+    assert resp.headers["location"].endswith("/login?oauth=failed")
+    assert _challenge_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_clears_cookie_on_unexpected_error(no_redirect_client):
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.routers.auth.get_supabase_client", AsyncMock(side_effect=RuntimeError("boom"))):
+        resp = await no_redirect_client.get(
+            "/api/v1/auth/callback",
+            params={"code": "good-code"},
+            headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}"},
+        )
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/login?oauth=failed")
+    assert _challenge_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_oauth_google_without_challenge_deletes_stale_cookie(no_redirect_client):
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/oauth/google", headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}"}
+    )
+    header = _set_cookie_header(resp, "oauth_challenge")
+    assert header is not None
+    assert 'oauth_challenge=""' in header
+    assert "path=/api/v1/auth" in header.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier", ["é" * 43, "v" * 42, "v" * 129, "v" * 42 + "!"])
+async def test_oauth_exchange_malformed_verifier_is_422(async_client, verifier):
+    _exchange_redis(_pkce(_VERIFIER))
+    resp = await async_client.post("/api/v1/auth/oauth/exchange", json={"code": "c", "code_verifier": verifier})
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
