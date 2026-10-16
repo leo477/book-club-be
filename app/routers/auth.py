@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac
 import json
 import re
 import secrets
@@ -46,12 +49,17 @@ router = APIRouter(prefix=_AUTH_PREFIX, tags=["auth"])
 _REFRESH_COOKIE = "refresh_token"
 _ACCESS_COOKIE = "access_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
+_OAUTH_CHALLENGE_COOKIE = "oauth_challenge"
 _OAUTH_FAILED_PATH = "/login?oauth=failed"
 _OAUTH_HANDOFF_PREFIX = "oauth:handoff:"
 _OAUTH_HANDOFF_TTL = 60
 _WS_TICKET_PREFIX = "ws:ticket:"
 _WS_TICKET_TTL = 60
 _DISPLAY_NAME_ALPHABET = string.ascii_letters + string.digits
+
+
+def _pkce_challenge(verifier: str) -> str:
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
 
 
 def _resolve_frontend_origin(candidate: str | None, settings: Settings) -> str | None:
@@ -355,6 +363,7 @@ async def oauth_google(
     request: Request,  # slowapi requires this exact parameter name
     settings: Annotated[Settings, Depends(get_settings_dep)],
     origin: Annotated[str | None, Query()] = None,
+    challenge: Annotated[str | None, Query(pattern=r"^[A-Za-z0-9_-]{43}$")] = None,
 ) -> RedirectResponse:
     client = await get_supabase_client(settings)
     redirect_to = f"{settings.BACKEND_URL}{_AUTH_PREFIX}/callback"
@@ -370,6 +379,16 @@ async def oauth_google(
         response.set_cookie(
             key=_FE_ORIGIN_COOKIE,
             value=fe_origin,
+            httponly=True,
+            secure=settings.ENV == "production",
+            samesite="lax",
+            max_age=600,
+            path=_AUTH_PREFIX,
+        )
+    if challenge:
+        response.set_cookie(
+            key=_OAUTH_CHALLENGE_COOKIE,
+            value=challenge,
             httponly=True,
             secure=settings.ENV == "production",
             samesite="lax",
@@ -396,6 +415,7 @@ async def oauth_callback(
     def _redirect(path: str) -> RedirectResponse:
         response = RedirectResponse(f"{frontend}{path}", status_code=status.HTTP_302_FOUND)
         response.delete_cookie(_FE_ORIGIN_COOKIE, path=_AUTH_PREFIX)
+        response.delete_cookie(_OAUTH_CHALLENGE_COOKIE, path=_AUTH_PREFIX)
         return response
 
     if not code:
@@ -420,6 +440,10 @@ async def oauth_callback(
         logger.exception("Failed to provision user during OAuth callback")
         return _redirect("/login?oauth=failed")
 
+    challenge = request.cookies.get(_OAUTH_CHALLENGE_COOKIE)
+    if settings.OAUTH_REQUIRE_PKCE and not challenge:
+        return _redirect(_OAUTH_FAILED_PATH)
+
     # One-time handoff code so the SPA can fetch tokens from the response body via
     # oauth_exchange, which establishes the session cookies on the frontend's proxied origin.
     handoff_code = secrets.token_urlsafe(32)
@@ -431,6 +455,7 @@ async def oauth_callback(
                     "accessToken": auth_response.session.access_token,
                     "refreshToken": auth_response.session.refresh_token,
                     "userId": str(auth_response.user.id),
+                    "challenge": challenge,
                 }
             ),
             ex=_OAUTH_HANDOFF_TTL,
@@ -451,11 +476,18 @@ async def oauth_exchange(
     settings: Annotated[Settings, Depends(get_settings_dep)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
     code: Annotated[str, Body(embed=True)],
+    code_verifier: Annotated[str | None, Body(embed=True, min_length=43, max_length=128)] = None,
 ) -> OAuthExchangeResponse:
+    # getdel consumes the code before the verifier check, so a wrong verifier burns it:
+    # a code holder gets exactly one guess instead of unlimited retries.
     raw = await redis.getdel(f"{_OAUTH_HANDOFF_PREFIX}{code}")
     if raw is None:
         raise AppError(status.HTTP_400_BAD_REQUEST, "Invalid or expired OAuth code", "INVALID_OAUTH_CODE")
     data = json.loads(raw)
+    challenge = data.get("challenge")
+    if challenge or settings.OAUTH_REQUIRE_PKCE:
+        if not (challenge and code_verifier and hmac.compare_digest(_pkce_challenge(code_verifier), challenge)):
+            raise AppError(status.HTTP_400_BAD_REQUEST, "Invalid or expired OAuth code", "INVALID_OAUTH_CODE")
     _set_session_cookies(request, response, data["accessToken"], data["refreshToken"], settings)
     # Body still returned for backward compat with the currently-deployed frontend bundle;
     # remove once the cookie-based migration is fully rolled out.
