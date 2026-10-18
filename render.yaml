@@ -11,9 +11,11 @@ services:
     region: frankfurt # immutable after creation; matches the live service
     numInstances: 1
     branch: main
-    # Deploy only after the commit's GitHub checks pass. This is the single
-    # deploy path (no deploy hook). Replaces the deprecated autoDeploy flag.
-    autoDeployTrigger: checksPass
+    # Render never deploys on its own. The deploy-render job in
+    # .github/workflows/ci-cd.yml creates the deploy through the Render API
+    # after all checks pass and waits for it. Replaces the deprecated
+    # autoDeploy flag.
+    autoDeployTrigger: "off"
     healthCheckPath: /health
     envVars:
       - key: ENV

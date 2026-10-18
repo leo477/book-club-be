@@ -149,6 +149,7 @@ jobs:
   deploy-render:
     needs: trivy-scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Create GitHub deployment
         id: deployment
@@ -165,11 +166,11 @@ jobs:
               description: 'Render deployment',
             });
             core.setOutput('deployment_id', d.data.id);
-      # Render itself deploys this commit (autoDeployTrigger: checksPass in
-      # render.yaml) once the GitHub checks pass. There is deliberately no
-      # health poll here: /health of the previous instance keeps returning 200
-      # while a new build fails, so it cannot prove this commit is live.
-      - name: Mark deployment as queued on Render
+      # Render does not auto-deploy (autoDeployTrigger: "off" in render.yaml),
+      # so there is no checksPass deadlock: this job creates the deploy through
+      # the Render API and waits for it. /health is not used because the
+      # previous instance keeps answering 200 while a new build fails.
+      - name: Mark deployment as in progress
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
         with:
           script: |
@@ -177,7 +178,93 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               deployment_id: ${{ steps.deployment.outputs.deployment_id }},
-              state: 'queued',
+              state: 'in_progress',
+              description: 'Deploying to Render',
+            });
+      - name: Deploy to Render and wait
+        id: render
+        timeout-minutes: 14
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: srv-d7d6q2t8nd3s73dp6bhg
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          api="https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys"
+          rcurl() {
+            curl -sS -f --retry 3 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 10 --max-time 30 \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Accept: application/json" "$@"
+          }
+          fail() {
+            echo "state=failure" >> "$GITHUB_OUTPUT"
+            echo "description=$1" >> "$GITHUB_OUTPUT"
+            echo "::error::$1"
+            exit 1
+          }
+          find_deploy() {
+            rcurl "${api}?limit=20" | jq -r --arg sha "$COMMIT_SHA" \
+              '[.[] | (.deploy // .) | select(.commit.id == $sha)] | first | .id // empty'
+          }
+          deploy_id=$(find_deploy) || fail "Could not list Render deploys"
+          if [ -n "$deploy_id" ]; then
+            echo "Render deploy $deploy_id already exists for ${COMMIT_SHA:0:7}; reusing it"
+          else
+            echo "Creating Render deploy for ${COMMIT_SHA:0:7}"
+            # Single attempt, no retry: a retried POST could create two deploys.
+            resp=$(curl -sS -f --connect-timeout 10 --max-time 60 -X POST \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H "Accept: application/json" -H "Content-Type: application/json" \
+              -d "$(jq -nc --arg sha "$COMMIT_SHA" '{clearCache: "do_not_clear", commitId: $sha}')" \
+              "$api") || resp=""
+            deploy_id=$(printf '%s' "$resp" | jq -r '(.deploy // .) | .id // empty' 2>/dev/null || true)
+            if [ -z "$deploy_id" ]; then
+              # Response lost or empty (e.g. 202): look the deploy up by sha instead of POSTing again.
+              for _ in 1 2 3 4 5 6; do
+                sleep 10
+                deploy_id=$(find_deploy) || deploy_id=""
+                [ -n "$deploy_id" ] && break
+              done
+            fi
+            [ -n "$deploy_id" ] || fail "Render did not create a deploy for ${COMMIT_SHA:0:7}"
+          fi
+          echo "Render deploy id: $deploy_id"
+          deadline=$((SECONDS + 780))
+          last=""
+          while :; do
+            status=$(rcurl "${api}/${deploy_id}" | jq -r '(.deploy // .) | .status // "unknown"') || status="unknown"
+            if [ "$status" != "$last" ]; then echo "Render deploy status: $status"; last="$status"; fi
+            case "$status" in
+              live)
+                echo "state=success" >> "$GITHUB_OUTPUT"
+                echo "description=Deployed to Render" >> "$GITHUB_OUTPUT"
+                exit 0 ;;
+              build_failed|update_failed|pre_deploy_failed|canceled)
+                fail "Render deploy ended as $status" ;;
+              deactivated)
+                fail "Render deploy was deactivated before going live (superseded or cancelled)" ;;
+            esac
+            [ "$SECONDS" -lt "$deadline" ] || fail "Render deploy not live after 13 minutes (last status '$status')"
+            sleep 15
+          done
+      # Single place that sets the final status, so it is never set twice. If
+      # the deploy step died without reporting (step timeout, runner error) the
+      # state defaults to failure.
+      - name: Report final deployment status
+        if: ${{ always() && !cancelled() && steps.deployment.outcome == 'success' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
+        env:
+          DEPLOY_STATE: ${{ steps.render.outputs.state }}
+          DEPLOY_DESCRIPTION: ${{ steps.render.outputs.description }}
+        with:
+          script: |
+            const ok = process.env.DEPLOY_STATE === 'success';
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ steps.deployment.outputs.deployment_id }},
+              state: ok ? 'success' : 'failure',
               environment_url: '${{ secrets.RENDER_APP_URL }}',
-              description: 'Handed off to Render auto-deploy; confirm in the Render dashboard',
+              description: process.env.DEPLOY_DESCRIPTION || 'Render deploy did not complete',
             });
