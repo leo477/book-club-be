@@ -197,7 +197,6 @@ _NO_STORE_PATHS = {
 # noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
-    limiter.storage_uri = settings.REDIS_URL  # type: ignore[attr-defined]
 
     logger.info("CORS allowed origins", origins=settings.ALLOWED_ORIGINS)
 
