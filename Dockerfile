@@ -40,6 +40,10 @@ COPY alembic.ini /app/alembic.ini
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+# SCRUM-166: uvicorn reads FORWARDED_ALLOW_IPS (no CLI flag needed). Only Render's
+# private proxy range may supply X-Forwarded-For; never "*" (client-spoofable).
+ENV FORWARDED_ALLOW_IPS="10.0.0.0/8"
+
 WORKDIR /app
 
 RUN chown -R appuser:appuser /app
@@ -51,4 +55,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-CMD ["/app/.venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips=*"]
+CMD ["/app/.venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers"]
