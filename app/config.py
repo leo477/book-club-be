@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_JWT_SECRET: str = ""
+    # Pepper for hashing emails in per-account rate-limit keys; empty falls back to a fixed constant.
+    RATE_LIMIT_KEY_PEPPER: str = ""
 
     GOOGLE_BOOKS_API_KEY: str = ""
     MAPS_API_KEY: str = ""

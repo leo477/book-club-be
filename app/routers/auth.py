@@ -226,15 +226,55 @@ def _clear_session_cookies(response: Response, settings: Settings) -> None:
     _clear_access_cookie(response, settings)
 
 
+_ACCOUNT_KEY_FALLBACK_PEPPER = "book-club-account-rate-limit"
+
+
+def _account_hash(email: str, settings: Settings) -> str:
+    """HMAC of the normalized email, so the raw address never lands in limiter storage/keys."""
+    pepper = settings.RATE_LIMIT_KEY_PEPPER or _ACCOUNT_KEY_FALLBACK_PEPPER
+    return hmac.new(pepper.encode(), email.strip().lower().encode(), hashlib.sha256).hexdigest()[:32]
+
+
+async def _capture_account_key(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    email: Annotated[EmailStr, Body()],
+) -> EmailStr:
+    """Declare the ``email`` body field once and stash its hash for ``_account_rate_key``.
+
+    slowapi key functions are synchronous and only see the Request, so they cannot read the
+    body. FastAPI has already parsed the body (cached by Starlette) when dependencies run, and
+    dependencies run before the limiter wrapper, so the stream is never read twice. Routes take
+    ``email`` from this dependency so the field (and its 422 errors) is declared exactly once.
+
+    Trade-off: the budget is per email and counts every attempt (successful ones too), whether
+    or not the account exists, so it is not an enumeration oracle. An attacker can therefore
+    lock out one email's login for up to 15 minutes; the window is kept short and the limit
+    generous (login 10, register 5) to bound that.
+    """
+    request.state.account_rate_key = _account_hash(str(email), settings)
+    return email
+
+
+def _account_rate_key(request: Request) -> str:
+    key = getattr(request.state, "account_rate_key", None)
+    return f"acct:{key}" if key else get_remote_address(request)
+
+
 # noinspection PyUnusedLocal
-@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=None)
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    response_model=None,
+)
 @limiter.limit("5/minute")
+@limiter.limit("5/15minutes", key_func=_account_rate_key)
 async def register(
     request: Request,  # slowapi requires this exact parameter name
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
-    email: Annotated[EmailStr, Body()],
+    email: Annotated[EmailStr, Depends(_capture_account_key)],
     password: Annotated[str, Body(min_length=8)],
     display_name: Annotated[str, Body(alias="displayName", min_length=1, max_length=100)],
     role: Annotated[Literal["user", "organizer"], Body()] = "user",
@@ -294,12 +334,13 @@ async def register(
 # noinspection PyUnusedLocal
 @router.post("/login", status_code=status.HTTP_200_OK)
 @limiter.limit("10/minute")
+@limiter.limit("10/15minutes", key_func=_account_rate_key)
 async def login(
     request: Request,  # slowapi requires this exact parameter name
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
-    email: Annotated[EmailStr, Body()],
+    email: Annotated[EmailStr, Depends(_capture_account_key)],
     password: Annotated[str, Body(min_length=1)],
 ) -> AuthResponse:
     client = await get_supabase_client(settings)
