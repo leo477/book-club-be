@@ -775,9 +775,48 @@ async def test_register_per_account_limit_across_ips(override_get_db):
     assert free.status_code != 429
 
 
-def test_account_hash_is_not_raw_email():
+def test_account_hash_shape_and_normalization():
     from app.config import get_settings
     from app.routers.auth import _account_hash
 
-    h = _account_hash(" A@B.com ", get_settings())
-    assert "a@b.com" not in h and h == _account_hash("a@b.com", get_settings())
+    st = get_settings()
+    h = _account_hash(" A@B.com ", st)
+    assert len(h) == 32
+    assert h == _account_hash("a@b.com", st)
+    assert h != _account_hash("c@b.com", st)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["login", "register"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"password": "password123", "displayName": "N"},
+        {"email": "not-an-email", "password": "password123", "displayName": "N"},
+    ],
+)
+async def test_email_validation_error_reported_once(override_get_db, route, body):
+    async with _client_from_ip("10.0.4.1") as c:
+        resp = await c.post(f"/api/v1/auth/{route}", json=body)
+    assert resp.status_code == 422
+    email_errors = [e for e in resp.json()["detail"] if e["loc"] == ["body", "email"]]
+    assert len(email_errors) == 1
+
+
+@pytest.mark.asyncio
+async def test_account_429_has_same_headers_as_ip_429(override_get_db):
+    body = {"email": "hdr@example.com", "password": "wrong-password"}
+    for i in range(10):
+        async with _client_from_ip(f"10.0.5.{i + 1}") as c:
+            await c.post("/api/v1/auth/login", json=body)
+    async with _client_from_ip("10.0.6.1") as c:
+        acct = await c.post("/api/v1/auth/login", json=body)
+    assert acct.status_code == 429
+    # per-IP 429 (11th request from one IP, distinct emails)
+    async with _client_from_ip("10.0.7.1") as c:
+        for i in range(10):
+            await c.post("/api/v1/auth/login", json={"email": f"u{i}@example.com", "password": "x"})
+        ip = await c.post("/api/v1/auth/login", json={"email": "u99@example.com", "password": "x"})
+    assert ip.status_code == 429
+    assert ("retry-after" in acct.headers) == ("retry-after" in ip.headers)
+    assert acct.json().keys() == ip.json().keys() == {"detail"}
