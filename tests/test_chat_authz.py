@@ -826,3 +826,33 @@ async def test_ws_ticket_for_missing_user_or_room_closes_1008(
         assert close["type"] == "websocket.close"
         assert close["code"] == 1008
         await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_flood_falls_back_to_local_window_when_redis_client_unavailable(
+    async_client, register_user, auth_headers, ws_ticket
+):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ticket = await ws_ticket(org)
+    from app.routers import chat as chat_router
+
+    real_redis = chat_router.aioredis.Redis(connection_pool=None)  # the autouse in-memory fake
+    calls = {"n": 0}
+
+    def _redis_factory(*_a, **_k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_redis  # ticket redemption
+        raise RuntimeError("no pool")
+
+    with patch("app.routers.chat.aioredis.Redis", side_effect=_redis_factory):
+        ws = _WsDriver(room_id)
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": ticket})
+        await ws.recv_json()
+        codes = []
+        for _ in range(10):
+            await ws.send({"text": "\x00"})
+            codes.append(await _next_error_code(ws))
+        assert codes == ["INVALID_MESSAGE"] * 9 + ["RATE_LIMITED"]
+        await ws.stop()
