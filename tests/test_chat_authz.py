@@ -675,6 +675,87 @@ async def test_ws_legacy_token_frame_rejected_with_reason(async_client, register
     await ws.stop()
 
 
+async def _next_error_code(ws: "_WsDriver") -> str:
+    while True:
+        frame = await ws.recv_json()
+        if frame["type"] == "error":
+            return frame["payload"]["code"]
+
+
+async def _two_sockets(async_client, register_user, auth_headers, ws_ticket, second_room_spelling=None):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ws1 = _WsDriver(room_id)
+    ws2 = _WsDriver(second_room_spelling(room_id) if second_room_spelling else room_id)
+    for ws in (ws1, ws2):
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": await ws_ticket(org)})
+    await ws1.recv_json()  # presence snapshot
+    await ws2.recv_json()
+    return org, room_id, ws1, ws2
+
+
+async def _split_flood(ws1, ws2):
+    codes = []
+    for _ in range(5):
+        await ws1.send({"text": "\x00"})
+        codes.append(await _next_error_code(ws1))
+    for _ in range(5):
+        await ws2.send({"text": "\x00"})
+        codes.append(await _next_error_code(ws2))
+    return codes
+
+
+@pytest.mark.asyncio
+async def test_ws_flood_budget_shared_across_connections_of_same_user(
+    async_client, register_user, auth_headers, ws_ticket
+):
+    from app.services.chat_flood import flood_limiter
+
+    _org, room_id, ws1, ws2 = await _two_sockets(async_client, register_user, auth_headers, ws_ticket)
+    key = next(k for k in flood_limiter._refs if k[0] == room_id)
+    assert flood_limiter._refs[key] == 2
+    assert await _split_flood(ws1, ws2) == ["INVALID_MESSAGE"] * 9 + ["RATE_LIMITED"]
+
+    await ws1.stop()
+    assert flood_limiter._refs[key] == 1  # second socket still holds the shared state
+    await ws2.stop()
+    assert key not in flood_limiter._refs
+    assert key not in flood_limiter._stamps
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spelling", [str.upper, lambda r: r.replace("-", "")])
+async def test_ws_flood_budget_shared_across_room_id_spellings(
+    async_client, register_user, auth_headers, ws_ticket, spelling
+):
+    _org, room_id, ws1, ws2 = await _two_sockets(async_client, register_user, auth_headers, ws_ticket, spelling)
+    assert await _split_flood(ws1, ws2) == ["INVALID_MESSAGE"] * 9 + ["RATE_LIMITED"]
+    await ws1.stop()
+    await ws2.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_flood_redis_counter_blocks_through_handler(
+    async_client, register_user, auth_headers, ws_ticket, _fake_ws_ticket_redis
+):
+    """Another instance already spent 8 of the budget in Redis; this socket's local window is empty."""
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    user_id = (await async_client.get("/api/v1/users/me", headers=org)).json()["id"]
+    key = f"ws:flood:{room_id}:{user_id}"
+    _fake_ws_ticket_redis[key] = 8
+    _fake_ws_ticket_redis.ttls[key] = 10_000
+    ws = _WsDriver(room_id)
+    await ws.start()
+    await ws.send({"type": "auth", "ticket": await ws_ticket(org)})
+    await ws.recv_json()
+    codes = []
+    for _ in range(2):
+        await ws.send({"text": "\x00"})
+        codes.append(await _next_error_code(ws))
+    assert codes == ["INVALID_MESSAGE", "RATE_LIMITED"]
+    await ws.stop()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "frame",
@@ -744,4 +825,34 @@ async def test_ws_ticket_for_missing_user_or_room_closes_1008(
         close = await ws.recv()
         assert close["type"] == "websocket.close"
         assert close["code"] == 1008
+        await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_flood_falls_back_to_local_window_when_redis_client_unavailable(
+    async_client, register_user, auth_headers, ws_ticket
+):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ticket = await ws_ticket(org)
+    from app.routers import chat as chat_router
+
+    real_redis = chat_router.aioredis.Redis(connection_pool=None)  # the autouse in-memory fake
+    calls = {"n": 0}
+
+    def _redis_factory(*_a, **_k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_redis  # ticket redemption
+        raise RuntimeError("no pool")
+
+    with patch("app.routers.chat.aioredis.Redis", side_effect=_redis_factory):
+        ws = _WsDriver(room_id)
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": ticket})
+        await ws.recv_json()
+        codes = []
+        for _ in range(10):
+            await ws.send({"text": "\x00"})
+            codes.append(await _next_error_code(ws))
+        assert codes == ["INVALID_MESSAGE"] * 9 + ["RATE_LIMITED"]
         await ws.stop()

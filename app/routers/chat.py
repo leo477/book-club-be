@@ -1,7 +1,5 @@
 import asyncio
-import time as _time
 import uuid
-from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -25,6 +23,7 @@ from app.schemas.chat import (
     normalize_message_text,
 )
 from app.services.chat_connections import WS_POLICY_VIOLATION, MessagePayload, manager
+from app.services.chat_flood import flood_limiter
 from app.services.chat_service import (
     ban_from_room_service,
     can_access_room,
@@ -227,7 +226,10 @@ async def websocket_endpoint(
     result = await _ws_authenticate(websocket, db, room_id)
     if result is None:
         return
-    user, _room = result
+    user, room = result
+    # Canonicalise: uuid.UUID() accepts many spellings of one id; manager, flood limiter and
+    # ban cache must all see a single form.
+    room_id = str(room.id)
 
     manager.connect(room_id, websocket, str(user.id))
 
@@ -244,7 +246,11 @@ async def websocket_endpoint(
     _ban_cache_ttl = 5  # seconds
     ban_cache_result: bool | None = None
     ban_cache_expires: datetime = datetime.now(UTC)
-    _msg_timestamps: deque[float] = deque(maxlen=10)
+    flood_limiter.acquire(room_id, str(user.id))
+    try:
+        flood_redis: aioredis.Redis | None = aioredis.Redis(connection_pool=websocket.app.state.redis_pool)
+    except Exception:  # intentional: no Redis -> in-process limiting only
+        flood_redis = None
 
     ban_repo = ChatRepository(db)
 
@@ -263,9 +269,7 @@ async def websocket_endpoint(
         while True:
             data = await websocket.receive_json()
 
-            _now = _time.monotonic()
-            _msg_timestamps.append(_now)
-            if len(_msg_timestamps) == 10 and (_now - _msg_timestamps[0]) < 10.0:
+            if await flood_limiter.is_limited(room_id, str(user.id), flood_redis):
                 await websocket.send_json(
                     {"type": "error", "payload": {"code": "RATE_LIMITED", "message": "Too many messages"}}
                 )
@@ -315,6 +319,7 @@ async def websocket_endpoint(
             getattr(ws, "_user_id", None) for ws in manager.active_connections[room_id] if ws is not websocket
         }
         manager.disconnect(room_id, websocket)
+        flood_limiter.release(room_id, str(user.id))
         if will_go_offline:
             await manager.broadcast_presence(room_id, str(user.id), "offline")
 
