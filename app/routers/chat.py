@@ -8,8 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings
-from app.dependencies import get_current_user, get_db_dep, get_settings_dep
+from app.dependencies import get_current_user, get_db_dep
 from app.models.chat import ChatMessage, ChatRoom
 from app.models.user import User
 from app.repositories import ChatRepository
@@ -156,7 +155,6 @@ _WS_LEGACY_TOKEN_REASON = "token auth frame removed; use POST /auth/ws-ticket"  
 async def _ws_authenticate(
     websocket: WebSocket,
     db: AsyncSession,
-    settings: Settings,
     room_id: str,
 ) -> tuple[User, ChatRoom] | None:
     # noinspection PyBroadException
@@ -223,10 +221,9 @@ async def websocket_endpoint(
     websocket: WebSocket,
     room_id: str,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> None:
     await websocket.accept()
-    result = await _ws_authenticate(websocket, db, settings, room_id)
+    result = await _ws_authenticate(websocket, db, room_id)
     if result is None:
         return
     user, room = result
