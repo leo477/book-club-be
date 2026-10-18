@@ -7,7 +7,7 @@ from typing import Annotated
 
 import redis.asyncio as aioredis
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -25,7 +25,6 @@ from app.schemas.chat import (
     UnreadCountResponse,
     normalize_message_text,
 )
-from app.services.auth_service import decode_access_token
 from app.services.chat_connections import WS_POLICY_VIOLATION, MessagePayload, manager
 from app.services.chat_service import (
     ban_from_room_service,
@@ -152,6 +151,7 @@ async def get_unread_count(
 
 
 _WS_TICKET_PREFIX = "ws:ticket:"
+_WS_LEGACY_TOKEN_REASON = "token auth frame removed; use POST /auth/ws-ticket"  # noqa: S105
 
 
 async def _ws_authenticate(
@@ -166,7 +166,14 @@ async def _ws_authenticate(
     except Exception:  # intentional: any handshake failure closes the socket
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
-    if not isinstance(raw, dict) or raw.get("type") != "auth" or not (raw.get("ticket") or raw.get("token")):
+    if not isinstance(raw, dict) or raw.get("type") != "auth":
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
+    if "token" in raw and not raw.get("ticket"):
+        # Legacy access-token auth frame was removed (SCRUM-169): clients must use POST /auth/ws-ticket.
+        await websocket.close(code=WS_POLICY_VIOLATION, reason=_WS_LEGACY_TOKEN_REASON)
+        return None
+    if not isinstance(raw.get("ticket"), str) or not raw["ticket"]:
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
 
@@ -184,29 +191,17 @@ async def _ws_authenticate(
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
 
-    if raw.get("ticket"):
-        redis = aioredis.Redis(connection_pool=websocket.app.state.redis_pool)
-        raw_user_id = await redis.getdel(f"{_WS_TICKET_PREFIX}{raw['ticket']}")
-        if not raw_user_id:
-            await websocket.close(code=WS_POLICY_VIOLATION)
-            return None
-        user_id = raw_user_id.decode() if isinstance(raw_user_id, bytes) else raw_user_id
-        try:
-            user = await repo.get_user_by_id(uuid.UUID(user_id))
-        except ValueError:
-            await websocket.close(code=WS_POLICY_VIOLATION)
-            return None
-    else:
-        try:
-            token_data = decode_access_token(raw["token"], settings)
-        except HTTPException:
-            await websocket.close(code=WS_POLICY_VIOLATION)
-            return None
-        try:
-            user = await repo.get_user_by_supabase_id(uuid.UUID(str(token_data.get("sub"))))
-        except ValueError:
-            await websocket.close(code=WS_POLICY_VIOLATION)
-            return None
+    redis = aioredis.Redis(connection_pool=websocket.app.state.redis_pool)
+    raw_user_id = await redis.getdel(f"{_WS_TICKET_PREFIX}{raw['ticket']}")
+    if not raw_user_id:
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
+    user_id = raw_user_id.decode() if isinstance(raw_user_id, bytes) else raw_user_id
+    try:
+        user = await repo.get_user_by_id(uuid.UUID(user_id))
+    except ValueError:
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
 
     if not user:
         await websocket.close(code=WS_POLICY_VIOLATION)

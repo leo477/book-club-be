@@ -233,7 +233,6 @@ async def override_get_db(test_engine):
         patch("app.services.auth_service.decode_access_token", side_effect=_fake_decode_access_token),
         # chat.py and dependencies.py bind decode_access_token at import time; patch the local
         # names so the WS handshake and REST auth use the same fake decoder.
-        patch("app.routers.chat.decode_access_token", side_effect=_fake_decode_access_token),
         patch("app.dependencies.decode_access_token", side_effect=_fake_decode_access_token),
     ):
         yield
@@ -326,3 +325,31 @@ async def auth_headers(async_client):
         return {"Authorization": f"Bearer {token}"}
 
     return _get_headers
+
+
+@pytest.fixture(autouse=True)
+def _fake_ws_ticket_redis():
+    """Back the chat WS handshake with an in-memory one-time ticket store (GETDEL semantics)."""
+    store: dict[str, str] = {}
+
+    async def _getdel(key: str):
+        return store.pop(key, None)
+
+    fake = MagicMock()
+    fake.getdel = AsyncMock(side_effect=_getdel)
+    app.state.redis_pool = None
+    with patch("app.routers.chat.aioredis.Redis", return_value=fake):
+        yield store
+
+
+@pytest.fixture
+def ws_ticket(async_client, _fake_ws_ticket_redis):
+    """Return an async callable minting a one-time ws ticket for the user behind the given auth headers."""
+
+    async def _mint(headers: dict) -> str:
+        me = await async_client.get("/api/v1/users/me", headers=headers)
+        ticket = f"tk-{uuid.uuid4().hex}"
+        _fake_ws_ticket_redis[f"ws:ticket:{ticket}"] = me.json()["id"]
+        return ticket
+
+    return _mint
