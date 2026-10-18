@@ -120,6 +120,9 @@ async def list_messages_service(
 ) -> list[ChatMessageResponse]:
     await require_room_member(room_id, current_user, db)
 
+    if await check_user_ban(room_id, current_user.id, db):
+        raise AppError(403, "You are banned from this room", "ROOM_BANNED")
+
     cursor_uuid: uuid.UUID | None = None
     if before_id:
         try:
