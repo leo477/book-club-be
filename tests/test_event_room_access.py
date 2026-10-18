@@ -253,3 +253,72 @@ async def test_club_room_open_to_any_member_regardless_of_attendance(
         assert resp.status_code == 200, who
     resp = await async_client.get(f"/api/v1/chat/rooms/{rid}/messages", headers=ctx["outsider"])
     assert resp.status_code == 404
+
+
+async def _insert_ban(db_session, room_id, user_id, banned_by, until):
+    from app.models.chat import ChatRoomBan
+
+    db_session.add(
+        ChatRoomBan(
+            id=uuid.uuid4(),
+            room_id=uuid.UUID(room_id),
+            user_id=uuid.UUID(user_id),
+            banned_by=uuid.UUID(banned_by),
+            banned_until=until,
+        )
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("room_kind", ["club", "event"])
+async def test_history_banned_member_denied_expired_ban_allowed(
+    async_client, register_user, auth_headers, make_member, db_session, room_kind
+):
+    from datetime import UTC, datetime, timedelta
+
+    ctx = await _event_room(async_client, register_user, auth_headers, make_member, f"hist{room_kind}")
+    if room_kind == "club":
+        room = (
+            await async_client.post(
+                f"/api/v1/clubs/{ctx['club']}/chat/rooms", headers=ctx["org"], json={"name": "Hist"}
+            )
+        ).json()["id"]
+    else:
+        room = ctx["room"]
+    url = f"/api/v1/chat/rooms/{room}/messages"
+    org_id = (await async_client.get("/api/v1/users/me", headers=ctx["org"])).json()["id"]
+
+    assert (await async_client.get(url, headers=ctx["attendee"])).status_code == 200  # member
+    assert (await async_client.get(url, headers=ctx["org"])).status_code == 200  # organizer
+
+    # expired ban must not block
+    past = datetime.now(UTC) - timedelta(minutes=5)
+    await _insert_ban(db_session, room, ctx["attendee_id"], org_id, past)
+    assert (await async_client.get(url, headers=ctx["attendee"])).status_code == 200
+
+    # active timed ban
+    resp = await async_client.post(
+        f"/api/v1/chat/rooms/{room}/ban",
+        headers=ctx["org"],
+        json={"user_id": ctx["attendee_id"], "duration_seconds": 60},
+    )
+    assert resp.status_code == 204
+    resp = await async_client.get(url, headers=ctx["attendee"])
+    assert resp.status_code == 403
+    assert "ROOM_BANNED" in resp.text
+    # outsider (non-member) still denied; organizer unaffected
+    assert (await async_client.get(url, headers=ctx["outsider"])).status_code == 404
+    assert (await async_client.get(url, headers=ctx["org"])).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_history_permanent_ban_denied(async_client, register_user, auth_headers, make_member):
+    ctx = await _event_room(async_client, register_user, auth_headers, make_member, "histperm")
+    base = f"/api/v1/chat/rooms/{ctx['room']}"
+    resp = await async_client.post(
+        f"{base}/ban", headers=ctx["org"], json={"user_id": ctx["attendee_id"], "duration_seconds": 0}
+    )
+    assert resp.status_code == 204
+    resp = await async_client.get(f"{base}/messages", headers=ctx["attendee"])
+    assert resp.status_code == 403
