@@ -226,9 +226,46 @@ def _clear_session_cookies(response: Response, settings: Settings) -> None:
     _clear_access_cookie(response, settings)
 
 
+_ACCOUNT_KEY_STATE = "_account_rate_key"
+_ACCOUNT_KEY_FALLBACK_PEPPER = "book-club-account-rate-limit"
+
+
+def _account_hash(email: str, settings: Settings) -> str:
+    """HMAC of the normalized email, so the raw address never lands in limiter storage/keys."""
+    pepper = settings.SUPABASE_JWT_SECRET or _ACCOUNT_KEY_FALLBACK_PEPPER
+    return hmac.new(pepper.encode(), email.strip().lower().encode(), hashlib.sha256).hexdigest()[:32]
+
+
+async def _capture_account_key(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    email: Annotated[EmailStr, Body()],
+) -> None:
+    """Stash the hashed email on the request for ``_account_rate_key``.
+
+    slowapi key functions are synchronous and only see the Request, so they cannot read the
+    body. FastAPI has already parsed the body (cached by Starlette) when dependencies run, and
+    dependencies run before the limiter wrapper, so no second stream read happens. Requests
+    with an invalid email fail validation (422) before ever reaching the limiter.
+    """
+    setattr(request.state, _ACCOUNT_KEY_STATE, _account_hash(str(email), settings))
+
+
+def _account_rate_key(request: Request) -> str:
+    # Same bucket regardless of whether the account exists -> no enumeration oracle.
+    key = getattr(request.state, _ACCOUNT_KEY_STATE, None)
+    return f"acct:{key}" if key else get_remote_address(request)
+
+
 # noinspection PyUnusedLocal
-@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=None)
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    response_model=None,
+    dependencies=[Depends(_capture_account_key)],
+)
 @limiter.limit("5/minute")
+@limiter.limit("5/15minutes", key_func=_account_rate_key)
 async def register(
     request: Request,  # slowapi requires this exact parameter name
     response: Response,
@@ -292,8 +329,9 @@ async def register(
 
 
 # noinspection PyUnusedLocal
-@router.post("/login", status_code=status.HTTP_200_OK)
+@router.post("/login", status_code=status.HTTP_200_OK, dependencies=[Depends(_capture_account_key)])
 @limiter.limit("10/minute")
+@limiter.limit("10/15minutes", key_func=_account_rate_key)
 async def login(
     request: Request,  # slowapi requires this exact parameter name
     response: Response,
