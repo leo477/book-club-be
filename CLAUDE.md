@@ -24,7 +24,7 @@
 - `_require_organizer` → використовувати `require_club_organizer` з `dependencies.py`
 - List endpoints мають `skip`/`limit` пагінацію (Query params)
 - Path params UUID — тип `uuid.UUID`, не `str`
-- WebSocket auth — токен передається як query param `?token=<jwt>`
+- WebSocket auth — перший кадр `{"type":"auth","ticket":"<one-time>"}`; ticket з `POST /auth/ws-ticket` (Redis `ws:ticket:*`, TTL 60s, GETDEL). Кадр з `token` вилучено (SCRUM-169): close 1008, reason "token auth frame removed; use POST /auth/ws-ticket"
 
 ## Як запускати тести та лінтер
 - Тести: `pytest`

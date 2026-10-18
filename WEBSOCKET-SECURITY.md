@@ -9,7 +9,7 @@
 
 | Aspect | Implementation | Assessment |
 |--------|---------------|------------|
-| Auth | JWT via `?token=` query param | ✅ Standard practice for WS — browsers cannot send custom headers during the WS handshake |
+| Auth | First WS frame `{"type":"auth","ticket":...}`; one-time ticket from `POST /auth/ws-ticket` (Redis `ws:ticket:*`, 60s TTL, GETDEL). Legacy `token` frame and `?token=` removed (SCRUM-169): closed 1008 | OK |
 | Token validation | `decode_access_token()` — supports Supabase JWKS + HS256 | ✅ Correct |
 | Membership check | `ClubMember` row checked on connect | ✅ Correct |
 | Stale snapshot fix | `await db.rollback()` before reads | ✅ Fixes WS-403-after-join |

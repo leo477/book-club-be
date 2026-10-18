@@ -80,7 +80,7 @@ async def _calls(client, ctx, who, target_id):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("who", ["non_attendee", "outsider", "other_member"])
-async def test_event_room_denied_uniformly(async_client, register_user, auth_headers, make_member, who):
+async def test_event_room_denied_uniformly(async_client, register_user, auth_headers, make_member, who, ws_ticket):
     ctx = await _event_room(async_client, register_user, auth_headers, make_member, f"d{who}")
     unknown = await async_client.get(f"/api/v1/chat/rooms/{uuid.uuid4()}/messages", headers=ctx[who])
     results = await _calls(async_client, ctx, who, ctx["attendee_id"])
@@ -184,18 +184,18 @@ async def test_organizer_unattend_keeps_socket(async_client, register_user, auth
         chat_manager.room_presence.pop(ctx["room"], None)
 
 
-async def _handshake(ctx, who):
+async def _handshake(ctx, who, ws_ticket):
     ws = _WsDriver(ctx["room"])
     await ws.start()
-    await ws.send({"type": "auth", "token": ctx[who]["Authorization"].split(" ", 1)[1]})
+    await ws.send({"type": "auth", "ticket": await ws_ticket(ctx[who])})
     return ws
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("who", ["non_attendee", "outsider", "other_member"])
-async def test_ws_event_room_denied(async_client, register_user, auth_headers, make_member, who):
+async def test_ws_event_room_denied(async_client, register_user, auth_headers, make_member, who, ws_ticket):
     ctx = await _event_room(async_client, register_user, auth_headers, make_member, f"w{who}")
-    ws = await _handshake(ctx, who)
+    ws = await _handshake(ctx, who, ws_ticket)
     frame = await ws.recv()
     assert frame["type"] == "websocket.close"
     assert frame["code"] == 1008
@@ -204,9 +204,9 @@ async def test_ws_event_room_denied(async_client, register_user, auth_headers, m
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("who", ["attendee", "org"])
-async def test_ws_event_room_allowed(async_client, register_user, auth_headers, make_member, who):
+async def test_ws_event_room_allowed(async_client, register_user, auth_headers, make_member, who, ws_ticket):
     ctx = await _event_room(async_client, register_user, auth_headers, make_member, f"wa{who}")
-    ws = await _handshake(ctx, who)
+    ws = await _handshake(ctx, who, ws_ticket)
     try:
         frame = await ws.recv_json()
         assert frame["type"] == "presence_snapshot"
@@ -218,11 +218,11 @@ async def test_ws_event_room_allowed(async_client, register_user, auth_headers, 
 
 @pytest.mark.asyncio
 async def test_ws_closed_when_membership_removed_after_handshake(
-    async_client, register_user, auth_headers, make_member
+    async_client, register_user, auth_headers, make_member, ws_ticket
 ):
     """SCRUM-83: membership is enforced after the handshake via the kick on removal."""
     ctx = await _event_room(async_client, register_user, auth_headers, make_member, "s83")
-    ws = await _handshake(ctx, "attendee")
+    ws = await _handshake(ctx, "attendee", ws_ticket)
     try:
         frame = await ws.recv_json()
         assert frame["type"] == "presence_snapshot"
