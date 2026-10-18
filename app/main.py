@@ -78,6 +78,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             if "localhost" in getattr(settings, name):
                 raise RuntimeError(f"{name} must be a public URL in production, got {getattr(settings, name)!r}")
 
+        if not settings.REDIS_URL or "localhost" in settings.REDIS_URL or "127.0.0.1" in settings.REDIS_URL:
+            logger.warning("REDIS_URL is unset or local in production; rate limits are per process and not shared")
+
         # Fail fast if Supabase auth isn't configured: without SUPABASE_URL/ANON_KEY,
         # token verification and the Supabase client can't work in prod.
         if not settings.supabase_configured:
@@ -197,7 +200,6 @@ _NO_STORE_PATHS = {
 # noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
-    limiter.storage_uri = settings.REDIS_URL  # type: ignore[attr-defined]
 
     logger.info("CORS allowed origins", origins=settings.ALLOWED_ORIGINS)
 
