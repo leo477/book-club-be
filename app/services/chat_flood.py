@@ -74,7 +74,7 @@ class ChatFloodLimiter:
         self._redis_retry_at = time.monotonic() + _REDIS_BACKOFF_SECONDS
         try:
             async with asyncio.timeout(_REDIS_TIMEOUT_SECONDS):
-                count = await redis.eval(_INCR_SCRIPT, 1, key, int(self._window))  # type: ignore[misc]
+                count = await redis.eval(_INCR_SCRIPT, 1, key, int(self._window))
         except Exception:  # intentional: Redis trouble must never break chat
             logger.debug("Flood limiter Redis unavailable; using in-process window only", exc_info=True)
             return False
