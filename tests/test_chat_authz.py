@@ -673,3 +673,75 @@ async def test_ws_legacy_token_frame_rejected_with_reason(async_client, register
     assert close["code"] == 1008
     assert "ws-ticket" in close["reason"]
     await ws.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "frame",
+    [
+        ["auth"],
+        "auth",
+        5,
+        {},
+        {"ticket": "t"},
+        {"type": "nope", "ticket": "t"},
+        {"type": "auth"},
+        {"type": "auth", "ticket": ""},
+        {"type": "auth", "ticket": 123},
+        {"type": "auth", "ticket": ["x"]},
+    ],
+)
+async def test_ws_malformed_first_frame_closes_1008(async_client, register_user, auth_headers, frame):
+    _org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ws = _WsDriver(room_id)
+    await ws.start()
+    await ws.send(frame)
+    close = await ws.recv()
+    assert close["type"] == "websocket.close"
+    assert close["code"] == 1008
+    await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_non_json_first_frame_closes_1008(async_client, register_user, auth_headers):
+    _org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ws = _WsDriver(room_id)
+    await ws.start()
+    await ws.to_app.put({"type": "websocket.receive", "text": "not json{", "bytes": None})
+    close = await ws.recv()
+    assert close["type"] == "websocket.close"
+    assert close["code"] == 1008
+    await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_unknown_or_reused_ticket_closes_1008(async_client, register_user, auth_headers, ws_ticket):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ticket = await ws_ticket(org)
+    for t, expect_ok in ((ticket, True), (ticket, False), ("never-issued", False)):
+        ws = _WsDriver(room_id)
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": t})
+        if expect_ok:
+            assert (await ws.recv_json())["type"] == "presence_snapshot"
+        else:
+            close = await ws.recv()
+            assert close["type"] == "websocket.close"
+            assert close["code"] == 1008
+        await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_ticket_for_missing_user_or_room_closes_1008(
+    async_client, register_user, auth_headers, ws_ticket, _fake_ws_ticket_redis
+):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    _fake_ws_ticket_redis["ws:ticket:ghost"] = str(uuid.uuid4())
+    for room, ticket in ((room_id, "ghost"), (str(uuid.uuid4()), await ws_ticket(org))):
+        ws = _WsDriver(room)
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": ticket})
+        close = await ws.recv()
+        assert close["type"] == "websocket.close"
+        assert close["code"] == 1008
+        await ws.stop()
