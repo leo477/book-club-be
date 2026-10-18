@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from app.schemas.validators import CoverUrl
+
 
 class AfterMeetingVenueSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -55,7 +57,7 @@ class CreateEventRequest(BaseModel):
     address: str | None = Field(default=None, max_length=300)
     lat: float | None = None
     lng: float | None = None
-    coverUrl: str | None = Field(default=None, max_length=500)
+    coverUrl: CoverUrl = Field(default=None, max_length=500)
     bookTitle: str | None = Field(default=None, max_length=300)
     theme: str | None = Field(default=None, max_length=200)
     tags: list[Annotated[str, Field(max_length=50)]] = Field(default=[], max_length=20)
@@ -76,7 +78,7 @@ class EventUpdatePayload(BaseModel):
     lng: float | None = None
     theme: str | None = Field(default=None, max_length=200)
     tags: list[str] | None = None
-    cover_url: str | None = None
+    cover_url: CoverUrl = Field(default=None, max_length=500)
     duration_minutes: int | None = None
     after_meeting_venue: AfterMeetingVenueSchema | None = None
     has_winner: bool | None = None

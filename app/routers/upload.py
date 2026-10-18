@@ -18,6 +18,19 @@ _ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/png", "
 _MAX_FILE_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
 
 
+def _sniff_image_type(data: bytes) -> tuple[str, str] | None:
+    """Return (content_type, extension) derived from magic bytes, or None if not an allowed image."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", "jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", "png"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif", "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp", "webp"
+    return None
+
+
 # noinspection PyUnusedLocal
 @router.post("/cover", responses={503: {"description": "Storage not configured"}})
 @limiter.limit("10/minute")
@@ -37,7 +50,7 @@ async def upload_cover(
     if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage not configured")
 
-    contents = await file.read()
+    contents = await file.read(_MAX_FILE_SIZE_BYTES + 1)
 
     # S-4: validate file size after reading
     if len(contents) > _MAX_FILE_SIZE_BYTES:
@@ -46,13 +59,18 @@ async def upload_cover(
             detail={"error": "File too large. Maximum size is 5 MB", "code": "FILE_TOO_LARGE"},
         )
 
+    sniffed = _sniff_image_type(contents)
+    if sniffed is None or sniffed[0] != file.content_type:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail={"error": "Unsupported file type. Allowed: jpeg, png, webp, gif", "code": "UNSUPPORTED_MEDIA_TYPE"},
+        )
+    content_type, ext = sniffed
+
     try:
         supabase = await get_supabase_client(settings)
-        ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg"
         path = f"covers/{uuid.uuid4()}.{ext}"
-        await supabase.storage.from_("covers").upload(
-            path, contents, {"content-type": file.content_type or "image/jpeg"}
-        )
+        await supabase.storage.from_("covers").upload(path, contents, {"content-type": content_type})
         url: str = await supabase.storage.from_("covers").get_public_url(path)
     except Exception as exc:
         logger.exception("Supabase storage error", exc_info=True)

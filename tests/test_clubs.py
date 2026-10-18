@@ -711,3 +711,57 @@ async def test_get_club_no_champion_when_no_held_events(async_client, register_u
     club_resp = await async_client.get(f"/api/v1/clubs/{club_id}")
     assert club_resp.status_code == 200
     assert club_resp.json()["currentChampion"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "javascript:alert(1)",
+        "data:text/html,<script>1</script>",
+        "ftp://example.com/a.png",
+        "https://",
+        "https://example.com/a b.png",
+        "https://example.com/" + "a" * 2048,
+        "https://example.com/" + "a" * (501 - len("https://example.com/")),
+        "https://user:pass@example.com/a.png",
+        "https://example.com\\@evil.com/a.png",
+        "https://example.com:99999/a.png",
+    ],
+)
+async def test_club_cover_url_rejected_on_create_and_update(async_client, register_user, auth_headers, bad):
+    email = f"club_cover_bad{abs(hash(bad))}@example.com"
+    await register_user(email=email)
+    headers = await auth_headers(email=email)
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+
+    resp = await async_client.post("/api/v1/clubs", headers=headers, json={"name": "C", "coverUrl": bad})
+    assert resp.status_code == 422
+
+    created = await async_client.post("/api/v1/clubs", headers=headers, json={"name": "C"})
+    assert created.status_code == 201
+    resp = await async_client.patch(f"/api/v1/clubs/{created.json()['id']}", headers=headers, json={"coverUrl": bad})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_club_cover_url_accepted_on_create_and_update(async_client, register_user, auth_headers):
+    await register_user(email="club_cover_ok@example.com")
+    headers = await auth_headers(email="club_cover_ok@example.com")
+    await async_client.patch("/api/v1/users/me/role", headers=headers, json={"role": "organizer"})
+
+    created = await async_client.post(
+        "/api/v1/clubs", headers=headers, json={"name": "C", "coverUrl": "https://cdn.example.com/a.png"}
+    )
+    assert created.status_code == 201
+    assert created.json()["coverUrl"] == "https://cdn.example.com/a.png"
+
+    resp = await async_client.patch(
+        f"/api/v1/clubs/{created.json()['id']}", headers=headers, json={"coverUrl": "http://example.com/b.jpg"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["coverUrl"] == "http://example.com/b.jpg"
+
+    resp = await async_client.patch(f"/api/v1/clubs/{created.json()['id']}", headers=headers, json={"coverUrl": ""})
+    assert resp.status_code == 200
+    assert resp.json()["coverUrl"] is None

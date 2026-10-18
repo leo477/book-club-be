@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # the browser lands after login; BACKEND_URL is this API's public base URL.
     FRONTEND_URL: str = "http://localhost:4200"
     BACKEND_URL: str = "http://localhost:8000"
+    # Flip to true once every client sends the PKCE challenge/verifier; until then clients without one still work.
+    OAUTH_REQUIRE_PKCE: bool = False
     PHOTON_URL: str = "https://photon.komoot.io"
     PHOTON_TIMEOUT: int = 8
     SENTRY_DSN: str = ""
