@@ -220,6 +220,7 @@ async def test_list_bans_with_bans(async_client, register_user, auth_headers, ma
     bans = resp.json()
     assert len(bans) >= 1
     assert bans[0]["userId"] == user_id
+    assert bans[0]["displayName"]
 
 
 @pytest.mark.asyncio
@@ -489,3 +490,86 @@ async def test_change_member_role_last_organizer_blocked(
         f"/api/v1/clubs/{club_id}/members/{user_id}/role", headers=user_headers, json={"role": "member"}
     )
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_ban_response_carries_display_name(async_client, register_user, auth_headers, make_member):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg93a@example.com", club_name="MClub93a"
+    )
+    await register_user(email="muser93a@example.com")
+    user_headers = await auth_headers(email="muser93a@example.com")
+    await make_member(club_id, user_headers)
+    member = next(
+        m
+        for m in (await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)).json()
+        if m["role"] == "member"
+    )
+
+    resp = await async_client.post(
+        f"/api/v1/clubs/{club_id}/members/{member['userId']}/ban", headers=headers, json={"duration": 3}
+    )
+    assert resp.status_code in (200, 201)
+    assert resp.json()["displayName"] == member["displayName"]
+
+
+@pytest.mark.asyncio
+async def test_list_bans_hides_expired_and_counts_only_active(
+    async_client, register_user, auth_headers, make_member, db_session
+):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from app.models.club_ban import ClubBan
+
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg93b@example.com", club_name="MClub93b"
+    )
+    banned = []
+    for n in (1, 2):
+        email = f"muser93b{n}@example.com"
+        await register_user(email=email)
+        await make_member(club_id, await auth_headers(email=email))
+    members = [
+        m
+        for m in (await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)).json()
+        if m["role"] == "member"
+    ]
+    for m in members:
+        await async_client.post(
+            f"/api/v1/clubs/{club_id}/members/{m['userId']}/ban", headers=headers, json={"duration": 3}
+        )
+        banned.append(m["userId"])
+
+    await db_session.execute(
+        update(ClubBan)
+        .where(ClubBan.user_id == uuid.UUID(banned[0]))
+        .values(expires_at=datetime.now(UTC) - timedelta(days=1))
+    )
+    await db_session.commit()
+
+    resp = await async_client.get(f"/api/v1/clubs/{club_id}/bans", headers=headers)
+    assert [b["userId"] for b in resp.json()] == [banned[1]]
+    assert resp.headers["X-Total-Count"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_list_members_paging_is_stable_and_ordered_by_join_time(
+    async_client, register_user, auth_headers, make_member
+):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg93c@example.com", club_name="MClub93c"
+    )
+    for n in range(2):
+        email = f"muser93c{n}@example.com"
+        await register_user(email=email)
+        await make_member(club_id, await auth_headers(email=email))
+
+    full = (await async_client.get(f"/api/v1/clubs/{club_id}/members", headers=headers)).json()
+    paged = []
+    for skip in range(0, 3):
+        page = await async_client.get(f"/api/v1/clubs/{club_id}/members?skip={skip}&limit=1", headers=headers)
+        paged += [m["userId"] for m in page.json()]
+    assert paged == [m["userId"] for m in full]
+    assert len(set(paged)) == 3

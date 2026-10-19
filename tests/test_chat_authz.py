@@ -214,12 +214,11 @@ class _WsDriver:
 
 
 @pytest.mark.asyncio
-async def test_ws_invalid_room_id_closes_1008(async_client, register_user, auth_headers):
+async def test_ws_invalid_room_id_closes_1008(async_client, register_user, auth_headers, ws_ticket):
     headers = await _outsider(register_user, auth_headers)
-    token = headers["Authorization"].split(" ", 1)[1]
     ws = _WsDriver("not-a-uuid")
     await ws.start()
-    await ws.send({"type": "auth", "token": token})
+    await ws.send({"type": "auth", "ticket": await ws_ticket(headers)})
     close = await ws.recv()
     assert close == {"type": "websocket.close", "code": 1008, "reason": ""}
     await ws.stop()
@@ -242,15 +241,16 @@ async def test_ws_garbage_ticket_user_id_closes_1008(async_client, register_user
 
 
 @pytest.mark.asyncio
-async def test_ws_bad_frames_do_not_crash_and_ban_closes_socket(async_client, register_user, auth_headers, make_member):
+async def test_ws_bad_frames_do_not_crash_and_ban_closes_socket(
+    async_client, register_user, auth_headers, make_member, ws_ticket
+):
     org, club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
     member = await _outsider(register_user, auth_headers)
     member_id = await make_member(club_id, member)
-    token = member["Authorization"].split(" ", 1)[1]
 
     ws = _WsDriver(room_id)
     await ws.start()
-    await ws.send({"type": "auth", "token": token})
+    await ws.send({"type": "auth", "ticket": await ws_ticket(member)})
     assert (await ws.recv_json())["type"] == "presence_snapshot"
     assert (await ws.recv_json())["type"] == "presence"
 
@@ -341,7 +341,7 @@ async def test_ban_and_remove_member_succeed_when_close_fails(async_client, regi
 
 
 @pytest.mark.asyncio
-async def test_ws_handshake_rejects_banned_user(async_client, register_user, auth_headers, make_member):
+async def test_ws_handshake_rejects_banned_user(async_client, register_user, auth_headers, make_member, ws_ticket):
     org, club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
     member = await _outsider(register_user, auth_headers)
     member_id = await make_member(club_id, member)
@@ -351,7 +351,7 @@ async def test_ws_handshake_rejects_banned_user(async_client, register_user, aut
     assert ban.status_code == 204
     ws = _WsDriver(room_id)
     await ws.start()
-    await ws.send({"type": "auth", "token": member["Authorization"].split(" ", 1)[1]})
+    await ws.send({"type": "auth", "ticket": await ws_ticket(member)})
     frame = await ws.recv()
     assert frame["type"] == "websocket.close"
     assert frame["code"] == 1008
@@ -426,7 +426,7 @@ BAD_TEXTS = ["\x85", "a\x85b", "\x9f", "\x00", "a\x00b", "a\x07", "​", "⠀", 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", BAD_TEXTS)
-async def test_rest_and_ws_reject_the_same_texts(async_client, register_user, auth_headers, text):
+async def test_rest_and_ws_reject_the_same_texts(async_client, register_user, auth_headers, text, ws_ticket):
     org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
     assert normalize_message_text(text) is None
     assert (
@@ -435,7 +435,7 @@ async def test_rest_and_ws_reject_the_same_texts(async_client, register_user, au
 
     ws = _WsDriver(room_id)
     await ws.start()
-    await ws.send({"type": "auth", "token": org["Authorization"].split(" ", 1)[1]})
+    await ws.send({"type": "auth", "ticket": await ws_ticket(org)})
     await ws.recv_json()
     await ws.recv_json()
     await ws.send({"text": text})
@@ -444,7 +444,7 @@ async def test_rest_and_ws_reject_the_same_texts(async_client, register_user, au
 
 
 @pytest.mark.asyncio
-async def test_rest_and_ws_accept_and_strip_the_same_text(async_client, register_user, auth_headers):
+async def test_rest_and_ws_accept_and_strip_the_same_text(async_client, register_user, auth_headers, ws_ticket):
     org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
     raw = "  line1\nline2\ttab  "
     assert normalize_message_text(raw) == "line1\nline2\ttab"
@@ -453,7 +453,7 @@ async def test_rest_and_ws_accept_and_strip_the_same_text(async_client, register
 
     ws = _WsDriver(room_id)
     await ws.start()
-    await ws.send({"type": "auth", "token": org["Authorization"].split(" ", 1)[1]})
+    await ws.send({"type": "auth", "ticket": await ws_ticket(org)})
     await ws.recv_json()
     await ws.recv_json()
     await ws.send({"text": raw})
@@ -462,11 +462,11 @@ async def test_rest_and_ws_accept_and_strip_the_same_text(async_client, register
 
 
 @pytest.mark.asyncio
-async def test_ws_invalid_frames_count_toward_flood_limit(async_client, register_user, auth_headers):
+async def test_ws_invalid_frames_count_toward_flood_limit(async_client, register_user, auth_headers, ws_ticket):
     org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
     ws = _WsDriver(room_id)
     await ws.start()
-    await ws.send({"type": "auth", "token": org["Authorization"].split(" ", 1)[1]})
+    await ws.send({"type": "auth", "ticket": await ws_ticket(org)})
     await ws.recv_json()
     await ws.recv_json()
     codes = []
@@ -656,3 +656,203 @@ async def test_global_admin_without_membership_gets_uniform_404(async_client, re
         await async_client.post(f"{base}/read", headers=admin, json={"last_read_message_id": msg_id}),
     ]
     assert [r.status_code for r in results] == [404] * 5
+
+
+@pytest.mark.asyncio
+async def test_ws_legacy_token_frame_rejected_with_reason(async_client, register_user, auth_headers, make_member):
+    """SCRUM-169: the old {"type":"auth","token":...} frame is closed 1008 with an explanatory reason."""
+    org, club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    member = await _outsider(register_user, auth_headers)
+    await make_member(club_id, member)
+    token = member["Authorization"].split(" ", 1)[1]
+    ws = _WsDriver(room_id)
+    await ws.start()
+    await ws.send({"type": "auth", "token": token})
+    close = await ws.recv()
+    assert close["type"] == "websocket.close"
+    assert close["code"] == 1008
+    assert "ws-ticket" in close["reason"]
+    await ws.stop()
+
+
+async def _next_error_code(ws: "_WsDriver") -> str:
+    while True:
+        frame = await ws.recv_json()
+        if frame["type"] == "error":
+            return frame["payload"]["code"]
+
+
+async def _two_sockets(async_client, register_user, auth_headers, ws_ticket, second_room_spelling=None):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ws1 = _WsDriver(room_id)
+    ws2 = _WsDriver(second_room_spelling(room_id) if second_room_spelling else room_id)
+    for ws in (ws1, ws2):
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": await ws_ticket(org)})
+    await ws1.recv_json()  # presence snapshot
+    await ws2.recv_json()
+    return org, room_id, ws1, ws2
+
+
+async def _split_flood(ws1, ws2):
+    codes = []
+    for _ in range(5):
+        await ws1.send({"text": "\x00"})
+        codes.append(await _next_error_code(ws1))
+    for _ in range(5):
+        await ws2.send({"text": "\x00"})
+        codes.append(await _next_error_code(ws2))
+    return codes
+
+
+@pytest.mark.asyncio
+async def test_ws_flood_budget_shared_across_connections_of_same_user(
+    async_client, register_user, auth_headers, ws_ticket
+):
+    from app.services.chat_flood import flood_limiter
+
+    _org, room_id, ws1, ws2 = await _two_sockets(async_client, register_user, auth_headers, ws_ticket)
+    key = next(k for k in flood_limiter._refs if k[0] == room_id)
+    assert flood_limiter._refs[key] == 2
+    assert await _split_flood(ws1, ws2) == ["INVALID_MESSAGE"] * 9 + ["RATE_LIMITED"]
+
+    await ws1.stop()
+    assert flood_limiter._refs[key] == 1  # second socket still holds the shared state
+    await ws2.stop()
+    assert key not in flood_limiter._refs
+    assert key not in flood_limiter._stamps
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spelling", [str.upper, lambda r: r.replace("-", "")])
+async def test_ws_flood_budget_shared_across_room_id_spellings(
+    async_client, register_user, auth_headers, ws_ticket, spelling
+):
+    _org, room_id, ws1, ws2 = await _two_sockets(async_client, register_user, auth_headers, ws_ticket, spelling)
+    assert await _split_flood(ws1, ws2) == ["INVALID_MESSAGE"] * 9 + ["RATE_LIMITED"]
+    await ws1.stop()
+    await ws2.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_flood_redis_counter_blocks_through_handler(
+    async_client, register_user, auth_headers, ws_ticket, _fake_ws_ticket_redis
+):
+    """Another instance already spent 8 of the budget in Redis; this socket's local window is empty."""
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    user_id = (await async_client.get("/api/v1/users/me", headers=org)).json()["id"]
+    key = f"ws:flood:{room_id}:{user_id}"
+    _fake_ws_ticket_redis[key] = 8
+    _fake_ws_ticket_redis.ttls[key] = 10_000
+    ws = _WsDriver(room_id)
+    await ws.start()
+    await ws.send({"type": "auth", "ticket": await ws_ticket(org)})
+    await ws.recv_json()
+    codes = []
+    for _ in range(2):
+        await ws.send({"text": "\x00"})
+        codes.append(await _next_error_code(ws))
+    assert codes == ["INVALID_MESSAGE", "RATE_LIMITED"]
+    await ws.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "frame",
+    [
+        ["auth"],
+        "auth",
+        5,
+        {},
+        {"ticket": "t"},
+        {"type": "nope", "ticket": "t"},
+        {"type": "auth"},
+        {"type": "auth", "ticket": ""},
+        {"type": "auth", "ticket": 123},
+        {"type": "auth", "ticket": ["x"]},
+    ],
+)
+async def test_ws_malformed_first_frame_closes_1008(async_client, register_user, auth_headers, frame):
+    _org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ws = _WsDriver(room_id)
+    await ws.start()
+    await ws.send(frame)
+    close = await ws.recv()
+    assert close["type"] == "websocket.close"
+    assert close["code"] == 1008
+    await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_non_json_first_frame_closes_1008(async_client, register_user, auth_headers):
+    _org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ws = _WsDriver(room_id)
+    await ws.start()
+    await ws.to_app.put({"type": "websocket.receive", "text": "not json{", "bytes": None})
+    close = await ws.recv()
+    assert close["type"] == "websocket.close"
+    assert close["code"] == 1008
+    await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_unknown_or_reused_ticket_closes_1008(async_client, register_user, auth_headers, ws_ticket):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ticket = await ws_ticket(org)
+    for t, expect_ok in ((ticket, True), (ticket, False), ("never-issued", False)):
+        ws = _WsDriver(room_id)
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": t})
+        if expect_ok:
+            assert (await ws.recv_json())["type"] == "presence_snapshot"
+        else:
+            close = await ws.recv()
+            assert close["type"] == "websocket.close"
+            assert close["code"] == 1008
+        await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_ticket_for_missing_user_or_room_closes_1008(
+    async_client, register_user, auth_headers, ws_ticket, _fake_ws_ticket_redis
+):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    _fake_ws_ticket_redis["ws:ticket:ghost"] = str(uuid.uuid4())
+    for room, ticket in ((room_id, "ghost"), (str(uuid.uuid4()), await ws_ticket(org))):
+        ws = _WsDriver(room)
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": ticket})
+        close = await ws.recv()
+        assert close["type"] == "websocket.close"
+        assert close["code"] == 1008
+        await ws.stop()
+
+
+@pytest.mark.asyncio
+async def test_ws_flood_falls_back_to_local_window_when_redis_client_unavailable(
+    async_client, register_user, auth_headers, ws_ticket
+):
+    org, _club_id, room_id = await _organizer_club_room(async_client, register_user, auth_headers)
+    ticket = await ws_ticket(org)
+    from app.routers import chat as chat_router
+
+    real_redis = chat_router.aioredis.Redis(connection_pool=None)  # the autouse in-memory fake
+    calls = {"n": 0}
+
+    def _redis_factory(*_a, **_k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_redis  # ticket redemption
+        raise RuntimeError("no pool")
+
+    with patch("app.routers.chat.aioredis.Redis", side_effect=_redis_factory):
+        ws = _WsDriver(room_id)
+        await ws.start()
+        await ws.send({"type": "auth", "ticket": ticket})
+        await ws.recv_json()
+        codes = []
+        for _ in range(10):
+            await ws.send({"text": "\x00"})
+            codes.append(await _next_error_code(ws))
+        assert codes == ["INVALID_MESSAGE"] * 9 + ["RATE_LIMITED"]
+        await ws.stop()

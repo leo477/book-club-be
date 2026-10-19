@@ -133,6 +133,8 @@ class BanResponse(BaseModel):
     bannedAt: datetime | str
     duration: str
     bannedBy: str
+    displayName: str | None = None
+    avatarUrl: str | None = None
 
 
 class MemberResponse(BaseModel):

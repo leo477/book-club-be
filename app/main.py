@@ -18,7 +18,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from slowapi.errors import RateLimitExceeded
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.limiter import limiter
 from app.routers.analytics import router as analytics_router
 from app.routers.auth import router as auth_router
@@ -66,22 +66,29 @@ def _redis_log_fields(url: str) -> dict[str, str | int | None]:
     return {"host": parsed.hostname, "port": parsed.port}
 
 
+def _validate_production_settings(settings: Settings) -> None:
+    """Fail fast on a misconfigured production environment; a no-op elsewhere."""
+    if settings.ENV != "production":
+        return
+    # Public URLs must not point at localhost, otherwise OAuth builds an unreachable redirect_to (browser lands on
+    # http://localhost:8000/.../callback). See app/routers/auth.py:oauth_google.
+    for name in ("BACKEND_URL", "FRONTEND_URL"):
+        if "localhost" in getattr(settings, name):
+            raise RuntimeError(f"{name} must be a public URL in production, got {getattr(settings, name)!r}")
+
+    if not settings.REDIS_URL or "localhost" in settings.REDIS_URL or "127.0.0.1" in settings.REDIS_URL:
+        logger.warning("REDIS_URL is unset or local in production; rate limits are per process and not shared")
+
+    # Without SUPABASE_URL/ANON_KEY, token verification and the Supabase client can't work in prod.
+    if not settings.supabase_configured:
+        raise RuntimeError("Supabase must be configured in production (SUPABASE_URL/ANON_KEY)")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
 
-    # Fail fast on misconfigured public URLs: in production these must not point at
-    # localhost, otherwise OAuth builds an unreachable redirect_to (browser lands on
-    # http://localhost:8000/.../callback). See app/routers/auth.py:oauth_google.
-    if settings.ENV == "production":
-        for name in ("BACKEND_URL", "FRONTEND_URL"):
-            if "localhost" in getattr(settings, name):
-                raise RuntimeError(f"{name} must be a public URL in production, got {getattr(settings, name)!r}")
-
-        # Fail fast if Supabase auth isn't configured: without SUPABASE_URL/ANON_KEY,
-        # token verification and the Supabase client can't work in prod.
-        if not settings.supabase_configured:
-            raise RuntimeError("Supabase must be configured in production (SUPABASE_URL/ANON_KEY)")
+    _validate_production_settings(settings)
 
     if settings.SENTRY_DSN:
         sentry_sdk.init(
@@ -197,7 +204,6 @@ _NO_STORE_PATHS = {
 # noinspection PyShadowingNames
 def create_app() -> FastAPI:
     settings = get_settings()
-    limiter.storage_uri = settings.REDIS_URL  # type: ignore[attr-defined]
 
     logger.info("CORS allowed origins", origins=settings.ALLOWED_ORIGINS)
 
@@ -295,7 +301,8 @@ def create_app() -> FastAPI:
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             auth_header = request.headers.get("Authorization")
             has_bearer = bool(auth_header and auth_header.startswith("Bearer "))
-            if not has_bearer and request.cookies.get("access_token"):
+            # the refresh cookie alone authenticates POST /auth/refresh, so it needs the check too
+            if not has_bearer and (request.cookies.get("access_token") or request.cookies.get("refresh_token")):
                 candidate = request.headers.get("origin") or request.headers.get("referer")
                 origin = None
                 if candidate:

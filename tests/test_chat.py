@@ -85,7 +85,7 @@ async def test_mark_room_read_unknown_uuid_returns_404(async_client, register_us
 
 
 @pytest.mark.asyncio
-async def test_ws_room_membership_after_join(async_client, register_user, auth_headers, make_member):
+async def test_ws_room_membership_after_join(async_client, register_user, auth_headers, make_member, ws_ticket):
     """Regression: POST /clubs/{id}/join then WS connect must get 101, not 403.
 
     Root cause: the WS session's db connection could inherit a stale transaction
@@ -118,7 +118,6 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
     member_email = "ws_member@example.com"
     await register_user(email=member_email)
     member_headers = await auth_headers(email=member_email)
-    member_token = member_headers["Authorization"].split(" ", 1)[1]
 
     await make_member(club_id, member_headers)
 
@@ -136,7 +135,7 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
         "path": f"/api/v1/chat/rooms/{room_id}",
         "raw_path": f"/api/v1/chat/rooms/{room_id}".encode(),
         "root_path": "",
-        "query_string": f"token={member_token}".encode(),
+        "query_string": b"",
         "headers": [],
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 80),
@@ -168,7 +167,11 @@ async def test_ws_room_membership_after_join(async_client, register_user, auth_h
 
     # The handler now requires an auth frame immediately after accept.
     await to_app.put(
-        {"type": "websocket.receive", "text": json.dumps({"type": "auth", "token": member_token}), "bytes": None}
+        {
+            "type": "websocket.receive",
+            "text": json.dumps({"type": "auth", "ticket": await ws_ticket(member_headers)}),
+            "bytes": None,
+        }
     )
 
     # After accept, the server sends a presence_snapshot and an online presence

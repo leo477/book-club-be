@@ -233,7 +233,6 @@ async def override_get_db(test_engine):
         patch("app.services.auth_service.decode_access_token", side_effect=_fake_decode_access_token),
         # chat.py and dependencies.py bind decode_access_token at import time; patch the local
         # names so the WS handshake and REST auth use the same fake decoder.
-        patch("app.routers.chat.decode_access_token", side_effect=_fake_decode_access_token),
         patch("app.dependencies.decode_access_token", side_effect=_fake_decode_access_token),
     ):
         yield
@@ -326,3 +325,75 @@ async def auth_headers(async_client):
         return {"Authorization": f"Bearer {token}"}
 
     return _get_headers
+
+
+class _Store(dict):
+    """Key/value store with a parallel ``ttls`` map (ms remaining; absent = no TTL)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ttls: dict[str, int] = {}
+
+
+class _InMemoryRedis:
+    """Tiny in-memory Redis covering what the chat WS handler uses (tickets + flood limiter)."""
+
+    def __init__(self, store: _Store) -> None:
+        self.store = store
+
+    async def getdel(self, key: str):
+        self.store.ttls.pop(key, None)
+        return self.store.pop(key, None)
+
+    async def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.store:
+            return None
+        self.store[key] = value
+        if ex is not None:
+            self.store.ttls[key] = int(ex) * 1000
+        return True
+
+    async def incr(self, key):
+        self.store[key] = int(self.store.get(key, 0)) + 1
+        return self.store[key]
+
+    async def pttl(self, key):
+        if key not in self.store:
+            return -2
+        return self.store.ttls.get(key, -1)
+
+    async def expire(self, key, seconds):
+        if key not in self.store:
+            return 0
+        self.store.ttls[key] = int(seconds) * 1000
+        return 1
+
+    async def eval(self, script, numkeys, *keys_and_args):
+        """Emulates the flood limiter's INCR/PTTL/EXPIRE Lua script atomically."""
+        key, ttl = keys_and_args[0], keys_and_args[numkeys]
+        count = await self.incr(key)
+        if count == 1 or await self.pttl(key) == -1:
+            await self.expire(key, ttl)
+        return count
+
+
+@pytest.fixture(autouse=True)
+def _fake_ws_ticket_redis():
+    """Back the chat WS handshake and flood limiter with an in-memory Redis; yields its key store."""
+    store = _Store()
+    app.state.redis_pool = None
+    with patch("app.routers.chat.aioredis.Redis", return_value=_InMemoryRedis(store)):
+        yield store
+
+
+@pytest.fixture
+def ws_ticket(async_client, _fake_ws_ticket_redis):
+    """Return an async callable minting a one-time ws ticket for the user behind the given auth headers."""
+
+    async def _mint(headers: dict) -> str:
+        me = await async_client.get("/api/v1/users/me", headers=headers)
+        ticket = f"tk-{uuid.uuid4().hex}"
+        _fake_ws_ticket_redis[f"ws:ticket:{ticket}"] = me.json()["id"]
+        return ticket
+
+    return _mint

@@ -1,17 +1,14 @@
 import asyncio
-import time as _time
 import uuid
-from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import redis.asyncio as aioredis
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings
-from app.dependencies import get_current_user, get_db_dep, get_settings_dep
+from app.dependencies import get_current_user, get_db_dep
 from app.models.chat import ChatMessage, ChatRoom
 from app.models.user import User
 from app.repositories import ChatRepository
@@ -25,8 +22,8 @@ from app.schemas.chat import (
     UnreadCountResponse,
     normalize_message_text,
 )
-from app.services.auth_service import decode_access_token
 from app.services.chat_connections import WS_POLICY_VIOLATION, MessagePayload, manager
+from app.services.chat_flood import flood_limiter
 from app.services.chat_service import (
     ban_from_room_service,
     can_access_room,
@@ -152,12 +149,12 @@ async def get_unread_count(
 
 
 _WS_TICKET_PREFIX = "ws:ticket:"
+_WS_LEGACY_TOKEN_REASON = "token auth frame removed; use POST /auth/ws-ticket"  # noqa: S105
 
 
 async def _ws_authenticate(
     websocket: WebSocket,
     db: AsyncSession,
-    settings: Settings,
     room_id: str,
 ) -> tuple[User, ChatRoom] | None:
     # noinspection PyBroadException
@@ -166,7 +163,14 @@ async def _ws_authenticate(
     except Exception:  # intentional: any handshake failure closes the socket
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
-    if not isinstance(raw, dict) or raw.get("type") != "auth" or not (raw.get("ticket") or raw.get("token")):
+    if not isinstance(raw, dict) or raw.get("type") != "auth":
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
+    if "token" in raw and not raw.get("ticket"):
+        # Legacy access-token auth frame was removed (SCRUM-169): clients must use POST /auth/ws-ticket.
+        await websocket.close(code=WS_POLICY_VIOLATION, reason=_WS_LEGACY_TOKEN_REASON)
+        return None
+    if not isinstance(raw.get("ticket"), str) or not raw["ticket"]:
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
 
@@ -184,29 +188,17 @@ async def _ws_authenticate(
         await websocket.close(code=WS_POLICY_VIOLATION)
         return None
 
-    if raw.get("ticket"):
-        redis = aioredis.Redis(connection_pool=websocket.app.state.redis_pool)
-        raw_user_id = await redis.getdel(f"{_WS_TICKET_PREFIX}{raw['ticket']}")
-        if not raw_user_id:
-            await websocket.close(code=WS_POLICY_VIOLATION)
-            return None
-        user_id = raw_user_id.decode() if isinstance(raw_user_id, bytes) else raw_user_id
-        try:
-            user = await repo.get_user_by_id(uuid.UUID(user_id))
-        except ValueError:
-            await websocket.close(code=WS_POLICY_VIOLATION)
-            return None
-    else:
-        try:
-            token_data = decode_access_token(raw["token"], settings)
-        except HTTPException:
-            await websocket.close(code=WS_POLICY_VIOLATION)
-            return None
-        try:
-            user = await repo.get_user_by_supabase_id(uuid.UUID(str(token_data.get("sub"))))
-        except ValueError:
-            await websocket.close(code=WS_POLICY_VIOLATION)
-            return None
+    redis = aioredis.Redis(connection_pool=websocket.app.state.redis_pool)
+    raw_user_id = await redis.getdel(f"{_WS_TICKET_PREFIX}{raw['ticket']}")
+    if not raw_user_id:
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
+    user_id = raw_user_id.decode() if isinstance(raw_user_id, bytes) else raw_user_id
+    try:
+        user = await repo.get_user_by_id(uuid.UUID(user_id))
+    except ValueError:
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return None
 
     if not user:
         await websocket.close(code=WS_POLICY_VIOLATION)
@@ -229,13 +221,15 @@ async def websocket_endpoint(
     websocket: WebSocket,
     room_id: str,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
-    settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> None:
     await websocket.accept()
-    result = await _ws_authenticate(websocket, db, settings, room_id)
+    result = await _ws_authenticate(websocket, db, room_id)
     if result is None:
         return
-    user, _room = result
+    user, room = result
+    # Canonicalise: uuid.UUID() accepts many spellings of one id; manager, flood limiter and
+    # ban cache must all see a single form.
+    room_id = str(room.id)
 
     manager.connect(room_id, websocket, str(user.id))
 
@@ -252,7 +246,11 @@ async def websocket_endpoint(
     _ban_cache_ttl = 5  # seconds
     ban_cache_result: bool | None = None
     ban_cache_expires: datetime = datetime.now(UTC)
-    _msg_timestamps: deque[float] = deque(maxlen=10)
+    flood_limiter.acquire(room_id, str(user.id))
+    try:
+        flood_redis: aioredis.Redis | None = aioredis.Redis(connection_pool=websocket.app.state.redis_pool)
+    except Exception:  # intentional: no Redis -> in-process limiting only
+        flood_redis = None
 
     ban_repo = ChatRepository(db)
 
@@ -271,9 +269,7 @@ async def websocket_endpoint(
         while True:
             data = await websocket.receive_json()
 
-            _now = _time.monotonic()
-            _msg_timestamps.append(_now)
-            if len(_msg_timestamps) == 10 and (_now - _msg_timestamps[0]) < 10.0:
+            if await flood_limiter.is_limited(room_id, str(user.id), flood_redis):
                 await websocket.send_json(
                     {"type": "error", "payload": {"code": "RATE_LIMITED", "message": "Too many messages"}}
                 )
@@ -323,6 +319,7 @@ async def websocket_endpoint(
             getattr(ws, "_user_id", None) for ws in manager.active_connections[room_id] if ws is not websocket
         }
         manager.disconnect(room_id, websocket)
+        flood_limiter.release(room_id, str(user.id))
         if will_go_offline:
             await manager.broadcast_presence(room_id, str(user.id), "offline")
 

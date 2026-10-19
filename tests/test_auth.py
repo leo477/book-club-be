@@ -431,6 +431,21 @@ async def test_csrf_blocks_cross_origin_cookie_authenticated_post(async_client, 
 
 
 @pytest.mark.asyncio
+async def test_csrf_blocks_cross_origin_post_with_only_a_refresh_cookie(async_client):
+    async_client.cookies.set("refresh_token", "some-refresh-token")
+    bad = await async_client.post("/api/v1/auth/refresh", headers={"Origin": "https://evil.com"})
+    assert bad.status_code == 403
+    assert bad.json()["detail"]["code"] == "CSRF_ORIGIN_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_csrf_lets_a_trusted_origin_refresh_with_only_a_refresh_cookie(async_client):
+    async_client.cookies.set("refresh_token", "some-refresh-token")
+    resp = await async_client.post("/api/v1/auth/refresh", headers={"Origin": "http://localhost:4200"})
+    assert resp.status_code != 403 or resp.json()["detail"]["code"] != "CSRF_ORIGIN_MISMATCH"
+
+
+@pytest.mark.asyncio
 async def test_csrf_allows_same_origin_cookie_authenticated_post(async_client, register_user):
     resp = await register_user()
     token = resp.json()["accessToken"]
@@ -735,3 +750,175 @@ async def test_oauth_exchange_unbound_code_rejected_when_enforced(async_client):
     _exchange_redis(None)
     resp = await async_client.post("/api/v1/auth/oauth/exchange", json={"code": "c"})
     assert resp.status_code == 400
+
+
+# --- SCRUM-167: per-account rate limit (credential stuffing from many IPs) ---
+
+
+def _client_from_ip(ip: str):
+    return AsyncClient(transport=ASGITransport(app=app, client=(ip, 1234)), base_url="http://test")
+
+
+@pytest.mark.asyncio
+async def test_login_per_account_limit_across_ips(override_get_db):
+    body = {"email": "Victim@Example.com", "password": "wrong-password"}
+    for i in range(10):
+        async with _client_from_ip(f"10.0.0.{i + 1}") as c:
+            resp = await c.post("/api/v1/auth/login", json=body)
+        assert resp.status_code != 429, i
+    async with _client_from_ip("10.0.1.1") as c:
+        resp = await c.post("/api/v1/auth/login", json={**body, "email": "victim@example.com "})
+        other = await c.post("/api/v1/auth/login", json={"email": "other@example.com", "password": "x"})
+    assert resp.status_code == 429
+    assert "detail" in resp.json()
+    assert other.status_code != 429
+
+
+@pytest.mark.asyncio
+async def test_register_per_account_limit_across_ips(override_get_db):
+    def body(email):
+        return {"email": email, "password": "password123", "displayName": "Name"}
+
+    for i in range(5):
+        async with _client_from_ip(f"10.0.2.{i + 1}") as c:
+            resp = await c.post("/api/v1/auth/register", json=body("dup@example.com"))
+        assert resp.status_code != 429, i
+    async with _client_from_ip("10.0.3.1") as c:
+        blocked = await c.post("/api/v1/auth/register", json=body("DUP@example.com"))
+        free = await c.post("/api/v1/auth/register", json=body("fresh@example.com"))
+    assert blocked.status_code == 429
+    assert free.status_code != 429
+
+
+def test_account_hash_shape_and_normalization():
+    from app.config import get_settings
+    from app.routers.auth import _account_hash
+
+    st = get_settings()
+    h = _account_hash(" A@B.com ", st)
+    assert len(h) == 32
+    assert h == _account_hash("a@b.com", st)
+    assert h != _account_hash("c@b.com", st)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["login", "register"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"password": "password123", "displayName": "N"},
+        {"email": "not-an-email", "password": "password123", "displayName": "N"},
+    ],
+)
+async def test_email_validation_error_reported_once(override_get_db, route, body):
+    async with _client_from_ip("10.0.4.1") as c:
+        resp = await c.post(f"/api/v1/auth/{route}", json=body)
+    assert resp.status_code == 422
+    email_errors = [e for e in resp.json()["detail"] if e["loc"] == ["body", "email"]]
+    assert len(email_errors) == 1
+
+
+@pytest.mark.asyncio
+async def test_account_429_has_same_headers_as_ip_429(override_get_db):
+    body = {"email": "hdr@example.com", "password": "wrong-password"}
+    for i in range(10):
+        async with _client_from_ip(f"10.0.5.{i + 1}") as c:
+            await c.post("/api/v1/auth/login", json=body)
+    async with _client_from_ip("10.0.6.1") as c:
+        acct = await c.post("/api/v1/auth/login", json=body)
+    assert acct.status_code == 429
+    # per-IP 429 (11th request from one IP, distinct emails)
+    async with _client_from_ip("10.0.7.1") as c:
+        for i in range(10):
+            await c.post("/api/v1/auth/login", json={"email": f"u{i}@example.com", "password": "x"})
+        ip = await c.post("/api/v1/auth/login", json={"email": "u99@example.com", "password": "x"})
+    assert ip.status_code == 429
+    assert ("retry-after" in acct.headers) == ("retry-after" in ip.headers)
+    assert acct.json().keys() == ip.json().keys() == {"detail"}
+
+
+# ── SCRUM-81: WEB_TOKENS_IN_BODY ─────────────────────────────────────────────
+
+TRUSTED = {"Origin": "http://localhost:4200"}
+UNTRUSTED = {"Origin": "https://evil.com"}
+
+
+@pytest.fixture
+def tokens_out_of_body():
+    from app.dependencies import get_settings_dep
+    from tests.conftest import _make_test_settings
+
+    original = app.dependency_overrides[get_settings_dep]
+    settings = _make_test_settings().model_copy(update={"WEB_TOKENS_IN_BODY": False})
+    app.dependency_overrides[get_settings_dep] = lambda: settings
+    yield
+    app.dependency_overrides[get_settings_dep] = original
+
+
+@pytest.mark.asyncio
+async def test_default_keeps_tokens_in_the_body_for_web_origins(async_client):
+    resp = await async_client.post(
+        "/api/v1/auth/register",
+        headers=TRUSTED,
+        json={"email": "wt1@example.com", "password": "password123", "displayName": "W", "role": "user"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["accessToken"] and resp.json()["refreshToken"]
+
+
+@pytest.mark.asyncio
+async def test_register_and_login_omit_tokens_for_a_trusted_origin_but_keep_the_user(async_client, tokens_out_of_body):
+    reg = await async_client.post(
+        "/api/v1/auth/register",
+        headers=TRUSTED,
+        json={"email": "wt2@example.com", "password": "password123", "displayName": "W", "role": "user"},
+    )
+    assert reg.status_code == 201
+    assert "accessToken" not in reg.json() and "refreshToken" not in reg.json()
+    assert reg.json()["user"]["email"] == "wt2@example.com"
+    assert "avatarUrl" in reg.json()["user"]  # null fields of the user are not dropped
+    assert _set_cookie_header(reg, "access_token") and _set_cookie_header(reg, "refresh_token")
+
+    login = await async_client.post(
+        "/api/v1/auth/login", headers=TRUSTED, json={"email": "wt2@example.com", "password": "password123"}
+    )
+    assert login.status_code == 200
+    assert "accessToken" not in login.json() and "refreshToken" not in login.json()
+    assert login.json()["user"].keys() == reg.json()["user"].keys()
+    assert _set_cookie_header(login, "access_token")
+
+
+@pytest.mark.asyncio
+async def test_refresh_omits_tokens_for_a_trusted_origin_and_still_sets_cookies(async_client, tokens_out_of_body):
+    resp = await async_client.post("/api/v1/auth/refresh", headers=TRUSTED, json={"refreshToken": "fake-refresh-token"})
+    assert resp.status_code == 200
+    assert resp.json() == {}
+    assert _set_cookie_header(resp, "access_token") and _set_cookie_header(resp, "refresh_token")
+
+
+@pytest.mark.asyncio
+async def test_clients_without_a_trusted_origin_still_get_tokens(async_client, tokens_out_of_body):
+    resp = await async_client.post(
+        "/api/v1/auth/refresh", headers=UNTRUSTED, json={"refreshToken": "fake-refresh-token"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["accessToken"] and resp.json()["refreshToken"] == "fake-refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_oauth_exchange_omits_tokens_for_a_trusted_origin(async_client, tokens_out_of_body):
+    import json
+    from unittest.mock import AsyncMock
+
+    from app.dependencies import get_redis
+
+    mock_redis = AsyncMock()
+    mock_redis.getdel = AsyncMock(
+        return_value=json.dumps({"accessToken": "access-x", "refreshToken": "refresh-x", "userId": "uid"})
+    )
+    app.dependency_overrides[get_redis] = lambda: mock_redis
+
+    resp = await async_client.post("/api/v1/auth/oauth/exchange", headers=TRUSTED, json={"code": "handoff"})
+    assert resp.status_code == 200
+    assert resp.json() == {}
+    assert "access-x" in (_set_cookie_header(resp, "access_token") or "")

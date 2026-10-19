@@ -6,7 +6,7 @@ import re
 import secrets
 import string
 import uuid
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 import redis.asyncio as aioredis
@@ -221,24 +221,71 @@ def _set_session_cookies(
     _set_access_cookie(response, access_token, settings)
 
 
+def _body_tokens(request: Request, access_token: str, refresh_token: str, settings: Settings) -> dict[str, str]:
+    """Tokens for the JSON body; empty for a trusted web origin when WEB_TOKENS_IN_BODY is off (cookies carry them)."""
+    if not settings.WEB_TOKENS_IN_BODY and _is_trusted_web_origin(request, settings):
+        return {}
+    return {"accessToken": access_token, "refreshToken": refresh_token}
+
+
 def _clear_session_cookies(response: Response, settings: Settings) -> None:
     _clear_refresh_cookie(response, settings)
     _clear_access_cookie(response, settings)
 
 
+_ACCOUNT_KEY_FALLBACK_PEPPER = "book-club-account-rate-limit"
+
+
+def _account_hash(email: str, settings: Settings) -> str:
+    """HMAC of the normalized email, so the raw address never lands in limiter storage/keys."""
+    pepper = settings.RATE_LIMIT_KEY_PEPPER or _ACCOUNT_KEY_FALLBACK_PEPPER
+    return hmac.new(pepper.encode(), email.strip().lower().encode(), hashlib.sha256).hexdigest()[:32]
+
+
+async def _capture_account_key(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    email: Annotated[EmailStr, Body()],
+) -> EmailStr:
+    """Declare the ``email`` body field once and stash its hash for ``_account_rate_key``.
+
+    slowapi key functions are synchronous and only see the Request, so they cannot read the
+    body. FastAPI has already parsed the body (cached by Starlette) when dependencies run, and
+    dependencies run before the limiter wrapper, so the stream is never read twice. Routes take
+    ``email`` from this dependency so the field (and its 422 errors) is declared exactly once.
+
+    Trade-off: the budget is per email and counts every attempt (successful ones too), whether
+    or not the account exists, so it is not an enumeration oracle. An attacker can therefore
+    lock out one email's login for up to 15 minutes; the window is kept short and the limit
+    generous (login 10, register 5) to bound that.
+    """
+    request.state.account_rate_key = _account_hash(str(email), settings)
+    return email
+
+
+def _account_rate_key(request: Request) -> str:
+    key = getattr(request.state, "account_rate_key", None)
+    return f"acct:{key}" if key else get_remote_address(request)
+
+
 # noinspection PyUnusedLocal
-@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=None)
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    response_model=None,
+)
 @limiter.limit("5/minute")
+@limiter.limit("5/15minutes", key_func=_account_rate_key)
 async def register(
     request: Request,  # slowapi requires this exact parameter name
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
-    email: Annotated[EmailStr, Body()],
+    email: Annotated[EmailStr, Depends(_capture_account_key)],
     password: Annotated[str, Body(min_length=8)],
     display_name: Annotated[str, Body(alias="displayName", min_length=1, max_length=100)],
     role: Annotated[Literal["user", "organizer"], Body()] = "user",
-) -> AuthResponse | JSONResponse:
+) -> dict[str, Any] | JSONResponse:
     result = await db.execute(select(User).where(User.email == email))
     if result.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -284,22 +331,23 @@ async def register(
     _set_session_cookies(
         request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
     )
+    # response_model=None here, so omit the unset token fields by hand (a dict keeps the cookies set on `response`)
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
-        accessToken=auth_response.session.access_token,
-        refreshToken=auth_response.session.refresh_token,
-    )
+        **_body_tokens(request, auth_response.session.access_token, auth_response.session.refresh_token, settings),
+    ).model_dump(mode="json", exclude_unset=True)
 
 
 # noinspection PyUnusedLocal
-@router.post("/login", status_code=status.HTTP_200_OK)
+@router.post("/login", status_code=status.HTTP_200_OK, response_model_exclude_unset=True)
 @limiter.limit("10/minute")
+@limiter.limit("10/15minutes", key_func=_account_rate_key)
 async def login(
     request: Request,  # slowapi requires this exact parameter name
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db_dep)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
-    email: Annotated[EmailStr, Body()],
+    email: Annotated[EmailStr, Depends(_capture_account_key)],
     password: Annotated[str, Body(min_length=1)],
 ) -> AuthResponse:
     client = await get_supabase_client(settings)
@@ -318,13 +366,12 @@ async def login(
     )
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
-        accessToken=auth_response.session.access_token,
-        refreshToken=auth_response.session.refresh_token,
+        **_body_tokens(request, auth_response.session.access_token, auth_response.session.refresh_token, settings),
     )
 
 
 # noinspection PyUnusedLocal
-@router.post("/refresh", status_code=status.HTTP_200_OK)
+@router.post("/refresh", status_code=status.HTTP_200_OK, response_model_exclude_unset=True)
 @limiter.limit("20/minute")
 async def refresh_token(
     request: Request,  # slowapi requires this exact parameter name
@@ -353,8 +400,7 @@ async def refresh_token(
         request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
     )
     return RefreshResponse(
-        accessToken=auth_response.session.access_token,
-        refreshToken=auth_response.session.refresh_token,
+        **_body_tokens(request, auth_response.session.access_token, auth_response.session.refresh_token, settings)
     )
 
 
@@ -475,7 +521,7 @@ async def oauth_callback(
 
 
 # noinspection PyUnusedLocal
-@router.post("/oauth/exchange", status_code=status.HTTP_200_OK)
+@router.post("/oauth/exchange", status_code=status.HTTP_200_OK, response_model_exclude_unset=True)
 @limiter.limit("10/minute")
 async def oauth_exchange(
     request: Request,  # slowapi requires this exact parameter name
@@ -502,10 +548,7 @@ async def oauth_exchange(
     _set_session_cookies(request, response, data["accessToken"], data["refreshToken"], settings)
     # Body still returned for backward compat with the currently-deployed frontend bundle;
     # remove once the cookie-based migration is fully rolled out.
-    return OAuthExchangeResponse(
-        accessToken=data["accessToken"],
-        refreshToken=data["refreshToken"],
-    )
+    return OAuthExchangeResponse(**_body_tokens(request, data["accessToken"], data["refreshToken"], settings))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

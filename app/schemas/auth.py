@@ -45,20 +45,21 @@ class UserProfileResponse(BaseModel):
         return v
 
 
+# The tokens are left out for trusted web origins when WEB_TOKENS_IN_BODY is off (they travel in httpOnly cookies).
 class AuthResponse(BaseModel):
     user: UserProfileResponse
-    accessToken: str
-    refreshToken: str
+    accessToken: str | None = None
+    refreshToken: str | None = None
 
 
 class RefreshResponse(BaseModel):
-    accessToken: str
-    refreshToken: str
+    accessToken: str | None = None
+    refreshToken: str | None = None
 
 
 class OAuthExchangeResponse(BaseModel):
-    accessToken: str
-    refreshToken: str
+    accessToken: str | None = None
+    refreshToken: str | None = None
 
 
 class WsTicketResponse(BaseModel):
