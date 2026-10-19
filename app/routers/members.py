@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, require_club_organizer
@@ -57,6 +58,7 @@ async def list_members(
         select(ClubMember, User)
         .join(User, ClubMember.user_id == User.id)
         .where(ClubMember.club_id == club_id)
+        .order_by(ClubMember.joined_at, ClubMember.user_id)
         .offset(skip)
         .limit(limit)
     )
@@ -164,12 +166,23 @@ async def list_bans(
         except AppError:
             raise AppError(403, "Not authorized", "FORBIDDEN") from None
 
-    total_result = await db.execute(select(func.count()).select_from(ClubBan).where(ClubBan.club_id == club_id))
+    # an expired ban no longer applies (see the check in join), so it is not listed or counted
+    active = and_(
+        ClubBan.club_id == club_id,
+        or_(ClubBan.expires_at.is_(None), ClubBan.expires_at > datetime.now(UTC)),
+    )
+    total_result = await db.execute(select(func.count()).select_from(ClubBan).where(active))
     total = total_result.scalar_one()
     response.headers["X-Total-Count"] = str(total)
 
-    result = await db.execute(select(ClubBan).where(ClubBan.club_id == club_id).offset(skip).limit(limit))
-    bans = result.scalars().all()
+    result = await db.execute(
+        select(ClubBan, User.display_name, User.avatar_url)
+        .join(User, User.id == ClubBan.user_id)
+        .where(active)
+        .order_by(ClubBan.banned_at, ClubBan.user_id)
+        .offset(skip)
+        .limit(limit)
+    )
 
     return [
         BanResponse(
@@ -178,8 +191,10 @@ async def list_bans(
             bannedAt=b.banned_at.isoformat(),
             duration=b.duration,
             bannedBy=str(b.banned_by),
+            displayName=display_name,
+            avatarUrl=avatar_url,
         )
-        for b in bans
+        for b, display_name, avatar_url in result.all()
     ]
 
 
