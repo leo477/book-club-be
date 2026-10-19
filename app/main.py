@@ -297,7 +297,8 @@ def create_app() -> FastAPI:
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             auth_header = request.headers.get("Authorization")
             has_bearer = bool(auth_header and auth_header.startswith("Bearer "))
-            if not has_bearer and request.cookies.get("access_token"):
+            # the refresh cookie alone authenticates POST /auth/refresh, so it needs the check too
+            if not has_bearer and (request.cookies.get("access_token") or request.cookies.get("refresh_token")):
                 candidate = request.headers.get("origin") or request.headers.get("referer")
                 origin = None
                 if candidate:

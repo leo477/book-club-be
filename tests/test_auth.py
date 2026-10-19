@@ -431,6 +431,21 @@ async def test_csrf_blocks_cross_origin_cookie_authenticated_post(async_client, 
 
 
 @pytest.mark.asyncio
+async def test_csrf_blocks_cross_origin_post_with_only_a_refresh_cookie(async_client):
+    async_client.cookies.set("refresh_token", "some-refresh-token")
+    bad = await async_client.post("/api/v1/auth/refresh", headers={"Origin": "https://evil.com"})
+    assert bad.status_code == 403
+    assert bad.json()["detail"]["code"] == "CSRF_ORIGIN_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_csrf_lets_a_trusted_origin_refresh_with_only_a_refresh_cookie(async_client):
+    async_client.cookies.set("refresh_token", "some-refresh-token")
+    resp = await async_client.post("/api/v1/auth/refresh", headers={"Origin": "http://localhost:4200"})
+    assert resp.status_code != 403 or resp.json()["detail"]["code"] != "CSRF_ORIGIN_MISMATCH"
+
+
+@pytest.mark.asyncio
 async def test_csrf_allows_same_origin_cookie_authenticated_post(async_client, register_user):
     resp = await register_user()
     token = resp.json()["accessToken"]
