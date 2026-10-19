@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     BACKEND_URL: str = "http://localhost:8000"
     # Flip to true once every client sends the PKCE challenge/verifier; until then clients without one still work.
     OAUTH_REQUIRE_PKCE: bool = False
+    # Set to false once the Angular release that tolerates token-less auth responses is live (SCRUM-81): trusted web
+    # origins then get their session only through the httpOnly cookies, so script on the page cannot read a token.
+    WEB_TOKENS_IN_BODY: bool = True
     PHOTON_URL: str = "https://photon.komoot.io"
     PHOTON_TIMEOUT: int = 8
     SENTRY_DSN: str = ""

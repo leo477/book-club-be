@@ -6,7 +6,7 @@ import re
 import secrets
 import string
 import uuid
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
 import redis.asyncio as aioredis
@@ -221,6 +221,13 @@ def _set_session_cookies(
     _set_access_cookie(response, access_token, settings)
 
 
+def _body_tokens(request: Request, access_token: str, refresh_token: str, settings: Settings) -> dict[str, str]:
+    """Tokens for the JSON body; empty for a trusted web origin when WEB_TOKENS_IN_BODY is off (cookies carry them)."""
+    if not settings.WEB_TOKENS_IN_BODY and _is_trusted_web_origin(request, settings):
+        return {}
+    return {"accessToken": access_token, "refreshToken": refresh_token}
+
+
 def _clear_session_cookies(response: Response, settings: Settings) -> None:
     _clear_refresh_cookie(response, settings)
     _clear_access_cookie(response, settings)
@@ -278,7 +285,7 @@ async def register(
     password: Annotated[str, Body(min_length=8)],
     display_name: Annotated[str, Body(alias="displayName", min_length=1, max_length=100)],
     role: Annotated[Literal["user", "organizer"], Body()] = "user",
-) -> AuthResponse | JSONResponse:
+) -> dict[str, Any] | JSONResponse:
     result = await db.execute(select(User).where(User.email == email))
     if result.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -324,15 +331,15 @@ async def register(
     _set_session_cookies(
         request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
     )
+    # response_model=None here, so omit the unset token fields by hand (a dict keeps the cookies set on `response`)
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
-        accessToken=auth_response.session.access_token,
-        refreshToken=auth_response.session.refresh_token,
-    )
+        **_body_tokens(request, auth_response.session.access_token, auth_response.session.refresh_token, settings),
+    ).model_dump(mode="json", exclude_unset=True)
 
 
 # noinspection PyUnusedLocal
-@router.post("/login", status_code=status.HTTP_200_OK)
+@router.post("/login", status_code=status.HTTP_200_OK, response_model_exclude_unset=True)
 @limiter.limit("10/minute")
 @limiter.limit("10/15minutes", key_func=_account_rate_key)
 async def login(
@@ -359,13 +366,12 @@ async def login(
     )
     return AuthResponse(
         user=UserProfileResponse.model_validate(user),
-        accessToken=auth_response.session.access_token,
-        refreshToken=auth_response.session.refresh_token,
+        **_body_tokens(request, auth_response.session.access_token, auth_response.session.refresh_token, settings),
     )
 
 
 # noinspection PyUnusedLocal
-@router.post("/refresh", status_code=status.HTTP_200_OK)
+@router.post("/refresh", status_code=status.HTTP_200_OK, response_model_exclude_unset=True)
 @limiter.limit("20/minute")
 async def refresh_token(
     request: Request,  # slowapi requires this exact parameter name
@@ -394,8 +400,7 @@ async def refresh_token(
         request, response, auth_response.session.access_token, auth_response.session.refresh_token, settings
     )
     return RefreshResponse(
-        accessToken=auth_response.session.access_token,
-        refreshToken=auth_response.session.refresh_token,
+        **_body_tokens(request, auth_response.session.access_token, auth_response.session.refresh_token, settings)
     )
 
 
@@ -516,7 +521,7 @@ async def oauth_callback(
 
 
 # noinspection PyUnusedLocal
-@router.post("/oauth/exchange", status_code=status.HTTP_200_OK)
+@router.post("/oauth/exchange", status_code=status.HTTP_200_OK, response_model_exclude_unset=True)
 @limiter.limit("10/minute")
 async def oauth_exchange(
     request: Request,  # slowapi requires this exact parameter name
@@ -543,10 +548,7 @@ async def oauth_exchange(
     _set_session_cookies(request, response, data["accessToken"], data["refreshToken"], settings)
     # Body still returned for backward compat with the currently-deployed frontend bundle;
     # remove once the cookie-based migration is fully rolled out.
-    return OAuthExchangeResponse(
-        accessToken=data["accessToken"],
-        refreshToken=data["refreshToken"],
-    )
+    return OAuthExchangeResponse(**_body_tokens(request, data["accessToken"], data["refreshToken"], settings))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

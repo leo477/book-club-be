@@ -835,3 +835,90 @@ async def test_account_429_has_same_headers_as_ip_429(override_get_db):
     assert ip.status_code == 429
     assert ("retry-after" in acct.headers) == ("retry-after" in ip.headers)
     assert acct.json().keys() == ip.json().keys() == {"detail"}
+
+
+# ── SCRUM-81: WEB_TOKENS_IN_BODY ─────────────────────────────────────────────
+
+TRUSTED = {"Origin": "http://localhost:4200"}
+UNTRUSTED = {"Origin": "https://evil.com"}
+
+
+@pytest.fixture
+def tokens_out_of_body():
+    from app.dependencies import get_settings_dep
+    from tests.conftest import _make_test_settings
+
+    original = app.dependency_overrides[get_settings_dep]
+    settings = _make_test_settings().model_copy(update={"WEB_TOKENS_IN_BODY": False})
+    app.dependency_overrides[get_settings_dep] = lambda: settings
+    yield
+    app.dependency_overrides[get_settings_dep] = original
+
+
+@pytest.mark.asyncio
+async def test_default_keeps_tokens_in_the_body_for_web_origins(async_client):
+    resp = await async_client.post(
+        "/api/v1/auth/register",
+        headers=TRUSTED,
+        json={"email": "wt1@example.com", "password": "password123", "displayName": "W", "role": "user"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["accessToken"] and resp.json()["refreshToken"]
+
+
+@pytest.mark.asyncio
+async def test_register_and_login_omit_tokens_for_a_trusted_origin_but_keep_the_user(async_client, tokens_out_of_body):
+    reg = await async_client.post(
+        "/api/v1/auth/register",
+        headers=TRUSTED,
+        json={"email": "wt2@example.com", "password": "password123", "displayName": "W", "role": "user"},
+    )
+    assert reg.status_code == 201
+    assert "accessToken" not in reg.json() and "refreshToken" not in reg.json()
+    assert reg.json()["user"]["email"] == "wt2@example.com"
+    assert "avatarUrl" in reg.json()["user"]  # null fields of the user are not dropped
+    assert _set_cookie_header(reg, "access_token") and _set_cookie_header(reg, "refresh_token")
+
+    login = await async_client.post(
+        "/api/v1/auth/login", headers=TRUSTED, json={"email": "wt2@example.com", "password": "password123"}
+    )
+    assert login.status_code == 200
+    assert "accessToken" not in login.json() and "refreshToken" not in login.json()
+    assert login.json()["user"].keys() == reg.json()["user"].keys()
+    assert _set_cookie_header(login, "access_token")
+
+
+@pytest.mark.asyncio
+async def test_refresh_omits_tokens_for_a_trusted_origin_and_still_sets_cookies(async_client, tokens_out_of_body):
+    resp = await async_client.post("/api/v1/auth/refresh", headers=TRUSTED, json={"refreshToken": "fake-refresh-token"})
+    assert resp.status_code == 200
+    assert resp.json() == {}
+    assert _set_cookie_header(resp, "access_token") and _set_cookie_header(resp, "refresh_token")
+
+
+@pytest.mark.asyncio
+async def test_clients_without_a_trusted_origin_still_get_tokens(async_client, tokens_out_of_body):
+    resp = await async_client.post(
+        "/api/v1/auth/refresh", headers=UNTRUSTED, json={"refreshToken": "fake-refresh-token"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["accessToken"] and resp.json()["refreshToken"] == "fake-refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_oauth_exchange_omits_tokens_for_a_trusted_origin(async_client, tokens_out_of_body):
+    import json
+    from unittest.mock import AsyncMock
+
+    from app.dependencies import get_redis
+
+    mock_redis = AsyncMock()
+    mock_redis.getdel = AsyncMock(
+        return_value=json.dumps({"accessToken": "access-x", "refreshToken": "refresh-x", "userId": "uid"})
+    )
+    app.dependency_overrides[get_redis] = lambda: mock_redis
+
+    resp = await async_client.post("/api/v1/auth/oauth/exchange", headers=TRUSTED, json={"code": "handoff"})
+    assert resp.status_code == 200
+    assert resp.json() == {}
+    assert "access-x" in (_set_cookie_header(resp, "access_token") or "")
