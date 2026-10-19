@@ -597,8 +597,11 @@ async def ban_user_service(
     club = await _lock_club_and_recheck_actor(club_id, current_user, db)
 
     user_result = await db.execute(select(User).where(User.id == user_id))
-    if not user_result.scalar_one_or_none():
+    target_user = user_result.scalar_one_or_none()
+    if not target_user:
         raise AppError(404, "User not found", "USER_NOT_FOUND")
+    # read before commit() expires the instance
+    target_name, target_avatar = target_user.display_name, target_user.avatar_url
 
     if club.organizer_id == user_id:
         raise AppError(400, "Cannot ban the club owner", "CANNOT_REMOVE_OWNER")
@@ -643,6 +646,8 @@ async def ban_user_service(
         bannedAt=ban.banned_at.isoformat(),
         duration=str(body.duration),
         bannedBy=str(current_user.id),
+        displayName=target_name,
+        avatarUrl=target_avatar,
     )
 
 
