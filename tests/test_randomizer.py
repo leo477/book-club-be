@@ -1,8 +1,12 @@
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
+from app.models.club_member import ClubMember
 from app.models.randomizer import RandomizerSession
+from app.models.user import User
+from app.schemas.randomizer import MAX_CANDIDATES
 
 
 async def create_organizer_with_club(async_client, register_user, auth_headers):
@@ -80,11 +84,13 @@ async def test_randomizer_purpose_too_long(async_client, register_user, auth_hea
 
 
 @pytest.mark.asyncio
-async def test_randomizer_too_many_candidates(async_client, register_user, auth_headers):
+async def test_randomizer_too_many_candidates(async_client, register_user, auth_headers, db_session):
     headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
-    candidates = [{"userId": str(uuid.uuid4()), "displayName": "A"} for _ in range(201)]
+    candidates = [{"userId": str(uuid.uuid4()), "displayName": "A"} for _ in range(MAX_CANDIDATES + 1)]
     resp = await async_client.post(_url(club_id), headers=headers, json={"purpose": "p", "candidates": candidates})
     assert resp.status_code == 422
+    assert resp.json()["detail"][0]["type"] == "too_long"
+    assert await _session_count(db_session) == 0
 
 
 @pytest.mark.asyncio
@@ -395,3 +401,23 @@ async def test_randomizer_rejected_post_persists_nothing(
     resp = await async_client.post(_url(club_id), headers=bob_headers, json=payload)
     assert resp.status_code == 403
     assert await _session_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_randomizer_accepts_candidates_at_limit(async_client, register_user, auth_headers, db_session):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    users = [
+        User(id=uuid.uuid4(), email=f"cap{i}@example.com", display_name=f"Cap {i}", role="user")
+        for i in range(MAX_CANDIDATES)
+    ]
+    db_session.add_all(users)
+    await db_session.flush()
+    db_session.add_all(
+        ClubMember(id=uuid.uuid4(), club_id=uuid.UUID(club_id), user_id=u.id, role="member") for u in users
+    )
+    await db_session.commit()
+    candidates = [{"userId": str(u.id), "displayName": u.display_name} for u in users]
+    resp = await async_client.post(_url(club_id), headers=headers, json={"purpose": "p", "candidates": candidates})
+    assert resp.status_code == 201
+    assert len(resp.json()["candidates"]) == MAX_CANDIDATES
+
