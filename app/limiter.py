@@ -63,6 +63,11 @@ class ResilientLimiter(Limiter):
                 self._open_until = None
 
 
+def user_rate_key(request: Request) -> str:
+    user = getattr(request.state, "_current_user", None)
+    return str(user.id) if user is not None else get_remote_address(request)
+
+
 def build_limiter(storage_uri: str, env: str = "development") -> Limiter:
     options: dict[str, Any] = {**_REDIS_OPTIONS, "key_prefix": f"LIMITS:{env}"} if storage_uri else {}
     return ResilientLimiter(

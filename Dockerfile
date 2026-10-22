@@ -1,5 +1,5 @@
 # Stage 1: builder
-FROM python:3.14-slim-bookworm AS builder
+FROM python:3.15-slim-bookworm AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.6 /uv /bin/uv
 
@@ -9,17 +9,22 @@ ARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     gcc \
+    libc6-dev \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock .python-version ./
 
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+# SCRUM-185: never let uv download a managed interpreter (the venv python would be a
+# symlink into /root/.local/share/uv, absent from the runtime stage). Use the image's
+# /usr/local/bin/python3.x, which is identical in the runtime stage.
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
 
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Stage 2: runtime
-FROM python:3.14-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 ARG CACHEBUST=1
 RUN apt-get update && apt-get upgrade -y && \

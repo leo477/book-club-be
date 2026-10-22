@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+MAX_CANDIDATES = 1000
+
 
 class CandidateSchema(BaseModel):
     userId: str
@@ -27,5 +29,5 @@ class CreateRandomizerSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     purpose: str = Field(max_length=200)
-    candidates: list[CandidateIn] = Field(max_length=200)
+    candidates: list[CandidateIn] = Field(max_length=MAX_CANDIDATES)
     result: CandidateIn | None = None

@@ -1,8 +1,13 @@
+import types
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
+from app.models.club_member import ClubMember
 from app.models.randomizer import RandomizerSession
+from app.models.user import User
+from app.schemas.randomizer import MAX_CANDIDATES
 
 
 async def create_organizer_with_club(async_client, register_user, auth_headers):
@@ -80,11 +85,14 @@ async def test_randomizer_purpose_too_long(async_client, register_user, auth_hea
 
 
 @pytest.mark.asyncio
-async def test_randomizer_too_many_candidates(async_client, register_user, auth_headers):
+async def test_randomizer_too_many_candidates(async_client, register_user, auth_headers, db_session):
     headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
-    candidates = [{"userId": str(uuid.uuid4()), "displayName": "A"} for _ in range(201)]
+    candidates = [{"userId": str(uuid.uuid4()), "displayName": "A"} for _ in range(MAX_CANDIDATES + 1)]
     resp = await async_client.post(_url(club_id), headers=headers, json={"purpose": "p", "candidates": candidates})
     assert resp.status_code == 422
+    assert resp.json()["detail"][0]["type"] == "too_long"
+    assert resp.json()["detail"][0]["loc"][-1] == "candidates"
+    assert await _session_count(db_session) == 0
 
 
 @pytest.mark.asyncio
@@ -395,3 +403,79 @@ async def test_randomizer_rejected_post_persists_nothing(
     resp = await async_client.post(_url(club_id), headers=bob_headers, json=payload)
     assert resp.status_code == 403
     assert await _session_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_randomizer_accepts_candidates_at_limit(async_client, register_user, auth_headers, db_session):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    users = [
+        User(id=uuid.uuid4(), email=f"cap{i}@example.com", display_name=f"Cap {i}", role="user")
+        for i in range(MAX_CANDIDATES)
+    ]
+    db_session.add_all(users)
+    await db_session.flush()
+    db_session.add_all(
+        ClubMember(id=uuid.uuid4(), club_id=uuid.UUID(club_id), user_id=u.id, role="member") for u in users
+    )
+    await db_session.commit()
+    candidates = [{"userId": str(u.id), "displayName": u.display_name} for u in users]
+    resp = await async_client.post(_url(club_id), headers=headers, json={"purpose": "p", "candidates": candidates})
+    assert resp.status_code == 201
+    assert [c["userId"] for c in resp.json()["candidates"]] == [c["userId"] for c in candidates]
+
+
+def _tie_id(n):
+    return uuid.UUID(int=(0xA << 124) | n)
+
+
+@pytest.mark.asyncio
+async def test_randomizer_history_pages_across_identical_timestamps(
+    async_client, register_user, auth_headers, db_session
+):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    me = await _me(async_client, headers)
+    same = datetime(2026, 1, 1, tzinfo=UTC)
+    ids = [_tie_id(i) for i in (3, 1, 4, 0, 2)]
+    for i in ids:
+        db_session.add(
+            RandomizerSession(
+                id=i,
+                club_id=uuid.UUID(club_id),
+                created_by=uuid.UUID(me["id"]),
+                purpose="p",
+                candidates=[],
+                created_at=same,
+            )
+        )
+        await db_session.flush()
+    await db_session.commit()
+    url = f"/api/v1/clubs/{club_id}/randomizer/history"
+    seen = []
+    for skip in (0, 2, 4):
+        seen += [
+            r["id"] for r in (await async_client.get(url, headers=headers, params={"limit": 2, "skip": skip})).json()
+        ]
+    assert len(seen) == 5
+    assert seen == [str(_tie_id(i)) for i in (4, 3, 2, 1, 0)]
+
+
+@pytest.mark.asyncio
+async def test_create_session_rate_limited_per_user(async_client, register_user, auth_headers, monkeypatch):
+    monkeypatch.setattr("limits.storage.memory.time", types.SimpleNamespace(time=lambda: 1_000_000.0))
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    payload = {"purpose": "p", "candidates": [], "result": None}
+    for i in range(30):
+        resp = await async_client.post(_url(club_id), headers=headers, json=payload)
+        assert resp.status_code == 201, i
+    blocked = await async_client.post(_url(club_id), headers=headers, json=payload)
+    assert blocked.status_code == 429
+
+    other_headers = await auth_headers(email="other-org@example.com", displayName="Other")
+    await async_client.patch("/api/v1/users/me/role", headers=other_headers, json={"role": "organizer"})
+    other_club = (
+        await async_client.post(
+            "/api/v1/clubs", headers=other_headers, json={"name": "Other Club", "description": "D", "city": "Kyiv"}
+        )
+    ).json()["id"]
+    other = await async_client.post(_url(other_club), headers=other_headers, json=payload)
+    assert other.status_code == 201

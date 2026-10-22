@@ -15,6 +15,7 @@ from app.models.club_member import ClubMember
 from app.models.event import Event, EventAttendee
 from app.models.quiz import Quiz, QuizAttempt
 from app.models.user import User
+from app.repositories.pagination import fetch_page_with_total
 
 logger = structlog.get_logger(__name__)
 
@@ -164,16 +165,19 @@ class ClubRepository:
 
     async def list_pending_join_requests_with_users(
         self, club_id: uuid.UUID, skip: int = 0, limit: int = 20
-    ) -> list[tuple[ClubJoinRequest, User]]:
-        result = await self.db.execute(
+    ) -> tuple[list[tuple[ClubJoinRequest, User]], int]:
+        pending = and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.status == "pending")
+        rows, total = await fetch_page_with_total(
+            self.db,
             select(ClubJoinRequest, User)
             .join(User, ClubJoinRequest.user_id == User.id)
-            .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.status == "pending"))
-            .order_by(ClubJoinRequest.created_at.asc())
-            .offset(skip)
-            .limit(limit)
+            .where(pending)
+            .order_by(ClubJoinRequest.created_at.asc(), ClubJoinRequest.user_id.asc()),
+            select(func.count()).select_from(ClubJoinRequest).where(pending),
+            skip,
+            limit,
         )
-        return [(req, user) for req, user in result.all()]
+        return [(req, user) for req, user in rows], total
 
     # --- Stats aggregations ---------------------------------------------------
 

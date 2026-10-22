@@ -22,7 +22,7 @@ from supabase_auth.types import User as SupabaseUser
 from app.config import Settings
 from app.dependencies import get_current_user, get_db_dep, get_redis, get_settings_dep
 from app.exceptions import AppError
-from app.limiter import limiter
+from app.limiter import limiter, user_rate_key
 from app.models.user import User
 from app.schemas.auth import (
     AuthResponse,
@@ -564,14 +564,9 @@ async def logout(
     return response
 
 
-def _user_rate_key(request: Request) -> str:
-    user = getattr(request.state, "_current_user", None)
-    return str(user.id) if user is not None else get_remote_address(request)
-
-
 # noinspection PyUnusedLocal
 @router.post("/ws-ticket", status_code=status.HTTP_200_OK)
-@limiter.limit("10/minute", key_func=_user_rate_key)
+@limiter.limit("10/minute", key_func=user_rate_key)
 async def create_ws_ticket(
     request: Request,  # slowapi requires this exact parameter name
     redis: Annotated[aioredis.Redis, Depends(get_redis)],

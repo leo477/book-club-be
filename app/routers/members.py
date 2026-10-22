@@ -8,13 +8,11 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_current_user, get_db_dep, require_club_organizer
-from app.exceptions import AppError
-from app.models.club import Club
+from app.dependencies import get_current_user, get_db_dep, require_club_owner_or_organizer
 from app.models.club_ban import ClubBan
-from app.models.club_join_request import ClubJoinRequest
 from app.models.club_member import ClubMember
 from app.models.user import User
+from app.repositories.pagination import fetch_page_with_total
 from app.schemas.auth import build_socials
 from app.schemas.clubs import (
     BanRequest,
@@ -50,19 +48,17 @@ async def list_members(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[MemberResponse]:
     await require_club_viewable(club_id, current_user, db)
-    total_result = await db.execute(select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id))
-    total = total_result.scalar_one()
-    response.headers["X-Total-Count"] = str(total)
-
-    result = await db.execute(
+    rows, total = await fetch_page_with_total(
+        db,
         select(ClubMember, User)
         .join(User, ClubMember.user_id == User.id)
         .where(ClubMember.club_id == club_id)
-        .order_by(ClubMember.joined_at, ClubMember.user_id)
-        .offset(skip)
-        .limit(limit)
+        .order_by(ClubMember.joined_at, ClubMember.user_id),
+        select(func.count()).select_from(ClubMember).where(ClubMember.club_id == club_id),
+        skip,
+        limit,
     )
-    rows = result.all()
+    response.headers["X-Total-Count"] = str(total)
 
     members: list[MemberResponse] = []
     for membership, user in rows:
@@ -149,40 +145,24 @@ async def list_bans(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[BanResponse]:
-    # L6: require_club_organizer checks club_members for role="organizer", but a
-    # brand-new club's organizer_id in the clubs table is the authoritative source.
-    # If the club_members record is missing (data inconsistency / race on creation),
-    # fall back to checking Club.organizer_id directly so the endpoint returns []
-    # instead of 403, avoiding a spurious frontend warning for new clubs.
-    club_result = await db.execute(select(Club).where(Club.id == club_id))
-    club = club_result.scalar_one_or_none()
-    if club is None:
-        raise AppError(404, "Club not found", "CLUB_NOT_FOUND")
-
-    if club.organizer_id != current_user.id:
-        # Not the club owner — check club_members for organizer role (e.g. delegated).
-        try:
-            await require_club_organizer(club_id, current_user, db)
-        except AppError:
-            raise AppError(403, "Not authorized", "FORBIDDEN") from None
+    await require_club_owner_or_organizer(club_id, current_user, db)
 
     # an expired ban no longer applies (see the check in join), so it is not listed or counted
     active = and_(
         ClubBan.club_id == club_id,
         or_(ClubBan.expires_at.is_(None), ClubBan.expires_at > datetime.now(UTC)),
     )
-    total_result = await db.execute(select(func.count()).select_from(ClubBan).where(active))
-    total = total_result.scalar_one()
-    response.headers["X-Total-Count"] = str(total)
-
-    result = await db.execute(
+    rows, total = await fetch_page_with_total(
+        db,
         select(ClubBan, User.display_name, User.avatar_url)
         .join(User, User.id == ClubBan.user_id)
         .where(active)
-        .order_by(ClubBan.banned_at, ClubBan.user_id)
-        .offset(skip)
-        .limit(limit)
+        .order_by(ClubBan.banned_at, ClubBan.user_id),
+        select(func.count()).select_from(ClubBan).where(active),
+        skip,
+        limit,
     )
+    response.headers["X-Total-Count"] = str(total)
 
     return [
         BanResponse(
@@ -194,7 +174,7 @@ async def list_bans(
             displayName=display_name,
             avatarUrl=avatar_url,
         )
-        for b, display_name, avatar_url in result.all()
+        for b, display_name, avatar_url in rows
     ]
 
 
@@ -207,14 +187,8 @@ async def list_join_requests(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[JoinRequestResponse]:
-    requests = await list_join_requests_service(club_id, current_user, db, skip, limit)
-
-    total_result = await db.execute(
-        select(func.count())
-        .select_from(ClubJoinRequest)
-        .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.status == "pending"))
-    )
-    response.headers["X-Total-Count"] = str(total_result.scalar_one())
+    requests, total = await list_join_requests_service(club_id, current_user, db, skip, limit)
+    response.headers["X-Total-Count"] = str(total)
     return requests
 
 
