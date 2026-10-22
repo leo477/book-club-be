@@ -230,21 +230,30 @@ async def test_attend_event_as_member_returns_member(async_client, register_user
     assert requests.headers["X-Total-Count"] == "0"
 
 
+def _tie_id(n):
+    return uuid.UUID(int=(0xA << 124) | n)
+
+
 @pytest.mark.asyncio
 async def test_join_requests_page_across_identical_timestamps(async_client, register_user, auth_headers, db_session):
     org_headers, club_id = await _organizer_with_club(
         async_client, register_user, auth_headers, "jr_tie_org@example.com", "JRTieClub"
     )
     users = [
-        User(id=uuid.uuid4(), email=f"jr_tie{i}@example.com", display_name=f"Tie {i}", role="user") for i in range(5)
+        User(id=_tie_id(i + 1), email=f"jr_tie{i}@example.com", display_name=f"Tie {i}", role="user")
+        for i in (3, 1, 4, 0, 2)
     ]
-    db_session.add_all(users)
-    await db_session.flush()
+    for u in users:
+        db_session.add(u)
+        await db_session.flush()
     same = datetime(2026, 1, 1, tzinfo=UTC)
-    db_session.add_all(
-        ClubJoinRequest(club_id=uuid.UUID(club_id), user_id=u.id, status="pending", source="manual", created_at=same)
-        for u in users
-    )
+    for u in users:
+        db_session.add(
+            ClubJoinRequest(
+                club_id=uuid.UUID(club_id), user_id=u.id, status="pending", source="manual", created_at=same
+            )
+        )
+        await db_session.flush()
     await db_session.commit()
     user_ids = {str(u.id) for u in users}
 
@@ -256,4 +265,4 @@ async def test_join_requests_page_across_identical_timestamps(async_client, regi
         seen += [r["userId"] for r in resp.json()]
     assert len(seen) == 5
     assert set(seen) == user_ids
-    assert seen == sorted(seen)
+    assert seen == [str(_tie_id(i)) for i in range(1, 6)]

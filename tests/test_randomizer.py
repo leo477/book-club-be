@@ -423,6 +423,10 @@ async def test_randomizer_accepts_candidates_at_limit(async_client, register_use
     assert [c["userId"] for c in resp.json()["candidates"]] == [c["userId"] for c in candidates]
 
 
+def _tie_id(n):
+    return uuid.UUID(int=(0xA << 124) | n)
+
+
 @pytest.mark.asyncio
 async def test_randomizer_history_pages_across_identical_timestamps(
     async_client, register_user, auth_headers, db_session
@@ -430,18 +434,19 @@ async def test_randomizer_history_pages_across_identical_timestamps(
     headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
     me = await _me(async_client, headers)
     same = datetime(2026, 1, 1, tzinfo=UTC)
-    ids = {uuid.uuid4() for _ in range(5)}
-    db_session.add_all(
-        RandomizerSession(
-            id=i,
-            club_id=uuid.UUID(club_id),
-            created_by=uuid.UUID(me["id"]),
-            purpose="p",
-            candidates=[],
-            created_at=same,
+    ids = [_tie_id(i) for i in (3, 1, 4, 0, 2)]
+    for i in ids:
+        db_session.add(
+            RandomizerSession(
+                id=i,
+                club_id=uuid.UUID(club_id),
+                created_by=uuid.UUID(me["id"]),
+                purpose="p",
+                candidates=[],
+                created_at=same,
+            )
         )
-        for i in ids
-    )
+        await db_session.flush()
     await db_session.commit()
     url = f"/api/v1/clubs/{club_id}/randomizer/history"
     seen = []
@@ -450,5 +455,4 @@ async def test_randomizer_history_pages_across_identical_timestamps(
             r["id"] for r in (await async_client.get(url, headers=headers, params={"limit": 2, "skip": skip})).json()
         ]
     assert len(seen) == 5
-    assert {uuid.UUID(i) for i in seen} == ids
-    assert seen == sorted(seen, reverse=True)
+    assert seen == [str(_tie_id(i)) for i in (4, 3, 2, 1, 0)]
