@@ -319,7 +319,7 @@ async def test_club_repo_join_request_lookups(db_session):
     assert await repo.get_join_request(club.id, requester.id) is None
     assert await repo.get_pending_join_request(club.id, requester.id) is None
     assert await repo.get_latest_join_request(club.id, requester.id) is None
-    assert await repo.list_pending_join_requests_with_users(club.id) == []
+    assert await repo.list_pending_join_requests_with_users(club.id) == ([], 0)
 
     req = ClubJoinRequest(id=uuid.uuid4(), club_id=club.id, user_id=requester.id, status="pending", source="manual")
     db_session.add(req)
@@ -330,7 +330,8 @@ async def test_club_repo_join_request_lookups(db_session):
     latest = await repo.get_latest_join_request(club.id, requester.id)
     assert latest is not None and latest.id == req.id
 
-    rows = await repo.list_pending_join_requests_with_users(club.id)
+    rows, total = await repo.list_pending_join_requests_with_users(club.id)
+    assert total == 1
     assert len(rows) == 1
     found_req, found_user = rows[0]
     assert found_req.id == req.id
@@ -340,7 +341,7 @@ async def test_club_repo_join_request_lookups(db_session):
     req.status = "rejected"
     await db_session.commit()
     assert await repo.get_pending_join_request(club.id, requester.id) is None
-    assert await repo.list_pending_join_requests_with_users(club.id) == []
+    assert await repo.list_pending_join_requests_with_users(club.id) == ([], 0)
     still_latest = await repo.get_latest_join_request(club.id, requester.id)
     assert still_latest is not None and still_latest.status == "rejected"
 
@@ -889,3 +890,34 @@ async def test_club_repo_count_upcoming_events_uses_valid_statuses(db_session):
     await db_session.commit()
 
     assert await ClubRepository(db_session).count_upcoming_events(club.id, datetime.now(UTC)) == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_page_with_total_uses_one_query_unless_page_is_empty(db_session):
+    from sqlalchemy import event, func
+
+    from app.repositories.pagination import fetch_page_with_total
+
+    users = [_user() for _ in range(3)]
+    db_session.add_all(users)
+    await db_session.commit()
+
+    statements: list[str] = []
+    engine = db_session.get_bind()
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        base = select(User.id).order_by(User.id)
+        count = select(func.count()).select_from(User)
+
+        rows, total = await fetch_page_with_total(db_session, base, count, 1, 1)
+        assert (len(rows), total, len(statements)) == (1, 3, 1)
+
+        statements.clear()
+        rows, total = await fetch_page_with_total(db_session, base, count, 10, 1)
+        assert (rows, total, len(statements)) == ([], 3, 2)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)

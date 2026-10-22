@@ -402,14 +402,14 @@ async def list_join_requests_service(
     db: AsyncSession,
     skip: int,
     limit: int,
-) -> list[JoinRequestResponse]:
+) -> tuple[list[JoinRequestResponse], int]:
     from app.dependencies import require_club_organizer
 
     await require_club_organizer(club_id, current_user, db)
 
     repo = ClubRepository(db)
-    rows = await repo.list_pending_join_requests_with_users(club_id, skip, limit)
-    return [
+    rows, total = await repo.list_pending_join_requests_with_users(club_id, skip, limit)
+    items = [
         JoinRequestResponse(
             userId=str(user.id),
             displayName=user.display_name,
@@ -420,6 +420,7 @@ async def list_join_requests_service(
         )
         for req, user in rows
     ]
+    return items, total
 
 
 async def approve_join_request_service(

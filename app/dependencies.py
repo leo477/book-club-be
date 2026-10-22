@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.exceptions import AppError
+from app.models.club import Club
 from app.models.club_member import ClubMember
 from app.models.event import Event
 from app.models.user import User
@@ -90,6 +91,19 @@ async def require_club_organizer(
     if not membership:
         raise AppError(status.HTTP_403_FORBIDDEN, "Not authorized", "FORBIDDEN")
     return membership
+
+
+async def require_club_owner_or_organizer(
+    club_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db_dep)],
+) -> None:
+    result = await db.execute(select(Club.organizer_id).where(Club.id == club_id))
+    row = result.first()
+    if row is None:
+        raise AppError(status.HTTP_404_NOT_FOUND, "Club not found", "CLUB_NOT_FOUND")
+    if row[0] != current_user.id:
+        await require_club_organizer(club_id, current_user, db)
 
 
 async def require_admin(
