@@ -90,6 +90,7 @@ async def test_randomizer_too_many_candidates(async_client, register_user, auth_
     resp = await async_client.post(_url(club_id), headers=headers, json={"purpose": "p", "candidates": candidates})
     assert resp.status_code == 422
     assert resp.json()["detail"][0]["type"] == "too_long"
+    assert resp.json()["detail"][0]["loc"][-1] == "candidates"
     assert await _session_count(db_session) == 0
 
 
@@ -419,7 +420,7 @@ async def test_randomizer_accepts_candidates_at_limit(async_client, register_use
     candidates = [{"userId": str(u.id), "displayName": u.display_name} for u in users]
     resp = await async_client.post(_url(club_id), headers=headers, json={"purpose": "p", "candidates": candidates})
     assert resp.status_code == 201
-    assert len(resp.json()["candidates"]) == MAX_CANDIDATES
+    assert [c["userId"] for c in resp.json()["candidates"]] == [c["userId"] for c in candidates]
 
 
 @pytest.mark.asyncio
