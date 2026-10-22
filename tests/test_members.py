@@ -573,3 +573,35 @@ async def test_list_members_paging_is_stable_and_ordered_by_join_time(
         paged += [m["userId"] for m in page.json()]
     assert paged == [m["userId"] for m in full]
     assert len(set(paged)) == 3
+
+
+@pytest.mark.asyncio
+async def test_list_bans_unknown_club_is_404(async_client, register_user, auth_headers):
+    await register_user(email="morg181a@example.com")
+    headers = await auth_headers(email="morg181a@example.com")
+    resp = await async_client.get(f"/api/v1/clubs/{uuid.uuid4()}/bans", headers=headers)
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "CLUB_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_list_bans_delegated_organizer_allowed_and_plain_member_forbidden(
+    async_client, register_user, auth_headers, make_member
+):
+    headers, club_id = await create_organizer_with_club(
+        async_client, register_user, auth_headers, email="morg181b@example.com", club_name="MClub181b"
+    )
+    await register_user(email="muser181b@example.com")
+    delegate_headers = await auth_headers(email="muser181b@example.com")
+    delegate_id = await make_member(club_id, delegate_headers)
+
+    forbidden = await async_client.get(f"/api/v1/clubs/{club_id}/bans", headers=delegate_headers)
+    assert forbidden.status_code == 403
+    assert forbidden.json()["detail"]["code"] == "FORBIDDEN"
+
+    await async_client.patch(
+        f"/api/v1/clubs/{club_id}/members/{delegate_id}/role", headers=headers, json={"role": "organizer"}
+    )
+    allowed = await async_client.get(f"/api/v1/clubs/{club_id}/bans", headers=delegate_headers)
+    assert allowed.status_code == 200
+    assert allowed.json() == []
