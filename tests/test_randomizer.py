@@ -421,3 +421,33 @@ async def test_randomizer_accepts_candidates_at_limit(async_client, register_use
     assert resp.status_code == 201
     assert len(resp.json()["candidates"]) == MAX_CANDIDATES
 
+
+@pytest.mark.asyncio
+async def test_randomizer_history_pages_across_identical_timestamps(
+    async_client, register_user, auth_headers, db_session
+):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    me = await _me(async_client, headers)
+    same = datetime(2026, 1, 1, tzinfo=UTC)
+    ids = {uuid.uuid4() for _ in range(5)}
+    db_session.add_all(
+        RandomizerSession(
+            id=i,
+            club_id=uuid.UUID(club_id),
+            created_by=uuid.UUID(me["id"]),
+            purpose="p",
+            candidates=[],
+            created_at=same,
+        )
+        for i in ids
+    )
+    await db_session.commit()
+    url = f"/api/v1/clubs/{club_id}/randomizer/history"
+    seen = []
+    for skip in (0, 2, 4):
+        seen += [
+            r["id"] for r in (await async_client.get(url, headers=headers, params={"limit": 2, "skip": skip})).json()
+        ]
+    assert len(seen) == 5
+    assert {uuid.UUID(i) for i in seen} == ids
+    assert seen == sorted(seen, reverse=True)

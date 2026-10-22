@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
+from app.models.club_join_request import ClubJoinRequest
+from app.models.user import User
 
 
 async def _organizer_with_club(async_client, register_user, auth_headers, email, club_name):
@@ -224,3 +228,32 @@ async def test_attend_event_as_member_returns_member(async_client, register_user
     # No join request was created for an existing member
     requests = await async_client.get(f"/api/v1/clubs/{club_id}/join-requests", headers=org_headers)
     assert requests.headers["X-Total-Count"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_join_requests_page_across_identical_timestamps(async_client, register_user, auth_headers, db_session):
+    org_headers, club_id = await _organizer_with_club(
+        async_client, register_user, auth_headers, "jr_tie_org@example.com", "JRTieClub"
+    )
+    users = [
+        User(id=uuid.uuid4(), email=f"jr_tie{i}@example.com", display_name=f"Tie {i}", role="user") for i in range(5)
+    ]
+    db_session.add_all(users)
+    await db_session.flush()
+    same = datetime(2026, 1, 1, tzinfo=UTC)
+    db_session.add_all(
+        ClubJoinRequest(club_id=uuid.UUID(club_id), user_id=u.id, status="pending", source="manual", created_at=same)
+        for u in users
+    )
+    await db_session.commit()
+    user_ids = {str(u.id) for u in users}
+
+    seen = []
+    for skip in (0, 2, 4):
+        resp = await async_client.get(
+            f"/api/v1/clubs/{club_id}/join-requests", headers=org_headers, params={"limit": 2, "skip": skip}
+        )
+        seen += [r["userId"] for r in resp.json()]
+    assert len(seen) == 5
+    assert set(seen) == user_ids
+    assert seen == sorted(seen)
