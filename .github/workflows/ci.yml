@@ -127,6 +127,22 @@ jobs:
           SECRET_KEY: test-secret-key-for-ci-pipeline-32chars
           ENV: test
 
+  # SCRUM-185: the image was only built on push to main, so a Python base-image bump
+  # that produced an unstartable image went unnoticed on PRs. Build it and import the app.
+  docker-smoke:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - name: Build Docker image
+        run: docker build -t book-club-be:ci .
+      - name: Smoke test (venv interpreter resolves and app imports)
+        run: |
+          docker run --rm --entrypoint /app/.venv/bin/python \
+            -e DATABASE_URL=postgresql+asyncpg://u:p@localhost/db -e SECRET_KEY=ci -e ENV=test \
+            book-club-be:ci -c "import sys; print(sys.version); import app.main"
+
   sonarcloud:
     name: SonarCloud
     needs: test
