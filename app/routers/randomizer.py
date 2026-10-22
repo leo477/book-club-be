@@ -87,7 +87,7 @@ async def get_history(
     result = await db.execute(
         select(RandomizerSession)
         .where(RandomizerSession.club_id == club_id)
-        .order_by(RandomizerSession.created_at.desc())
+        .order_by(RandomizerSession.created_at.desc(), RandomizerSession.id.desc())
         .offset(skip)
         .limit(limit)
     )

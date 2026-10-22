@@ -169,7 +169,7 @@ class ClubRepository:
             select(ClubJoinRequest, User)
             .join(User, ClubJoinRequest.user_id == User.id)
             .where(and_(ClubJoinRequest.club_id == club_id, ClubJoinRequest.status == "pending"))
-            .order_by(ClubJoinRequest.created_at.asc())
+            .order_by(ClubJoinRequest.created_at.asc(), ClubJoinRequest.user_id.asc())
             .offset(skip)
             .limit(limit)
         )
