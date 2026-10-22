@@ -456,3 +456,24 @@ async def test_randomizer_history_pages_across_identical_timestamps(
         ]
     assert len(seen) == 5
     assert seen == [str(_tie_id(i)) for i in (4, 3, 2, 1, 0)]
+
+
+@pytest.mark.asyncio
+async def test_create_session_rate_limited_per_user(async_client, register_user, auth_headers):
+    headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
+    payload = {"purpose": "p", "candidates": [], "result": None}
+    for i in range(30):
+        resp = await async_client.post(_url(club_id), headers=headers, json=payload)
+        assert resp.status_code == 201, i
+    blocked = await async_client.post(_url(club_id), headers=headers, json=payload)
+    assert blocked.status_code == 429
+
+    other_headers = await auth_headers(email="other-org@example.com", displayName="Other")
+    await async_client.patch("/api/v1/users/me/role", headers=other_headers, json={"role": "organizer"})
+    other_club = (
+        await async_client.post(
+            "/api/v1/clubs", headers=other_headers, json={"name": "Other Club", "description": "D", "city": "Kyiv"}
+        )
+    ).json()["id"]
+    other = await async_client.post(_url(other_club), headers=other_headers, json=payload)
+    assert other.status_code == 201
