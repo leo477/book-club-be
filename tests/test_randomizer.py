@@ -1,3 +1,4 @@
+import types
 import uuid
 from datetime import UTC, datetime
 
@@ -459,7 +460,8 @@ async def test_randomizer_history_pages_across_identical_timestamps(
 
 
 @pytest.mark.asyncio
-async def test_create_session_rate_limited_per_user(async_client, register_user, auth_headers):
+async def test_create_session_rate_limited_per_user(async_client, register_user, auth_headers, monkeypatch):
+    monkeypatch.setattr("limits.storage.memory.time", types.SimpleNamespace(time=lambda: 1_000_000.0))
     headers, club_id = await create_organizer_with_club(async_client, register_user, auth_headers)
     payload = {"purpose": "p", "candidates": [], "result": None}
     for i in range(30):

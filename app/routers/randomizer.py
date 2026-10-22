@@ -7,11 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db_dep, require_club_organizer
 from app.exceptions import AppError
-from app.limiter import limiter
+from app.limiter import limiter, user_rate_key
 from app.models.club_member import ClubMember
 from app.models.randomizer import RandomizerSession
 from app.models.user import User
-from app.routers.auth import _user_rate_key
 from app.schemas.randomizer import (
     CandidateSchema,
     CreateRandomizerSessionRequest,
@@ -99,7 +98,7 @@ async def get_history(
 
 # noinspection PyUnusedLocal
 @router.post("/sessions", status_code=status.HTTP_201_CREATED)
-@limiter.limit("30/minute", key_func=_user_rate_key)
+@limiter.limit("30/minute", key_func=user_rate_key)
 async def create_session(
     request: Request,  # slowapi requires this exact parameter name
     club_id: uuid.UUID,
