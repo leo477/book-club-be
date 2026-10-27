@@ -1,5 +1,6 @@
 import asyncio
 from typing import Any, cast
+from urllib.parse import urlencode
 
 import jwt
 import structlog
@@ -10,6 +11,7 @@ from jwt.types import Options
 from supabase import AsyncClient
 from supabase.lib.client_options import AsyncClientOptions
 from supabase_auth.errors import AuthApiError
+from supabase_auth.helpers import generate_pkce_challenge, generate_pkce_verifier
 from supabase_auth.types import AuthChangeEvent, AuthResponse, CodeExchangeParams, Provider, Session
 
 from app.config import Settings
@@ -121,31 +123,30 @@ async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> Au
         ) from exc
 
 
-async def supabase_oauth_url(client: AsyncClient, provider: Provider, redirect_to: str) -> str:
-    """Return the provider authorize URL the browser should be redirected to.
+def build_oauth_authorize_url(settings: Settings, provider: Provider, redirect_to: str) -> tuple[str, str]:
+    """Return (authorize_url, code_verifier) for a PKCE OAuth start.
 
-    The PKCE code_verifier generated here is stored on the cached AsyncClient and
-    consumed by supabase_exchange_code on the callback request.
+    Built by hand because the library keeps the verifier in one process-global storage slot (shared by every
+    browser) and sign_in_with_oauth wipes the shared client's session; the caller binds the verifier to one browser.
     """
-    try:
-        resp = await client.auth.sign_in_with_oauth({"provider": provider, "options": {"redirect_to": redirect_to}})
-    except AuthApiError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": str(exc), "code": "OAUTH_INIT_ERROR"},
-        ) from exc
-    if not resp.url:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "OAuth provider unavailable", "code": "OAUTH_INIT_ERROR"},
-        )
-    return resp.url
+    verifier = generate_pkce_verifier()
+    query = urlencode(
+        {
+            "redirect_to": redirect_to,
+            "code_challenge": generate_pkce_challenge(verifier),
+            "code_challenge_method": "s256",
+            "provider": provider,
+        }
+    )
+    return f"{settings.SUPABASE_URL}/auth/v1/authorize?{query}", verifier
 
 
-async def supabase_exchange_code(client: AsyncClient, code: str) -> AuthResponse:
-    # code_verifier/redirect_to are required by the TypedDict but are recovered
-    # from the client's PKCE storage at runtime, so only auth_code is supplied.
-    params = cast(CodeExchangeParams, {"auth_code": code})
+async def supabase_exchange_code(client: AsyncClient, code: str, code_verifier: str) -> AuthResponse:
+    if not code_verifier:
+        # An empty value would make the library fall back to its global storage slot.
+        raise ValueError("code_verifier is required")
+    # redirect_to is required by the TypedDict but unused by the token endpoint.
+    params = cast(CodeExchangeParams, {"auth_code": code, "code_verifier": code_verifier})
     try:
         return await client.auth.exchange_code_for_session(params)
     except AuthApiError as exc:
