@@ -272,6 +272,30 @@ async def test_slow_body_times_out_with_204_and_no_row(async_client, test_engine
 
 
 @pytest.mark.asyncio
+async def test_read_capped_enforces_deadline_when_the_timeout_cancel_is_swallowed():
+    # BaseHTTPMiddleware's receive task group can swallow wait_for's one-shot cancel when it lands as a
+    # chunk arrives; the per-chunk deadline check must still end the read (no report).
+    from types import SimpleNamespace
+
+    from app.routers.analytics import _read_capped
+
+    async def stream():
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            pass  # swallowed, as the middleware race does
+        yield b"["
+        await asyncio.sleep(5)
+        yield json.dumps(_tt()).encode() + b"]"
+
+    request = SimpleNamespace(headers={}, stream=stream)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    assert await _read_capped(request, loop.time() + 0.05) is None  # type: ignore[arg-type]
+    assert loop.time() - started < 2
+
+
+@pytest.mark.asyncio
 async def test_db_error_is_swallowed_with_204(async_client, monkeypatch):
     async def boom(*_):
         raise SQLAlchemyError("down")

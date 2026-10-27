@@ -42,7 +42,7 @@ async def record_event(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-async def _read_capped(request: Request) -> bytes | None:
+async def _read_capped(request: Request, deadline: float) -> bytes | None:
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > csp_report.MAX_BODY_BYTES:
         return None
@@ -53,6 +53,10 @@ async def _read_capped(request: Request) -> bytes | None:
         if size > csp_report.MAX_BODY_BYTES:
             return None
         chunks.append(chunk)
+        # wait_for's cancel can be swallowed by the BaseHTTPMiddleware receive task group when it
+        # lands as a chunk arrives, and it never fires twice; the deadline is re-checked per chunk.
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
     return b"".join(chunks)
 
 
@@ -67,7 +71,8 @@ async def record_csp_report(
     # and the reply is always 204 so the endpoint is no oracle for what was accepted.
     try:
         # Bounded so an anonymous slow-drip body cannot hold the coroutine open; also covers ClientDisconnect.
-        payload = await asyncio.wait_for(_read_capped(request), _CSP_BODY_READ_TIMEOUT_SECONDS)
+        deadline = asyncio.get_running_loop().time() + _CSP_BODY_READ_TIMEOUT_SECONDS
+        payload = await asyncio.wait_for(_read_capped(request, deadline), _CSP_BODY_READ_TIMEOUT_SECONDS)
     except Exception:  # CancelledError is a BaseException and still propagates
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     if payload:
