@@ -1064,3 +1064,95 @@ async def test_logout_is_rate_limited_per_ip(async_client, override_get_db):
     for i in range(20):
         assert (await async_client.post("/api/v1/auth/logout")).status_code == 204, i
     assert (await async_client.post("/api/v1/auth/logout")).status_code == 429
+
+
+LOGOUT = "/api/v1/auth/logout"
+
+
+@pytest.mark.asyncio
+async def test_logout_body_refresh_token_refreshes_then_revokes_without_cookies(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    resp = await async_client.post(LOGOUT, json={"refreshToken": "fake-refresh-token"})
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_awaited_once_with("fake-refresh-token")
+    override_get_db.admin.sign_out.assert_awaited_once()
+    fresh_token, scope = override_get_db.admin.sign_out.await_args.args
+    assert fresh_token and scope == "local"
+
+
+@pytest.mark.asyncio
+async def test_logout_body_refresh_token_after_expired_bearer_falls_back(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    override_get_db.admin.sign_out.side_effect = [AuthApiError("jwt expired", 401, "bad_jwt"), None]
+    resp = await async_client.post(
+        LOGOUT, headers={"Authorization": "Bearer expired-token"}, json={"refreshToken": "fake-refresh-token"}
+    )
+    assert resp.status_code == 204
+    refresh.assert_awaited_once_with("fake-refresh-token")
+    calls = override_get_db.admin.sign_out.await_args_list
+    assert calls[0].args[0] == "expired-token"
+    assert calls[1].args[0] != "expired-token" and calls[1].args[1] == "local"
+
+
+@pytest.mark.asyncio
+async def test_logout_refresh_cookie_wins_over_body_token(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    async_client.cookies.set("refresh_token", "fake-refresh-token")
+    resp = await async_client.post(LOGOUT, headers=TRUSTED, json={"refreshToken": "other-refresh-token"})
+    assert resp.status_code == 204
+    refresh.assert_awaited_once_with("fake-refresh-token")
+
+
+@pytest.mark.asyncio
+async def test_logout_without_body_is_unchanged(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    resp = await async_client.post(LOGOUT)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_not_awaited()
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kwargs"),
+    [
+        {"content": b"", "headers": {"Content-Type": "application/json"}},
+        {"content": b"{not json", "headers": {"Content-Type": "application/json"}},
+        {"content": b"refreshToken=abc", "headers": {"Content-Type": "text/plain"}},
+        {"content": b"refreshToken=abc", "headers": {"Content-Type": "application/x-www-form-urlencoded"}},
+        {"json": {"refreshToken": ""}},
+        {"json": {"refreshToken": "   "}},
+        {"json": {"refreshToken": None}},
+        {"json": {"refreshToken": 123}},
+        {"json": {}},
+        {"json": ["refreshToken"]},
+        {"json": None},
+    ],
+)
+async def test_logout_blank_or_malformed_body_is_204_without_revocation(async_client, override_get_db, kwargs):
+    refresh = _spy_refresh(override_get_db)
+    resp = await async_client.post(LOGOUT, **kwargs)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_not_awaited()
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cross_origin_cookieless_body_token_only_revokes_its_own_session(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    resp = await async_client.post(LOGOUT, headers=UNTRUSTED, json={"refreshToken": "fake-refresh-token"})
+    assert resp.status_code == 204
+    refresh.assert_awaited_once_with("fake-refresh-token")
+
+
+@pytest.mark.asyncio
+async def test_logout_body_refresh_token_never_appears_in_logs(async_client, override_get_db):
+    override_get_db.admin.sign_out.side_effect = RuntimeError("secret-body-refresh rejected")
+    override_get_db.refresh_session = AsyncMock(side_effect=RuntimeError("secret-body-refresh rejected"))
+    with capture_logs() as logs:
+        resp = await async_client.post(LOGOUT, json={"refreshToken": "secret-body-refresh"})
+    assert resp.status_code == 204
+    assert "secret-body-refresh" not in repr(logs)

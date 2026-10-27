@@ -552,6 +552,18 @@ async def oauth_exchange(
     return OAuthExchangeResponse(**_body_tokens(request, data["accessToken"], data["refreshToken"], settings))
 
 
+async def _optional_body_refresh_token(request: Request) -> str | None:
+    # Parsed by hand, not a Body() param: FastAPI answers 422 to malformed/non-object bodies, and
+    # logout must always clear cookies. Cookie wins: it is the browser session's own token, the
+    # body is only for cookie-less clients (mobile) whose access token has expired.
+    try:
+        data = await request.json()
+    except ValueError:
+        return None
+    token = data.get("refreshToken") if isinstance(data, dict) else None
+    return token if isinstance(token, str) and token.strip() else None
+
+
 # noinspection PyUnusedLocal
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit("20/minute")
@@ -564,7 +576,8 @@ async def logout(
     # A 429 does not clear cookies, so the frontend must clear local state regardless.
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
-    await supabase_revoke_session(settings, token, request.cookies.get(_REFRESH_COOKIE))
+    refresh = request.cookies.get(_REFRESH_COOKIE) or await _optional_body_refresh_token(request)
+    await supabase_revoke_session(settings, token, refresh)
     # Mutate the injected `response`, not a freshly constructed one — a new Response()
     # here would discard the delete-cookie headers just set on it.
     _clear_session_cookies(response, settings)
