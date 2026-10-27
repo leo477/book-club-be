@@ -1,10 +1,10 @@
 import asyncio
-import logging
 from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from structlog.testing import capture_logs
 from supabase_auth.errors import AuthApiError
 
 from app.main import app
@@ -990,14 +990,6 @@ async def test_logout_bearer_token_wins_over_access_cookie(async_client, overrid
 
 
 @pytest.mark.asyncio
-async def test_logout_clears_cookies_when_revocation_times_out(async_client, override_get_db):
-    override_get_db.admin.sign_out.side_effect = asyncio.TimeoutError
-    resp = await async_client.post("/api/v1/auth/logout", headers={"Authorization": "Bearer t"})
-    assert resp.status_code == 204
-    _assert_cookies_cleared(resp)
-
-
-@pytest.mark.asyncio
 async def test_logout_revocation_is_bounded_by_the_timeout(async_client, override_get_db, monkeypatch):
     async def hang(*_args):
         await asyncio.sleep(10)
@@ -1058,12 +1050,13 @@ async def test_csrf_blocks_cross_origin_logout_with_only_a_refresh_cookie(async_
 
 
 @pytest.mark.asyncio
-async def test_logout_failure_log_does_not_contain_the_token(async_client, override_get_db, caplog):
-    caplog.set_level(logging.DEBUG)
+async def test_logout_failure_log_does_not_contain_the_token(async_client, override_get_db):
     override_get_db.admin.sign_out.side_effect = RuntimeError("secret-bearer-xyz rejected")
-    resp = await async_client.post("/api/v1/auth/logout", headers={"Authorization": "Bearer secret-bearer-xyz"})
+    with capture_logs() as logs:
+        resp = await async_client.post("/api/v1/auth/logout", headers={"Authorization": "Bearer secret-bearer-xyz"})
     assert resp.status_code == 204
-    assert "secret-bearer-xyz" not in caplog.text
+    assert any(e["event"] == "supabase_session_revoke_failed" for e in logs)
+    assert "secret-bearer-xyz" not in repr(logs)
 
 
 @pytest.mark.asyncio

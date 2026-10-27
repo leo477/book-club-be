@@ -79,6 +79,7 @@ async def _revoke_session(settings: Settings, access_token: str | None, refresh_
     if refresh_token:
         # Access token missing/expired: a fresh one is the only way to address this session.
         # Rotation is harmless, the session being refreshed is the one signed out right after.
+        # refresh_session saves the session into the shared cached client (as /auth/refresh does); it is revoked next.
         refreshed = await supabase_refresh(client, refresh_token)
         if refreshed.session is not None:
             await client.auth.admin.sign_out(refreshed.session.access_token, "local")

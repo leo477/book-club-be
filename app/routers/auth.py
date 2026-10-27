@@ -561,6 +561,7 @@ async def logout(
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> Response:
     # No auth dependency: an expired access token must not block clearing cookies and revoking.
+    # A 429 does not clear cookies, so the frontend must clear local state regardless.
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
     await supabase_revoke_session(settings, token, request.cookies.get(_REFRESH_COOKIE))
