@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -1156,3 +1157,75 @@ async def test_logout_body_refresh_token_never_appears_in_logs(async_client, ove
         resp = await async_client.post(LOGOUT, json={"refreshToken": "secret-body-refresh"})
     assert resp.status_code == 204
     assert "secret-body-refresh" not in repr(logs)
+
+
+JSON_CT = {"Content-Type": "application/json"}
+
+
+@pytest.mark.asyncio
+async def test_logout_deeply_nested_body_is_204_and_clears_cookies(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    resp = await async_client.post(LOGOUT, content="[" * 200000, headers=JSON_CT)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_not_awaited()
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_oversized_body_is_ignored_but_still_clears_cookies(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    body = json.dumps({"pad": "x" * 4096, "refreshToken": "fake-refresh-token"})
+    resp = await async_client.post(LOGOUT, content=body, headers=JSON_CT)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_not_awaited()
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_oversized_chunked_body_is_ignored(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+
+    async def chunks():
+        yield b'{"pad": "' + b"x" * 4096
+        yield b'", "refreshToken": "fake-refresh-token"}'
+
+    resp = await async_client.post(LOGOUT, content=chunks(), headers=JSON_CT)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_not_awaited()
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_body_at_the_cap_still_works(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    prefix, suffix = '{"refreshToken": "fake-refresh-token", "pad": "', '"}'
+    body = prefix + "x" * (2048 - len(prefix) - len(suffix)) + suffix
+    assert len(body) == 2048
+    resp = await async_client.post(LOGOUT, content=body, headers=JSON_CT)
+    assert resp.status_code == 204
+    refresh.assert_awaited_once_with("fake-refresh-token")
+
+
+@pytest.mark.asyncio
+async def test_logout_cookie_bearer_and_body_tokens_together_use_the_cookie(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    override_get_db.admin.sign_out.side_effect = [AuthApiError("jwt expired", 401, "bad_jwt"), None]
+    async_client.cookies.set("refresh_token", "cookie-refresh-token")
+    resp = await async_client.post(
+        LOGOUT,
+        headers={**TRUSTED, "Authorization": "Bearer expired-token"},
+        json={"refreshToken": "body-refresh-token"},
+    )
+    assert resp.status_code == 204
+    refresh.assert_awaited_once_with("cookie-refresh-token")
+
+
+@pytest.mark.asyncio
+async def test_openapi_documents_the_optional_logout_body(async_client):
+    spec = (await async_client.get("/openapi.json")).json()
+    body = spec["paths"][LOGOUT]["post"]["requestBody"]
+    assert body["required"] is False
+    assert "refreshToken" in body["content"]["application/json"]["schema"]["properties"]
