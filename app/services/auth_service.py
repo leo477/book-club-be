@@ -68,7 +68,7 @@ async def supabase_sign_up(
         ) from exc
 
 
-async def supabase_refresh(client: AsyncClient, refresh_token: str) -> AuthResponse:
+async def supabase_refresh(client: AsyncClient, refresh_token: str | None) -> AuthResponse:
     # refresh_session("") silently falls back to the client's retained session (another user's).
     if not refresh_token or not refresh_token.strip():
         raise HTTPException(
