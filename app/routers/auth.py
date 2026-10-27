@@ -486,10 +486,15 @@ async def oauth_callback(
         response.delete_cookie(_OAUTH_FLOW_COOKIE, path=_AUTH_PREFIX)
         return response
 
-    if not code:
-        return _redirect(_OAUTH_FAILED_PATH)
     # The verifier is tied to the starting browser, so a code planted into another browser cannot log it in.
     flow_id = request.cookies.get(_OAUTH_FLOW_COOKIE)
+    if not code:
+        if flow_id and _PKCE_CHALLENGE_RE.fullmatch(flow_id):
+            try:  # drop the abandoned flow now instead of at TTL
+                await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
+            except Exception:  # intentional: best-effort cleanup
+                logger.warning("Failed to drop abandoned OAuth flow")
+        return _redirect(_OAUTH_FAILED_PATH)
     if not flow_id or not _PKCE_CHALLENGE_RE.fullmatch(flow_id):
         return _redirect(_OAUTH_FAILED_PATH)
     try:

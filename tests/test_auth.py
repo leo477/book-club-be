@@ -18,6 +18,9 @@ async def no_redirect_client(override_get_db):
         yield ac
 
 
+from app.services.auth_service import get_supabase_client as _real_get_supabase_client  # noqa: E402 - keeps the unpatched function
+
+
 async def _start_flow(client, **params) -> tuple[str, str, str]:
     """Start Google OAuth as one browser; returns (oauth_flow cookie pair, authorize url, set-cookie header)."""
     resp = await client.get("/api/v1/auth/oauth/google", params=params)
@@ -1316,6 +1319,66 @@ def test_build_oauth_authorize_url_shape():
     }
     assert 43 <= len(verifier) <= 128
     assert build_oauth_authorize_url(settings, "google", "x")[1] != verifier
+
+
+@pytest.mark.parametrize("base", ["https://abc.supabase.co", "https://abc.supabase.co/"])
+def test_build_oauth_authorize_url_tolerates_trailing_slash(base):
+    from app.config import Settings
+    from app.services.auth_service import build_oauth_authorize_url
+
+    url, _ = build_oauth_authorize_url(Settings(SUPABASE_URL=base), "google", "x")
+    assert url.startswith("https://abc.supabase.co/auth/v1/authorize?")
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_provider_denied_drops_stored_flow(no_redirect_client, override_get_db):
+    cookie, _, _ = await _start_flow(no_redirect_client)
+    redis = await _flow_redis()
+    assert redis.store
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"error": "access_denied"}, headers={"Cookie": cookie}
+    )
+    _assert_failed(resp)
+    assert _flow_cleared(resp)
+    assert not redis.store
+    assert override_get_db.exchange_calls == []
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_provider_denied_survives_redis_failure(no_redirect_client):
+    from app.dependencies import get_redis
+
+    cookie, _, _ = await _start_flow(no_redirect_client)
+    broken = make_flow_redis()
+    broken.getdel.side_effect = ConnectionError("redis down")
+    app.dependency_overrides[get_redis] = lambda: broken
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"error": "access_denied"}, headers={"Cookie": cookie}
+    )
+    _assert_failed(resp)
+    assert _flow_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_oauth_full_flow_exchanges_a_fresh_verifier_without_touching_shared_storage(
+    no_redirect_client, override_get_db
+):
+    from app.config import Settings
+    from app.services.auth_service import _supabase_clients
+
+    cookie, url, _ = await _start_flow(no_redirect_client)
+    code = override_get_db.issue_code(_query(url)["code_challenge"])
+    resp = await _callback(no_redirect_client, code, cookie)
+    assert "/auth/callback?code=" in resp.headers["location"]
+    verifier = override_get_db.exchange_calls[-1]["code_verifier"]
+    assert isinstance(verifier, str) and len(verifier) == 64
+
+    settings = Settings(SUPABASE_URL="https://isolated-full.supabase.co", SUPABASE_ANON_KEY="anon")
+    try:
+        client = await _real_get_supabase_client(settings)  # the fixture patches the module attribute
+        assert await client.auth._storage.get_item(f"{client.auth._storage_key}-code-verifier") is None
+    finally:
+        _supabase_clients.pop(settings.SUPABASE_URL, None)
 
 
 @pytest.mark.asyncio

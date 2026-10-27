@@ -138,7 +138,7 @@ def build_oauth_authorize_url(settings: Settings, provider: Provider, redirect_t
             "provider": provider,
         }
     )
-    return f"{settings.SUPABASE_URL}/auth/v1/authorize?{query}", verifier
+    return f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/authorize?{query}", verifier
 
 
 async def supabase_exchange_code(client: AsyncClient, code: str, code_verifier: str) -> AuthResponse:
