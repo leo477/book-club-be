@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.dependencies import get_current_user
 from app.limiter import limiter
 from app.models.user import User
-from app.services.auth_service import get_supabase_client
+from app.services.storage_service import get_storage_client
 
 router = APIRouter(prefix="/api/v1/upload", tags=["upload"])
 logger = structlog.get_logger(__name__)
@@ -32,7 +32,13 @@ def _sniff_image_type(data: bytes) -> tuple[str, str] | None:
 
 
 # noinspection PyUnusedLocal
-@router.post("/cover", responses={503: {"description": "Storage not configured"}})
+@router.post(
+    "/cover",
+    responses={
+        502: {"description": "Storage upload failed"},
+        503: {"description": "Storage not configured"},
+    },
+)
 @limiter.limit("10/minute")
 async def upload_cover(
     request: Request,  # slowapi requires this exact parameter name
@@ -47,7 +53,7 @@ async def upload_cover(
         )
 
     settings = get_settings()
-    if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
+    if not settings.SUPABASE_URL:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage not configured")
 
     contents = await file.read(_MAX_FILE_SIZE_BYTES + 1)
@@ -67,11 +73,19 @@ async def upload_cover(
         )
     content_type, ext = sniffed
 
+    storage = get_storage_client(settings)
+    if storage is None:
+        logger.error("Cover upload unavailable: SUPABASE_SERVICE_ROLE_KEY is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "Storage upload failed", "code": "STORAGE_ERROR"},
+        )
+
     try:
-        supabase = await get_supabase_client(settings)
-        path = f"covers/{uuid.uuid4()}.{ext}"
-        await supabase.storage.from_("covers").upload(path, contents, {"content-type": content_type})
-        url: str = await supabase.storage.from_("covers").get_public_url(path)
+        # Bucket is already named "covers", so the object key is just the file name.
+        path = f"{uuid.uuid4()}.{ext}"
+        await storage.from_("covers").upload(path, contents, {"content-type": content_type, "x-upsert": "false"})
+        url: str = await storage.from_("covers").get_public_url(path)
     except Exception as exc:
         logger.exception("Supabase storage error", exc_info=True)
         raise HTTPException(
