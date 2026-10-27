@@ -179,3 +179,33 @@ async def cleanup_analytics_events() -> None:
             raise
         except Exception as exc:
             logger.exception("cleanup_analytics_events: unexpected error", exc_info=exc)
+
+
+_CSP_REPORT_RETENTION = timedelta(days=30)
+
+
+async def run_csp_report_cleanup_pass(db: AsyncSession, *, now: datetime | None = None) -> int:
+    from sqlalchemy import delete
+
+    from app.models.csp_report import CspReport
+
+    cutoff = (now or datetime.now(UTC)).date() - _CSP_REPORT_RETENTION
+    result = await db.execute(delete(CspReport).where(CspReport.day < cutoff))
+    await db.commit()
+    return result.rowcount  # type: ignore[attr-defined,no-any-return]
+
+
+async def cleanup_csp_reports() -> None:
+    """Daily: drop CSP violation aggregates older than 30 days."""
+    from app.database import AsyncSessionLocal
+
+    while True:
+        try:
+            await asyncio.sleep(86400)
+            async with AsyncSessionLocal() as db:
+                deleted = await run_csp_report_cleanup_pass(db)
+            logger.info("cleanup_csp_reports: deleted old rows", count=deleted)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("cleanup_csp_reports: unexpected error", exc_info=exc)
