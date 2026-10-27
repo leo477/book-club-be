@@ -56,6 +56,20 @@ _KNOWN_HOSTS = {
     "books.googleusercontent.com",
 }  # fmt: skip
 
+# Closed sets: sink and policy name come from attacker-controlled text, so only real ones keep their own row.
+_SINKS = {
+    "Element innerHTML", "Element outerHTML", "Element insertAdjacentHTML", "Element setAttribute", "Document write",
+    "Document writeln", "HTMLScriptElement text", "HTMLScriptElement src", "HTMLScriptElement textContent",
+    "HTMLScriptElement innerText", "HTMLIFrameElement srcdoc", "Function", "eval", "Worker", "SharedWorker",
+    "ServiceWorkerContainer register", "DOMParser parseFromString", "Range createContextualFragment",
+}  # fmt: skip
+_POLICIES = {
+    "default", "nextjs#bundler", "dompurify-internal", "@googlemaps/js-api-loader", "google-maps-api-loader",
+    "google-maps-api#html", "lit-html", "ng-icons", "angular",
+}  # fmt: skip
+_SCHEMES = {"data", "blob", "filesystem", "about", "chrome-extension"}
+_SCHEME_NAMES = {"data", "blob", "filesystem"}
+
 _KEY = ("day", "env", "route", "directive", "disposition", "sink", "blocked", "policy_name")
 
 # Process-level abuse cap: (hour bucket, upserts so far). Per instance, which is enough as a flood brake.
@@ -116,6 +130,9 @@ def _blocked(raw: str, doc_host: str, settings: Settings) -> str:
     if raw in _KEYWORDS:
         return raw
     parts = urlsplit(raw)
+    scheme = raw.split(":", 1)[0].lower()
+    if scheme in _SCHEMES:
+        return scheme if scheme in _SCHEME_NAMES else "other"
     if parts.scheme not in ("http", "https", "ws", "wss") or not parts.hostname:
         return ""
     host = parts.hostname
@@ -151,15 +168,17 @@ def normalise(raw: object, settings: Settings) -> dict[str, str] | None:
     sample_raw = _first(body, "sample", "script-sample")
     policy = _POLICY_RE.search(sample_raw)
     sink = _SINK_RE.match(sample_raw) if directive == "require-trusted-types-for" else None
+    sink_name = sink.group(1) if sink else ""
+    policy_name = _SAFE_NAME_RE.sub("", policy.group(1)) if policy else ""
     disposition = _first(body, "disposition")
     return {
         "env": env,
         "route": _route(parts.path),
         "directive": directive,
         "disposition": "enforce" if disposition == "enforce" else "report",
-        "sink": sink.group(1)[:48] if sink else "",
+        "sink": (sink_name if sink_name in _SINKS else "other") if sink_name else "",
         "blocked": _blocked(_first(body, "blockedURL", "blocked-uri", "blockedUri"), parts.hostname, settings),
-        "policy_name": _SAFE_NAME_RE.sub("", policy.group(1))[:64] if policy else "",
+        "policy_name": (policy_name if policy_name in _POLICIES else "other") if policy_name else "",
         "sample": _scrub_sample(sample_raw),
     }
 

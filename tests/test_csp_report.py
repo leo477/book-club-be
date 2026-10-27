@@ -75,7 +75,7 @@ async def test_legacy_csp_report_content_type(async_client, test_engine):
     assert (row.directive, row.blocked, row.policy_name, row.disposition) == (
         "trusted-types",
         "trusted-types-policy",
-        "angular#bundler",
+        "other",
         "enforce",
     )
 
@@ -110,7 +110,8 @@ async def test_oversized_declared_and_actual_are_204_and_stored_nothing(async_cl
 
 @pytest.mark.asyncio
 async def test_only_first_ten_reports_are_used(async_client, test_engine):
-    reports = [_tt(sample=f"Element a{i}") for i in range(15)]
+    sinks = sorted(svc._SINKS)[:15]
+    reports = [_tt(sample=f"{sink}|x") for sink in sinks]
     assert (await _post(async_client, reports)).status_code == 204
     assert len(await _rows(test_engine)) == 10
 
@@ -319,7 +320,7 @@ async def test_routes_directive_case_and_blocked_bounds(async_client, test_engin
     rows = await _rows(test_engine)
     assert {r.route for r in rows} == {"/", "/clubs/:id/*", "/events/new", "/other", "/profile/edit/*"}
     assert {r.directive for r in rows} >= {"script-src-elem"}
-    assert {r.blocked for r in rows} == {"trusted-types-sink", "other", ""}
+    assert {r.blocked for r in rows} == {"trusted-types-sink", "other", "data"}
 
 
 @pytest.mark.asyncio
@@ -352,3 +353,48 @@ def test_blocked_keeps_known_hosts_and_maps_own_host_to_self():
     assert blocked("https://covers.openlibrary.org/b/id/1.jpg") == "covers.openlibrary.org"
     assert blocked("http://localhost:4200/assets/a.js") == "self"
     assert blocked("https://evil.example.net/a.js") == "other"
+
+
+@pytest.mark.asyncio
+async def test_forged_sinks_and_policy_names_collapse_to_other(async_client, test_engine):
+    bodies = [_tt(sample=f"Element fake{i}|x") for i in range(100)]
+    bodies += [_tt(sample=f"Function|x violates policy named 'evil{i}'") for i in range(100)]
+    await _post_in_batches(async_client, bodies)
+    rows = await _rows(test_engine)
+    assert {(r.sink, r.policy_name) for r in rows} == {("other", ""), ("Function", "other")}
+
+
+@pytest.mark.asyncio
+async def test_real_sinks_and_policies_stay_distinct(async_client, test_engine):
+    shapes = [
+        _tt(sample="HTMLScriptElement src|https://x/a.js"),
+        _tt(sample="Function|(...)"),
+        _tt(sample="Element innerHTML|<b>"),
+        _tt(sample="Element innerHTML|<b> named 'lit-html'"),
+        _tt(sample="Element innerHTML|<b> named 'angular'"),
+    ]
+    assert (await _post(async_client, shapes)).status_code == 204
+    got = {(r.sink, r.policy_name) for r in await _rows(test_engine)}
+    assert got == {
+        ("HTMLScriptElement src", ""),
+        ("Function", ""),
+        ("Element innerHTML", ""),
+        ("Element innerHTML", "lit-html"),
+        ("Element innerHTML", "angular"),
+    }
+
+
+def test_scheme_only_blocked_values():
+    cfg = Settings()
+
+    def blocked(url):
+        return svc.normalise(_tt(blockedURL=url), cfg)["blocked"]
+
+    assert blocked("data") == "data"
+    assert blocked("blob") == "blob"
+    assert blocked("filesystem") == "filesystem"
+    assert blocked("data:image/png;base64,AAAA") == "data"
+    assert blocked("blob:https://evil.com/uuid") == "blob"
+    assert blocked("about") == "other"
+    assert blocked("chrome-extension://abc/x.js") == "other"
+    assert blocked("") == ""
