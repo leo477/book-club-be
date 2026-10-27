@@ -2,10 +2,12 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from fastapi import HTTPException
+from supabase import AsyncClient
 from supabase_auth.types import AuthResponse, Session, User
 
 from app.services import auth_service
-from app.services.auth_service import get_supabase_client, supabase_refresh, supabase_revoke_session
+from app.services.auth_service import _StatelessClient, get_supabase_client, supabase_refresh, supabase_revoke_session
 from tests.conftest import _make_test_settings
 
 USER_TOKEN = "user-access-token"
@@ -70,3 +72,74 @@ async def test_logout_refresh_fallback_keeps_client_anon(shared_client, monkeypa
     await supabase_revoke_session(_make_test_settings(), None, "old-refresh")
     sign_out.assert_awaited_once_with(USER_TOKEN, "local")
     _assert_anon(shared_client)
+
+
+def _login_response(token: str, refresh: str = "r") -> httpx.Response:
+    body = _auth_response(token).session.model_dump(mode="json")
+    body["refresh_token"] = refresh
+    return httpx.Response(200, json=body)
+
+
+def test_override_target_still_exists_upstream():
+    # A rename upstream would turn the override into a silent no-op.
+    assert "_listen_to_auth_events" in vars(AsyncClient)
+
+
+async def test_shared_client_is_stateless_without_refresh_timer(shared_client):
+    assert isinstance(shared_client, _StatelessClient)
+    assert shared_client.auth._auto_refresh_token is False
+
+
+async def test_login_starts_no_background_timer(shared_client, monkeypatch):
+    monkeypatch.setattr(shared_client.auth, "_request", AsyncMock(return_value=_login_response(USER_TOKEN)))
+    await shared_client.auth.sign_in_with_password({"email": "a@b.co", "password": "x"})
+    assert shared_client.auth._refresh_token_timer is None
+
+
+async def test_sequential_users_never_leak_tokens(shared_client, monkeypatch):
+    request = AsyncMock(return_value=_login_response("token-A", "refresh-A"))
+    monkeypatch.setattr(shared_client.auth, "_request", request)
+    await shared_client.auth.sign_in_with_password({"email": "a@b.co", "password": "x"})
+    _assert_anon(shared_client)
+
+    request.reset_mock()
+    request.return_value = _login_response("token-B", "refresh-B")
+    result = await supabase_refresh(shared_client, "refresh-B-in")
+    assert result.session.access_token == "token-B"
+    assert "token-A" not in repr(request.call_args)
+    _assert_anon(shared_client)
+
+
+async def test_storage_headers_stay_anon_before_and_after_login(shared_client, monkeypatch):
+    # storage.session is built lazily, so check both sides of the first user event.
+    assert shared_client.storage.session.headers["Authorization"] == ANON
+    monkeypatch.setattr(shared_client.auth, "_request", AsyncMock(return_value=_login_response(USER_TOKEN)))
+    await shared_client.auth.sign_in_with_password({"email": "a@b.co", "password": "x"})
+    assert shared_client.storage.session.headers["Authorization"] == ANON
+    await supabase_refresh(shared_client, "some-refresh")
+    assert shared_client.storage.session.headers["Authorization"] == ANON
+
+
+async def test_oauth_code_exchange_keeps_client_anon(shared_client, monkeypatch):
+    monkeypatch.setattr(shared_client.auth, "_request", AsyncMock(return_value=_login_response(USER_TOKEN)))
+    result = await shared_client.auth.exchange_code_for_session({"auth_code": "c", "code_verifier": "v"})
+    assert result.session.access_token == USER_TOKEN
+    _assert_anon(shared_client)
+
+
+@pytest.mark.parametrize("token", ["", "   ", None])
+async def test_refresh_rejects_blank_token_without_using_retained_session(shared_client, monkeypatch, token):
+    monkeypatch.setattr(shared_client.auth, "_request", AsyncMock(return_value=_login_response("token-A", "refresh-A")))
+    await shared_client.auth.sign_in_with_password({"email": "a@b.co", "password": "x"})
+    assert await shared_client.auth.get_session() is not None  # user A's session is retained
+
+    request = AsyncMock()
+    refresh = AsyncMock()
+    monkeypatch.setattr(shared_client.auth, "_request", request)
+    monkeypatch.setattr(shared_client.auth, "_refresh_access_token", refresh)
+    with pytest.raises(HTTPException) as exc:
+        await supabase_refresh(shared_client, token)
+    assert exc.value.status_code == 401
+    assert exc.value.detail["code"] == "INVALID_REFRESH_TOKEN"
+    request.assert_not_called()
+    refresh.assert_not_called()
