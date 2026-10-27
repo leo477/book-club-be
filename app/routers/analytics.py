@@ -1,5 +1,7 @@
+import asyncio
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +16,10 @@ from app.services import csp_report
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 
+logger = structlog.get_logger(__name__)
+
 _MAX_BODY_BYTES = 2048
+_CSP_BODY_READ_TIMEOUT_SECONDS = 3.0
 
 
 def _limit_body_size(request: Request) -> None:
@@ -52,7 +57,7 @@ async def _read_capped(request: Request) -> bytes | None:
 
 
 # noinspection PyUnusedLocal
-@router.post("/csp-report", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/csp-report", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
 @limiter.limit("30/minute")
 async def record_csp_report(
     request: Request,  # slowapi requires this exact parameter name
@@ -60,10 +65,15 @@ async def record_csp_report(
 ) -> Response:
     # Browsers send application/reports+json or application/csp-report, which pydantic bodies reject,
     # and the reply is always 204 so the endpoint is no oracle for what was accepted.
-    payload = await _read_capped(request)
+    try:
+        # Bounded so an anonymous slow-drip body cannot hold the coroutine open; also covers ClientDisconnect.
+        payload = await asyncio.wait_for(_read_capped(request), _CSP_BODY_READ_TIMEOUT_SECONDS)
+    except Exception:  # CancelledError is a BaseException and still propagates
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     if payload:
         try:
             await csp_report.store(db, csp_report.parse(payload, get_settings()))
         except SQLAlchemyError:
+            logger.warning("record_csp_report: database error, report dropped")
             await db.rollback()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

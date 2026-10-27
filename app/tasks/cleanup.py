@@ -201,7 +201,6 @@ async def cleanup_csp_reports() -> None:
 
     while True:
         try:
-            await asyncio.sleep(86400)
             async with AsyncSessionLocal() as db:
                 deleted = await run_csp_report_cleanup_pass(db)
             logger.info("cleanup_csp_reports: deleted old rows", count=deleted)
@@ -209,3 +208,4 @@ async def cleanup_csp_reports() -> None:
             raise
         except Exception as exc:
             logger.exception("cleanup_csp_reports: unexpected error", exc_info=exc)
+        await asyncio.sleep(86400)  # after the pass, so hosts restarting more often than daily still clean

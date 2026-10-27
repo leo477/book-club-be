@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.csp_report import CspReport
@@ -108,7 +109,7 @@ async def test_oversized_declared_and_actual_are_204_and_stored_nothing(async_cl
 
 @pytest.mark.asyncio
 async def test_only_first_ten_reports_are_used(async_client, test_engine):
-    reports = [_tt(effectiveDirective=f"d{i}") for i in range(15)]
+    reports = [_tt(sample=f"Element a{i}") for i in range(15)]
     assert (await _post(async_client, reports)).status_code == 204
     assert len(await _rows(test_engine)) == 10
 
@@ -144,7 +145,7 @@ async def test_query_fragment_stripped_and_ids_normalised(async_client, test_eng
     )
     assert (await _post(async_client, [body])).status_code == 204
     (row,) = await _rows(test_engine)
-    assert row.route == "/clubs/:id/events/:id"
+    assert row.route == "/clubs/:id/*"
     assert row.blocked == "cdn.example.com"
     dump = f"{row.route}{row.blocked}{row.sample}"
     assert not any(s in dump for s in ("token", "secret", "frag", "tab=x", "me@x.io", "q=1"))
@@ -170,8 +171,10 @@ async def test_different_key_makes_new_row(async_client, test_engine):
 async def test_hourly_cap_then_silent_204(async_client, test_engine, monkeypatch):
     monkeypatch.setattr(svc, "HOURLY_UPSERT_CAP", 3)
     for i in range(3):
-        assert (await _post(async_client, [_tt(effectiveDirective=f"d{i}")])).status_code == 204
-    assert (await _post(async_client, [_tt(effectiveDirective="d9")])).status_code == 204
+        assert (
+            await _post(async_client, [_tt(effectiveDirective=("img-src", "font-src", "media-src")[i])])
+        ).status_code == 204
+    assert (await _post(async_client, [_tt(effectiveDirective="frame-src")])).status_code == 204
     assert len(await _rows(test_engine)) == 3
 
 
@@ -240,7 +243,8 @@ async def test_cleanup_loop_runs_pass_then_propagates_cancellation(monkeypatch):
     monkeypatch.setattr("app.tasks.cleanup.run_csp_report_cleanup_pass", run_pass)
     with pytest.raises(asyncio.CancelledError):
         await cleanup_csp_reports()
-    run_pass.assert_awaited_once_with(session)
+    run_pass.assert_awaited_with(session)
+    assert run_pass.await_count == 2  # pass first, then sleep: a pass happens before the first sleep
 
 
 @pytest.mark.asyncio
@@ -249,3 +253,87 @@ async def test_cleanup_loop_survives_errors(monkeypatch):
     monkeypatch.setattr("app.tasks.cleanup.asyncio.sleep", _stop_after(2))
     with pytest.raises(asyncio.CancelledError):
         await cleanup_csp_reports()
+
+
+@pytest.mark.asyncio
+async def test_slow_body_times_out_with_204_and_no_row(async_client, test_engine, monkeypatch):
+    monkeypatch.setattr("app.routers.analytics._CSP_BODY_READ_TIMEOUT_SECONDS", 0.2)
+
+    async def slow_body():
+        yield b"["
+        await asyncio.sleep(5)
+        yield json.dumps(_tt()).encode() + b"]"
+
+    resp = await async_client.post(URL, content=slow_body(), headers=REPORTS_JSON)
+    assert resp.status_code == 204
+    assert await _rows(test_engine) == []
+
+
+@pytest.mark.asyncio
+async def test_db_error_is_swallowed_with_204(async_client, monkeypatch):
+    async def boom(*_):
+        raise SQLAlchemyError("down")
+
+    monkeypatch.setattr(svc, "store", boom)
+    assert (await _post(async_client, [_tt()])).status_code == 204
+
+
+async def _post_in_batches(client, bodies):
+    for i in range(0, len(bodies), 10):  # 10 reports per request keeps under the 30/minute limit
+        assert (await _post(client, bodies[i : i + 10])).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_forged_route_directive_sample_stay_bounded(async_client, test_engine):
+    bodies = []
+    for i in range(200):
+        top = ["clubs", f"zzz{i}", "events"][i % 3]
+        bodies.append(
+            _tt(
+                documentURL=f"http://localhost:4200/{top}/s{i}/x{i}/y",
+                effectiveDirective=f"fake-{i}",
+                sample=f"Function|{i}" if i % 2 else f"junk {i}",
+            )
+        )
+    await _post_in_batches(async_client, bodies)
+    rows = await _rows(test_engine)
+    assert len(rows) <= 6
+    assert {r.directive for r in rows} == {"other"}
+    assert {r.route for r in rows} == {"/other", "/clubs/:x/*", "/events/:x/*"}
+
+
+@pytest.mark.asyncio
+async def test_forged_blocked_hosts_are_capped_by_hourly_budget(async_client, test_engine):
+    await _post_in_batches(async_client, [_tt(blockedURL=f"https://h{i}.evil.com/p") for i in range(290)])
+    assert len(await _rows(test_engine)) == 290 <= svc.HOURLY_UPSERT_CAP
+
+
+@pytest.mark.asyncio
+async def test_routes_directive_case_and_blocked_bounds(async_client, test_engine):
+    docs = ["/", "/clubs/3f2b8c1e-1111-4222-8333-444455556666/chat", "/events/new", "/nope/1", "/profile/edit/deep"]
+    await _post(
+        async_client, [_tt(documentURL=f"http://localhost:4200{d}", effectiveDirective="Script-Src-Elem") for d in docs]
+    )
+    await _post(async_client, [_tt(blockedURL="https://" + "x" * 300 + ".com/p"), _tt(blockedURL="data:text/plain,hi")])
+    rows = await _rows(test_engine)
+    assert {r.route for r in rows} == {"/", "/clubs/:id/*", "/events/new", "/other", "/profile/edit/*"}
+    assert {r.directive for r in rows} >= {"script-src-elem"}
+    assert {r.blocked for r in rows} == {"trusted-types-sink", "x" * 64, ""}
+
+
+@pytest.mark.asyncio
+async def test_real_chrome_shapes_are_distinct_rows(async_client, test_engine):
+    shapes = [
+        _tt(sample="HTMLScriptElement src|https://x/_next/static/chunks/a.js"),
+        _tt(sample="Function|(...)"),
+        _tt(),
+        _tt(effectiveDirective="script-src", blockedURL="eval", sample="", disposition="enforce"),
+    ]
+    assert (await _post(async_client, shapes)).status_code == 204
+    rows = await _rows(test_engine)
+    assert {(r.directive, r.sink, r.blocked, r.disposition) for r in rows} == {
+        ("require-trusted-types-for", "HTMLScriptElement src", "trusted-types-sink", "report"),
+        ("require-trusted-types-for", "Function", "trusted-types-sink", "report"),
+        ("require-trusted-types-for", "Element innerHTML", "trusted-types-sink", "report"),
+        ("script-src", "", "eval", "enforce"),
+    }

@@ -1,5 +1,6 @@
 """Normalisation and storage of browser CSP / Trusted Types violation reports (anonymous, aggregated)."""
 
+import itertools
 import json
 import re
 import time
@@ -15,16 +16,38 @@ from app.models.csp_report import CspReport
 
 MAX_BODY_BYTES = 8192
 MAX_REPORTS = 10
-HOURLY_UPSERT_CAP = 2000
+HOURLY_UPSERT_CAP = 500
 
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 _LONG_NUM_RE = re.compile(r"\d{5,}")
 _EMAIL_RE = re.compile(r"[^\s@<>\"']+@[^\s@<>\"']+")
 _URL_RE = re.compile(r"(?:https?|wss?|blob|data):[^\s\"'<>]*", re.IGNORECASE)
 _POLICY_RE = re.compile(r"named '([^']{1,64})'")
-_SINK_RE = re.compile(r"^([A-Za-z]\w* \w+)(?:\||\s|$)")
+_SINK_RE = re.compile(r"^([A-Z]\w*(?: [a-z]\w*)?)(?:\||\s|$)")
 _SAFE_NAME_RE = re.compile(r"[^\w.\-#]")
-_KEYWORDS = {"inline", "eval", "trusted-types-policy", "trusted-types-policy-violation", "wasm-eval", "self"}
+_KEYWORDS = {
+    "inline",
+    "eval",
+    "trusted-types-policy",
+    "trusted-types-policy-violation",
+    "trusted-types-sink",
+    "wasm-eval",
+    "self",
+}
+_DIRECTIVES = {
+    f"{base}{suffix}"
+    for base, suffix in itertools.product(("script-src", "style-src"), ("", "-elem", "-attr"))
+} | {
+    "img-src", "connect-src", "font-src", "frame-src", "child-src", "worker-src", "object-src", "media-src",
+    "manifest-src", "prefetch-src", "default-src", "base-uri", "form-action", "frame-ancestors", "navigate-to",
+    "require-trusted-types-for", "trusted-types", "upgrade-insecure-requests", "sandbox", "report-to", "report-uri",
+}  # fmt: skip
+# Top-level app routes; anything else collapses so forged paths cannot mint unlimited rows.
+_ROUTES = {
+    "events", "clubs", "login", "register", "profile", "support", "chat", "chats", "privacy", "terms", "auth",
+    "quizzes", "randomizer", "admin", "search", "books",
+}  # fmt: skip
+_SUBROUTES = {"new", "create", "edit", "settings", "join", ":id"}
 _LOCAL_HOSTS = {"localhost", "127.0.0.1"}
 
 _KEY = ("day", "env", "route", "directive", "disposition", "sink", "blocked", "policy_name")
@@ -68,8 +91,18 @@ def _classify_host(host: str, settings: Settings) -> str | None:
 
 
 def _route(path: str) -> str:
-    path = _UUID_RE.sub(":id", path)
-    return _LONG_NUM_RE.sub(":id", path)[:120] or "/"
+    path = _LONG_NUM_RE.sub(":id", _UUID_RE.sub(":id", path))
+    segments = [seg for seg in path.split("/") if seg]
+    if not segments:
+        return "/"
+    if segments[0] not in _ROUTES:
+        return "/other"
+    kept = [segments[0]]
+    if len(segments) > 1:
+        kept.append(segments[1] if segments[1] in _SUBROUTES else ":x")
+    if len(segments) > 2:
+        kept.append("*")
+    return "/" + "/".join(kept)
 
 
 def _blocked(raw: str) -> str:
@@ -78,9 +111,7 @@ def _blocked(raw: str) -> str:
         return raw
     parts = urlsplit(raw)
     if parts.scheme in ("http", "https", "ws", "wss") and parts.hostname:
-        return parts.hostname[:128]
-    if parts.scheme in ("data", "blob"):
-        return f"{parts.scheme}:"
+        return parts.hostname[:64]
     return ""
 
 
@@ -104,7 +135,8 @@ def normalise(raw: object, settings: Settings) -> dict[str, str] | None:
     directive = _first(body, "effectiveDirective", "effective-directive", "violatedDirective", "violated-directive")
     if env is None or not directive:
         return None
-    directive = directive.split(" ", 1)[0][:64]
+    directive = directive.split(" ", 1)[0].lower()
+    directive = directive if directive in _DIRECTIVES else "other"
     sample_raw = _first(body, "sample", "script-sample")
     policy = _POLICY_RE.search(sample_raw)
     sink = _SINK_RE.match(sample_raw) if directive == "require-trusted-types-for" else None
