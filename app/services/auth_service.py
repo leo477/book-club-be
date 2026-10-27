@@ -15,6 +15,8 @@ from app.config import Settings
 
 logger = structlog.get_logger()
 
+_REVOKE_TIMEOUT_SECONDS = 3.0
+
 _jwks_clients: dict[str, PyJWKClient] = {}
 # M-9: cache async Supabase client by URL to avoid re-creating on every request
 _supabase_clients: dict[str, AsyncClient] = {}
@@ -65,11 +67,29 @@ async def supabase_refresh(client: AsyncClient, refresh_token: str) -> AuthRespo
         ) from exc
 
 
-async def supabase_revoke_session(settings: Settings, access_token: str) -> None:
+async def _revoke_session(settings: Settings, access_token: str | None, refresh_token: str | None) -> None:
+    client = await get_supabase_client(settings)
+    if access_token:
+        try:
+            await client.auth.admin.sign_out(access_token, "local")
+            return
+        except Exception:
+            if not refresh_token:
+                raise
+    if refresh_token:
+        # Access token missing/expired: a fresh one is the only way to address this session.
+        # Rotation is harmless, the session being refreshed is the one signed out right after.
+        refreshed = await supabase_refresh(client, refresh_token)
+        if refreshed.session is not None:
+            await client.auth.admin.sign_out(refreshed.session.access_token, "local")
+
+
+async def supabase_revoke_session(settings: Settings, access_token: str | None, refresh_token: str | None) -> None:
     # Best-effort: logout must still clear cookies if Supabase is unreachable or rejects the token.
+    if not (access_token or refresh_token):
+        return
     try:
-        client = await get_supabase_client(settings)
-        await asyncio.wait_for(client.auth.admin.sign_out(access_token, "local"), timeout=5)
+        await asyncio.wait_for(_revoke_session(settings, access_token, refresh_token), _REVOKE_TIMEOUT_SECONDS)
     except Exception as exc:
         logger.warning("supabase_session_revoke_failed", error_type=type(exc).__name__)
 

@@ -1,6 +1,11 @@
+import asyncio
+import logging
+from unittest.mock import AsyncMock
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from supabase_auth.errors import AuthApiError
 
 from app.main import app
 
@@ -956,8 +961,113 @@ async def test_logout_still_succeeds_and_clears_cookies_when_revocation_fails(
         assert _set_cookie_header(resp, name) is not None
 
 
+def _spy_refresh(fake_auth):
+    fake_auth.refresh_session = AsyncMock(side_effect=fake_auth.refresh_session)
+    return fake_auth.refresh_session
+
+
+def _assert_cookies_cleared(resp):
+    for name in ("refresh_token", "access_token"):
+        assert _set_cookie_header(resp, name) is not None
+
+
 @pytest.mark.asyncio
-async def test_logout_without_token_does_not_revoke(async_client, override_get_db):
+async def test_logout_without_any_token_is_idempotent_and_makes_no_outbound_call(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
     resp = await async_client.post("/api/v1/auth/logout")
-    assert resp.status_code == 401
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
     override_get_db.admin.sign_out.assert_not_awaited()
+    refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_bearer_token_wins_over_access_cookie(async_client, override_get_db):
+    async_client.cookies.set("access_token", "cookie-token")
+    resp = await async_client.post("/api/v1/auth/logout", headers={"Authorization": "Bearer bearer-token", **TRUSTED})
+    assert resp.status_code == 204
+    override_get_db.admin.sign_out.assert_awaited_once_with("bearer-token", "local")
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_cookies_when_revocation_times_out(async_client, override_get_db):
+    override_get_db.admin.sign_out.side_effect = asyncio.TimeoutError
+    resp = await async_client.post("/api/v1/auth/logout", headers={"Authorization": "Bearer t"})
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_logout_revocation_is_bounded_by_the_timeout(async_client, override_get_db, monkeypatch):
+    async def hang(*_args):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr("app.services.auth_service._REVOKE_TIMEOUT_SECONDS", 0.05)
+    override_get_db.admin.sign_out.side_effect = hang
+    resp = await async_client.post("/api/v1/auth/logout", headers={"Authorization": "Bearer t"})
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_logout_with_only_refresh_cookie_refreshes_then_revokes(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    async_client.cookies.set("refresh_token", "fake-refresh-token")
+    resp = await async_client.post("/api/v1/auth/logout", headers=TRUSTED)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_awaited_once_with("fake-refresh-token")
+    override_get_db.admin.sign_out.assert_awaited_once()
+    fresh_token, scope = override_get_db.admin.sign_out.await_args.args
+    assert fresh_token and scope == "local"
+
+
+@pytest.mark.asyncio
+async def test_logout_with_expired_access_token_falls_back_to_refresh(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    override_get_db.admin.sign_out.side_effect = [AuthApiError("jwt expired", 401, "bad_jwt"), None]
+    async_client.cookies.set("access_token", "expired-token")
+    async_client.cookies.set("refresh_token", "fake-refresh-token")
+    resp = await async_client.post("/api/v1/auth/logout", headers=TRUSTED)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_awaited_once_with("fake-refresh-token")
+    calls = override_get_db.admin.sign_out.await_args_list
+    assert calls[0].args[0] == "expired-token"
+    assert calls[1].args[0] != "expired-token" and calls[1].args[1] == "local"
+
+
+@pytest.mark.asyncio
+async def test_logout_with_rejected_refresh_token_still_succeeds(async_client, override_get_db):
+    async_client.cookies.set("refresh_token", "stale-refresh-token")
+    resp = await async_client.post("/api/v1/auth/logout", headers=TRUSTED)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_csrf_blocks_cross_origin_logout_with_only_a_refresh_cookie(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    async_client.cookies.set("refresh_token", "fake-refresh-token")
+    resp = await async_client.post("/api/v1/auth/logout", headers=UNTRUSTED)
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "CSRF_ORIGIN_MISMATCH"
+    refresh.assert_not_awaited()
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_failure_log_does_not_contain_the_token(async_client, override_get_db, caplog):
+    caplog.set_level(logging.DEBUG)
+    override_get_db.admin.sign_out.side_effect = RuntimeError("secret-bearer-xyz rejected")
+    resp = await async_client.post("/api/v1/auth/logout", headers={"Authorization": "Bearer secret-bearer-xyz"})
+    assert resp.status_code == 204
+    assert "secret-bearer-xyz" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_logout_is_rate_limited_per_ip(async_client, override_get_db):
+    for i in range(20):
+        assert (await async_client.post("/api/v1/auth/logout")).status_code == 204, i
+    assert (await async_client.post("/api/v1/auth/logout")).status_code == 429
