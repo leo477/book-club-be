@@ -34,9 +34,9 @@ from app.schemas.auth import (
     WsTicketResponse,
 )
 from app.services.auth_service import (
+    build_oauth_authorize_url,
     get_supabase_client,
     supabase_exchange_code,
-    supabase_oauth_url,
     supabase_refresh,
     supabase_revoke_session,
     supabase_sign_in,
@@ -52,6 +52,8 @@ _REFRESH_COOKIE = "refresh_token"
 _ACCESS_COOKIE = "access_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
 _OAUTH_CHALLENGE_COOKIE = "oauth_challenge"
+_OAUTH_FLOW_COOKIE = "oauth_flow"
+_OAUTH_FLOW_PREFIX = "oauth:flow:"
 _OAUTH_FAILED_PATH = "/login?oauth=failed"
 _PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _OAUTH_HANDOFF_PREFIX = "oauth:handoff:"
@@ -411,13 +413,28 @@ async def refresh_token(
 async def oauth_google(
     request: Request,  # slowapi requires this exact parameter name
     settings: Annotated[Settings, Depends(get_settings_dep)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
     origin: Annotated[str | None, Query()] = None,
     challenge: Annotated[str | None, Query(pattern=_PKCE_CHALLENGE_RE.pattern)] = None,
 ) -> RedirectResponse:
-    client = await get_supabase_client(settings)
     redirect_to = f"{settings.BACKEND_URL}{_AUTH_PREFIX}/callback"
-    url = await supabase_oauth_url(client, "google", redirect_to)
+    url, verifier = build_oauth_authorize_url(settings, "google", redirect_to)
+    flow_id = secrets.token_urlsafe(32)
+    try:
+        await redis.set(f"{_OAUTH_FLOW_PREFIX}{flow_id}", verifier, ex=settings.OAUTH_FLOW_TTL)
+    except Exception as exc:  # intentional: fail closed, a flow without a stored verifier can never complete
+        logger.exception("Failed to store OAuth flow")
+        raise AppError(status.HTTP_503_SERVICE_UNAVAILABLE, "OAuth provider unavailable", "OAUTH_INIT_ERROR") from exc
     response = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        key=_OAUTH_FLOW_COOKIE,
+        value=flow_id,
+        httponly=True,
+        secure=settings.ENV == "production",
+        samesite="lax",
+        max_age=settings.OAUTH_FLOW_TTL,
+        path=_AUTH_PREFIX,
+    )
 
     candidate = origin or request.headers.get("referer")
     fe_origin = _resolve_frontend_origin(candidate, settings)
@@ -467,10 +484,29 @@ async def oauth_callback(
         response = RedirectResponse(f"{frontend}{path}", status_code=status.HTTP_302_FOUND)
         response.delete_cookie(_FE_ORIGIN_COOKIE, path=_AUTH_PREFIX)
         response.delete_cookie(_OAUTH_CHALLENGE_COOKIE, path=_AUTH_PREFIX)
+        response.delete_cookie(_OAUTH_FLOW_COOKIE, path=_AUTH_PREFIX)
         return response
 
+    # The verifier is tied to the starting browser, so a code planted into another browser cannot log it in.
+    flow_id = request.cookies.get(_OAUTH_FLOW_COOKIE)
     if not code:
+        if flow_id and _PKCE_CHALLENGE_RE.fullmatch(flow_id):
+            try:  # drop the abandoned flow now instead of at TTL
+                await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
+            except Exception:  # intentional: best-effort cleanup
+                logger.warning("Failed to drop abandoned OAuth flow")
         return _redirect(_OAUTH_FAILED_PATH)
+    if not flow_id or not _PKCE_CHALLENGE_RE.fullmatch(flow_id):
+        return _redirect(_OAUTH_FAILED_PATH)
+    try:
+        raw_verifier = await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
+    except Exception:  # intentional: no verifier means no safe exchange
+        logger.exception("Failed to load OAuth flow")
+        return _redirect(_OAUTH_FAILED_PATH)
+    if not raw_verifier:
+        return _redirect(_OAUTH_FAILED_PATH)
+    # The pool is created with decode_responses=False, so Redis hands back bytes.
+    verifier = raw_verifier.decode() if isinstance(raw_verifier, bytes) else raw_verifier
     raw_challenge = request.cookies.get(_OAUTH_CHALLENGE_COOKIE)
     challenge = raw_challenge if raw_challenge and _PKCE_CHALLENGE_RE.fullmatch(raw_challenge) else None
     if settings.OAUTH_REQUIRE_PKCE and not challenge:
@@ -479,7 +515,7 @@ async def oauth_callback(
         client = await get_supabase_client(settings)
         # noinspection PyBroadException
         try:
-            auth_response = await supabase_exchange_code(client, code)
+            auth_response = await supabase_exchange_code(client, code, verifier)
         except HTTPException:
             return _redirect(_OAUTH_FAILED_PATH)
         except Exception:  # intentional: any failure redirects to the OAuth failure page

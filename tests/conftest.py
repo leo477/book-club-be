@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import os
 import time
@@ -76,11 +78,39 @@ def _make_token(supabase_user_id: uuid.UUID) -> str:
     )
 
 
+def make_flow_redis() -> AsyncMock:
+    """AsyncMock Redis backed by a dict, honouring set/get/getdel (enough for the OAuth flow + handoff keys)."""
+    store: dict[str, str | bytes] = {}
+
+    async def _set(key, value, ex=None, nx=False):
+        store[key] = value
+        return True
+
+    async def _get(key):
+        return store.get(key)
+
+    async def _getdel(key):
+        return store.pop(key, None)
+
+    mock = AsyncMock()
+    mock.store = store
+    mock.set = AsyncMock(side_effect=_set)
+    mock.get = AsyncMock(side_effect=_get)
+    mock.getdel = AsyncMock(side_effect=_getdel)
+    return mock
+
+
+def _s256(verifier: str) -> str:
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+
+
 class _FakeSupabaseAuth:
     """In-memory Supabase auth that validates credentials like the real API."""
 
     def __init__(self) -> None:
         self._users: dict[str, tuple[str, uuid.UUID]] = {}
+        self.exchange_calls: list[dict] = []
+        self._code_challenges: dict[str, str] = {}
         self.admin = MagicMock()
         self.admin.sign_out = AsyncMock()
 
@@ -105,13 +135,21 @@ class _FakeSupabaseAuth:
         uid = next(iter(self._users.values()))[1] if self._users else uuid.uuid4()
         return self._build_response(uid)
 
-    async def sign_in_with_oauth(self, params: dict) -> MagicMock:
-        resp = MagicMock()
-        resp.url = f"https://test.supabase.co/auth/v1/authorize?provider={params['provider']}"
-        return resp
+    def issue_code(self, challenge: str) -> str:
+        """Model Google/Supabase issuing an auth code bound to the PKCE challenge of the authorize request."""
+        code = f"code-{len(self._code_challenges)}"
+        self._code_challenges[code] = challenge
+        return code
 
     async def exchange_code_for_session(self, params: dict) -> MagicMock:
-        if params.get("auth_code") != "good-code":
+        self.exchange_calls.append(dict(params))
+        code, verifier = params.get("auth_code"), params.get("code_verifier")
+        if code in self._code_challenges:
+            valid = bool(verifier) and _s256(verifier) == self._code_challenges.pop(code)
+        else:
+            # "good-code" is the legacy unbound code: valid for any non-empty verifier.
+            valid = code == "good-code" and bool(verifier)
+        if not valid:
             raise AuthApiError("Invalid authorization code", 400, "invalid_grant")
         email = "oauth@example.com"
         uid = uuid.uuid4()
@@ -215,11 +253,8 @@ async def override_get_db(test_engine):
 
     test_settings = _make_test_settings()
 
-    # Provide a fake Redis that is always a no-op (safe for all tests)
-    mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.set = AsyncMock()
-    mock_redis.getdel = AsyncMock(return_value=None)
+    # Provide a dict-backed fake Redis (set/get/getdel work; the OAuth flow binding needs a real round trip)
+    mock_redis = make_flow_redis()
     mock_redis.aclose = AsyncMock()
 
     async def _override_get_redis():

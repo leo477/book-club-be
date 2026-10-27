@@ -10,6 +10,8 @@ from structlog.testing import capture_logs
 from supabase_auth.errors import AuthApiError
 
 from app.main import app
+from app.services.auth_service import get_supabase_client as _real_get_supabase_client
+from tests.conftest import make_flow_redis
 
 
 @pytest_asyncio.fixture
@@ -19,11 +21,25 @@ async def no_redirect_client(override_get_db):
         yield ac
 
 
+async def _start_flow(client, **params) -> tuple[str, str, str]:
+    """Start Google OAuth as one browser; returns (oauth_flow cookie pair, authorize url, set-cookie header)."""
+    resp = await client.get("/api/v1/auth/oauth/google", params=params)
+    assert resp.status_code == 302
+    header = next(h for h in resp.headers.get_list("set-cookie") if h.startswith("oauth_flow="))
+    client.cookies.clear()  # each test sends its cookies explicitly
+    return header.split(";", 1)[0], resp.headers["location"], header
+
+
+async def _flow_cookie(client) -> str:
+    return (await _start_flow(client))[0]
+
+
 @pytest.mark.asyncio
 async def test_oauth_google_redirects_to_provider(no_redirect_client):
     resp = await no_redirect_client.get("/api/v1/auth/oauth/google")
     assert resp.status_code == 302
-    assert "authorize?provider=google" in resp.headers["location"]
+    assert resp.headers["location"].startswith("https://test.supabase.co/auth/v1/authorize?")
+    assert "provider=google" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -35,14 +51,20 @@ async def test_oauth_callback_missing_code(no_redirect_client):
 
 @pytest.mark.asyncio
 async def test_oauth_callback_invalid_code(no_redirect_client):
-    resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "bad-code"})
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"code": "bad-code"}, headers={"Cookie": await _flow_cookie(no_redirect_client)}
+    )
     assert resp.status_code == 302
     assert resp.headers["location"].endswith("/login?oauth=failed")
 
 
 @pytest.mark.asyncio
 async def test_oauth_callback_success_redirects_with_handoff_code(no_redirect_client):
-    resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback",
+        params={"code": "good-code"},
+        headers={"Cookie": await _flow_cookie(no_redirect_client)},
+    )
     assert resp.status_code == 302
     assert "/auth/callback?code=" in resp.headers["location"]
     # oauth_callback no longer sets cookies on the backend domain; the SPA gets the
@@ -86,7 +108,7 @@ async def test_oauth_callback_success_redirects_to_resolved_origin(no_redirect_c
     resp = await no_redirect_client.get(
         "/api/v1/auth/callback",
         params={"code": "good-code"},
-        headers={"Cookie": f"fe_origin={_VALID_ORIGIN}"},
+        headers={"Cookie": f"fe_origin={_VALID_ORIGIN}; {await _flow_cookie(no_redirect_client)}"},
     )
     assert resp.status_code == 302
     assert resp.headers["location"].startswith(f"{_VALID_ORIGIN}/auth/callback?code=")
@@ -98,7 +120,7 @@ async def test_oauth_callback_failure_uses_resolved_origin(no_redirect_client):
     resp = await no_redirect_client.get(
         "/api/v1/auth/callback",
         params={"code": "bad-code"},
-        headers={"Cookie": f"fe_origin={_VALID_ORIGIN}"},
+        headers={"Cookie": f"fe_origin={_VALID_ORIGIN}; {await _flow_cookie(no_redirect_client)}"},
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == f"{_VALID_ORIGIN}/login?oauth=failed"
@@ -109,7 +131,7 @@ async def test_oauth_callback_evil_cookie_falls_back_to_frontend_url(no_redirect
     resp = await no_redirect_client.get(
         "/api/v1/auth/callback",
         params={"code": "good-code"},
-        headers={"Cookie": "fe_origin=https://evil.com"},
+        headers={"Cookie": f"fe_origin=https://evil.com; {await _flow_cookie(no_redirect_client)}"},
     )
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("http://localhost:4200/auth/callback?code=")
@@ -228,7 +250,11 @@ async def test_oauth_callback_unexpected_exchange_error_redirects_failed(no_redi
     from unittest.mock import AsyncMock, patch
 
     with patch("app.routers.auth.supabase_exchange_code", new=AsyncMock(side_effect=RuntimeError("boom"))):
-        resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+        resp = await no_redirect_client.get(
+            "/api/v1/auth/callback",
+            params={"code": "good-code"},
+            headers={"Cookie": await _flow_cookie(no_redirect_client)},
+        )
     assert resp.status_code == 302
     assert resp.headers["location"].endswith("/login?oauth=failed")
 
@@ -241,7 +267,11 @@ async def test_oauth_callback_missing_user_redirects_failed(no_redirect_client):
     empty.user = None
     empty.session = None
     with patch("app.routers.auth.supabase_exchange_code", new=AsyncMock(return_value=empty)):
-        resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+        resp = await no_redirect_client.get(
+            "/api/v1/auth/callback",
+            params={"code": "good-code"},
+            headers={"Cookie": await _flow_cookie(no_redirect_client)},
+        )
     assert resp.status_code == 302
     assert resp.headers["location"].endswith("/login?oauth=failed")
 
@@ -267,7 +297,11 @@ async def test_oauth_callback_links_existing_email(no_redirect_client, db_sessio
     db_session.add(existing)
     await db_session.commit()
 
-    resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback",
+        params={"code": "good-code"},
+        headers={"Cookie": await _flow_cookie(no_redirect_client)},
+    )
     assert resp.status_code == 302
     assert "/auth/callback?code=" in resp.headers["location"]
     assert "refresh_token" not in resp.cookies
@@ -288,7 +322,11 @@ async def test_oauth_callback_provision_failure_redirects_failed(no_redirect_cli
     from unittest.mock import AsyncMock, patch
 
     with patch("app.routers.auth._get_or_create_user", new=AsyncMock(side_effect=RuntimeError("db down"))):
-        resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+        resp = await no_redirect_client.get(
+            "/api/v1/auth/callback",
+            params={"code": "good-code"},
+            headers={"Cookie": await _flow_cookie(no_redirect_client)},
+        )
     assert resp.status_code == 302
     assert resp.headers["location"].endswith("/login?oauth=failed")
 
@@ -597,17 +635,18 @@ async def test_oauth_google_without_challenge_sets_no_cookie(no_redirect_client)
 @pytest.mark.asyncio
 async def test_oauth_callback_stores_challenge_from_cookie(no_redirect_client):
     import json
-    from unittest.mock import AsyncMock
 
     from app.dependencies import get_redis
 
-    mock_redis = AsyncMock()
+    mock_redis = make_flow_redis()
     app.dependency_overrides[get_redis] = lambda: mock_redis
     resp = await no_redirect_client.get(
-        "/api/v1/auth/callback", params={"code": "good-code"}, headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}"}
+        "/api/v1/auth/callback",
+        params={"code": "good-code"},
+        headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}; {await _flow_cookie(no_redirect_client)}"},
     )
     assert resp.status_code == 302
-    stored = json.loads(mock_redis.set.await_args.args[1])
+    stored = json.loads(_handoff_sets(mock_redis)[0].args[1])
     assert stored["challenge"] == _pkce(_VERIFIER)
     assert 'oauth_challenge=""' in "".join(resp.headers.get_list("set-cookie"))
 
@@ -621,13 +660,16 @@ def _enforce_pkce():
 
 
 def _callback_redis():
-    from unittest.mock import AsyncMock
 
     from app.dependencies import get_redis
 
-    mock_redis = AsyncMock()
+    mock_redis = make_flow_redis()
     app.dependency_overrides[get_redis] = lambda: mock_redis
     return mock_redis
+
+
+def _handoff_sets(mock_redis) -> list:
+    return [c for c in mock_redis.set.await_args_list if c.args[0].startswith("oauth:handoff:")]
 
 
 def _challenge_cleared(resp) -> bool:
@@ -638,9 +680,13 @@ def _challenge_cleared(resp) -> bool:
 async def test_oauth_callback_requires_challenge_when_enforced(no_redirect_client):
     _enforce_pkce()
     mock_redis = _callback_redis()
-    resp = await no_redirect_client.get("/api/v1/auth/callback", params={"code": "good-code"})
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback",
+        params={"code": "good-code"},
+        headers={"Cookie": await _flow_cookie(no_redirect_client)},
+    )
     assert resp.headers["location"].endswith("/login?oauth=failed")
-    mock_redis.set.assert_not_awaited()
+    assert not _handoff_sets(mock_redis)
     assert _challenge_cleared(resp)
 
 
@@ -649,10 +695,12 @@ async def test_oauth_callback_enforced_with_valid_cookie_succeeds(no_redirect_cl
     _enforce_pkce()
     mock_redis = _callback_redis()
     resp = await no_redirect_client.get(
-        "/api/v1/auth/callback", params={"code": "good-code"}, headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}"}
+        "/api/v1/auth/callback",
+        params={"code": "good-code"},
+        headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}; {await _flow_cookie(no_redirect_client)}"},
     )
     assert "/auth/callback?code=" in resp.headers["location"]
-    mock_redis.set.assert_awaited_once()
+    assert len(_handoff_sets(mock_redis)) == 1
     assert _challenge_cleared(resp)
 
 
@@ -666,23 +714,27 @@ async def test_oauth_callback_malformed_cookie_treated_as_absent(no_redirect_cli
         _enforce_pkce()
     mock_redis = _callback_redis()
     resp = await no_redirect_client.get(
-        "/api/v1/auth/callback", params={"code": "good-code"}, headers={"Cookie": cookie}
+        "/api/v1/auth/callback",
+        params={"code": "good-code"},
+        headers={"Cookie": cookie + b"; " + (await _flow_cookie(no_redirect_client)).encode()},
     )
     assert _challenge_cleared(resp)
     if enforced:
         assert resp.headers["location"].endswith("/login?oauth=failed")
-        mock_redis.set.assert_not_awaited()
+        assert not _handoff_sets(mock_redis)
     else:
         assert "/auth/callback?code=" in resp.headers["location"]
         import json
 
-        assert json.loads(mock_redis.set.await_args.args[1])["challenge"] is None
+        assert json.loads(_handoff_sets(mock_redis)[0].args[1])["challenge"] is None
 
 
 @pytest.mark.asyncio
 async def test_oauth_callback_clears_cookie_on_invalid_code(no_redirect_client):
     resp = await no_redirect_client.get(
-        "/api/v1/auth/callback", params={"code": "bad"}, headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}"}
+        "/api/v1/auth/callback",
+        params={"code": "bad"},
+        headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}; {await _flow_cookie(no_redirect_client)}"},
     )
     assert resp.headers["location"].endswith("/login?oauth=failed")
     assert _challenge_cleared(resp)
@@ -692,11 +744,12 @@ async def test_oauth_callback_clears_cookie_on_invalid_code(no_redirect_client):
 async def test_oauth_callback_clears_cookie_on_unexpected_error(no_redirect_client):
     from unittest.mock import AsyncMock, patch
 
+    flow = await _flow_cookie(no_redirect_client)
     with patch("app.routers.auth.get_supabase_client", AsyncMock(side_effect=RuntimeError("boom"))):
         resp = await no_redirect_client.get(
             "/api/v1/auth/callback",
             params={"code": "good-code"},
-            headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}"},
+            headers={"Cookie": f"oauth_challenge={_pkce(_VERIFIER)}; {flow}"},
         )
     assert resp.status_code == 302
     assert resp.headers["location"].endswith("/login?oauth=failed")
@@ -1068,6 +1121,71 @@ async def test_logout_is_rate_limited_per_ip(async_client, override_get_db):
     assert (await async_client.post("/api/v1/auth/logout")).status_code == 429
 
 
+# --- SCRUM-213: OAuth PKCE verifier bound to the initiating browser ---------------------------------
+
+
+def _query(url: str) -> dict[str, str]:
+    from urllib.parse import parse_qsl, urlsplit
+
+    return dict(parse_qsl(urlsplit(url).query))
+
+
+async def _flow_redis():
+    from app.dependencies import get_redis
+
+    return await app.dependency_overrides[get_redis]()
+
+
+def _flow_cleared(resp) -> bool:
+    return 'oauth_flow=""' in "".join(resp.headers.get_list("set-cookie"))
+
+
+async def _callback(client, code: str, cookie: str | None):
+    headers = {"Cookie": cookie} if cookie else {}
+    return await client.get("/api/v1/auth/callback", params={"code": code}, headers=headers)
+
+
+def _assert_failed(resp) -> None:
+    assert resp.status_code == 302
+    assert resp.headers["location"].endswith("/login?oauth=failed")
+
+
+@pytest.mark.asyncio
+async def test_oauth_start_binds_verifier_to_httponly_flow_cookie(no_redirect_client):
+    from tests.conftest import _s256
+
+    cookie, url, header = await _start_flow(no_redirect_client)
+    flow_id = cookie.split("=", 1)[1]
+    redis = await _flow_redis()
+    verifier = redis.store[f"oauth:flow:{flow_id}"]
+    assert redis.set.await_args_list[0].kwargs["ex"] == 600
+
+    lowered = header.lower()
+    assert "httponly" in lowered and "samesite=lax" in lowered and "path=/api/v1/auth" in lowered
+    assert "max-age=600" in lowered
+
+    query = _query(url)
+    assert query["code_challenge"] == _s256(verifier)
+    assert query["code_challenge_method"] == "s256"
+    assert query["provider"] == "google"
+    assert query["redirect_to"].endswith("/api/v1/auth/callback")
+    assert verifier not in url
+
+
+@pytest.mark.asyncio
+async def test_oauth_interleaved_flows_each_use_their_own_verifier(no_redirect_client, override_get_db):
+    cookie_a, url_a, _ = await _start_flow(no_redirect_client)
+    cookie_b, url_b, _ = await _start_flow(no_redirect_client)
+    code_a = override_get_db.issue_code(_query(url_a)["code_challenge"])
+    code_b = override_get_db.issue_code(_query(url_b)["code_challenge"])
+
+    # A finishes after B started: a single shared verifier slot would have been overwritten by B.
+    resp_a = await _callback(no_redirect_client, code_a, cookie_a)
+    resp_b = await _callback(no_redirect_client, code_b, cookie_b)
+    assert "/auth/callback?code=" in resp_a.headers["location"]
+    assert "/auth/callback?code=" in resp_b.headers["location"]
+
+
 LOGOUT = "/api/v1/auth/logout"
 
 
@@ -1114,6 +1232,221 @@ async def test_logout_without_body_is_unchanged(async_client, override_get_db):
     _assert_cookies_cleared(resp)
     refresh.assert_not_awaited()
     override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cookie", [None, b"oauth_flow=short", b"oauth_flow=" + b"a" * 44, b"oauth_flow=" + "é".encode() * 43]
+)
+async def test_oauth_callback_without_valid_flow_cookie_fails_before_exchange(
+    no_redirect_client, override_get_db, cookie
+):
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"code": "good-code"}, headers={"Cookie": cookie} if cookie else {}
+    )
+    _assert_failed(resp)
+    assert override_get_db.exchange_calls == []
+    assert _flow_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_unknown_flow_cookie_fails_before_exchange(no_redirect_client, override_get_db):
+    resp = await _callback(no_redirect_client, "good-code", "oauth_flow=" + "a" * 43)
+    _assert_failed(resp)
+    assert override_get_db.exchange_calls == []
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_expired_flow_fails_before_exchange(no_redirect_client, override_get_db):
+    cookie, _, _ = await _start_flow(no_redirect_client)
+    (await _flow_redis()).store.clear()  # TTL elapsed
+    _assert_failed(await _callback(no_redirect_client, "good-code", cookie))
+    assert override_get_db.exchange_calls == []
+
+
+@pytest.mark.asyncio
+async def test_oauth_login_csrf_attackers_code_with_victims_cookie_fails(no_redirect_client, override_get_db):
+    _, attacker_url, _ = await _start_flow(no_redirect_client)  # attacker's browser
+    victim_cookie, _, _ = await _start_flow(no_redirect_client)  # victim's browser
+    attacker_code = override_get_db.issue_code(_query(attacker_url)["code_challenge"])
+
+    resp = await _callback(no_redirect_client, attacker_code, victim_cookie)
+    _assert_failed(resp)
+    assert len(override_get_db.exchange_calls) == 1  # reached Supabase, which rejected the mismatched verifier
+
+
+@pytest.mark.asyncio
+async def test_oauth_login_csrf_attackers_code_without_cookie_fails(no_redirect_client, override_get_db):
+    _, attacker_url, _ = await _start_flow(no_redirect_client)
+    attacker_code = override_get_db.issue_code(_query(attacker_url)["code_challenge"])
+
+    _assert_failed(await _callback(no_redirect_client, attacker_code, None))
+    assert override_get_db.exchange_calls == []
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_replay_fails_and_cookie_cleared_on_every_path(no_redirect_client, override_get_db):
+    cookie, url, _ = await _start_flow(no_redirect_client)
+    code = override_get_db.issue_code(_query(url)["code_challenge"])
+
+    first = await _callback(no_redirect_client, code, cookie)
+    assert "/auth/callback?code=" in first.headers["location"]
+    second = await _callback(no_redirect_client, code, cookie)
+    _assert_failed(second)
+    for resp in (first, second, await _callback(no_redirect_client, "x", None)):
+        assert _flow_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_oauth_flow_leaves_no_verifier_in_shared_client_storage():
+    from app.config import Settings
+    from app.services.auth_service import _supabase_clients, build_oauth_authorize_url, get_supabase_client
+
+    settings = Settings(SUPABASE_URL="https://isolated.supabase.co", SUPABASE_ANON_KEY="anon")
+    try:
+        client = await get_supabase_client(settings)
+        build_oauth_authorize_url(settings, "google", "http://x/cb")
+        assert await client.auth._storage.get_item(f"{client.auth._storage_key}-code-verifier") is None
+    finally:
+        _supabase_clients.pop(settings.SUPABASE_URL, None)
+
+
+@pytest.mark.asyncio
+async def test_oauth_start_redis_failure_is_503_and_sets_no_cookie(no_redirect_client):
+    from app.dependencies import get_redis
+
+    broken = make_flow_redis()
+    broken.set.side_effect = ConnectionError("redis down")
+    app.dependency_overrides[get_redis] = lambda: broken
+    resp = await no_redirect_client.get("/api/v1/auth/oauth/google")
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "OAUTH_INIT_ERROR"
+    assert _set_cookie_header(resp, "oauth_flow") is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_redis_failure_redirects_failed_without_exchange(no_redirect_client, override_get_db):
+    from app.dependencies import get_redis
+
+    cookie, _, _ = await _start_flow(no_redirect_client)
+    broken = make_flow_redis()
+    broken.getdel.side_effect = ConnectionError("redis down")
+    app.dependency_overrides[get_redis] = lambda: broken
+    resp = await _callback(no_redirect_client, "good-code", cookie)
+    _assert_failed(resp)
+    assert override_get_db.exchange_calls == []
+    assert _flow_cleared(resp)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enforced", [False, True])
+async def test_oauth_flow_binding_is_independent_of_require_pkce(no_redirect_client, override_get_db, enforced):
+    if enforced:
+        _enforce_pkce()
+    challenge_cookie = f"oauth_challenge={_pkce(_VERIFIER)}"
+    _assert_failed(await _callback(no_redirect_client, "good-code", challenge_cookie))  # no flow cookie
+    assert override_get_db.exchange_calls == []
+    cookie, _, _ = await _start_flow(no_redirect_client)
+    ok = await _callback(no_redirect_client, "good-code", f"{challenge_cookie}; {cookie}")
+    assert "/auth/callback?code=" in ok.headers["location"]
+
+
+def test_build_oauth_authorize_url_shape():
+    from app.config import Settings
+    from app.services.auth_service import build_oauth_authorize_url
+    from tests.conftest import _s256
+
+    settings = Settings(SUPABASE_URL="https://abc.supabase.co")
+    url, verifier = build_oauth_authorize_url(settings, "google", "https://api.example/cb?x=1")
+    assert url.startswith("https://abc.supabase.co/auth/v1/authorize?")
+    assert _query(url) == {
+        "redirect_to": "https://api.example/cb?x=1",
+        "code_challenge": _s256(verifier),
+        "code_challenge_method": "s256",
+        "provider": "google",
+    }
+    assert 43 <= len(verifier) <= 128
+    assert build_oauth_authorize_url(settings, "google", "x")[1] != verifier
+
+
+@pytest.mark.parametrize("base", ["https://abc.supabase.co", "https://abc.supabase.co/"])
+def test_build_oauth_authorize_url_tolerates_trailing_slash(base):
+    from app.config import Settings
+    from app.services.auth_service import build_oauth_authorize_url
+
+    url, _ = build_oauth_authorize_url(Settings(SUPABASE_URL=base), "google", "x")
+    assert url.startswith("https://abc.supabase.co/auth/v1/authorize?")
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_provider_denied_drops_stored_flow(no_redirect_client, override_get_db):
+    cookie, _, _ = await _start_flow(no_redirect_client)
+    redis = await _flow_redis()
+    assert redis.store
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"error": "access_denied"}, headers={"Cookie": cookie}
+    )
+    _assert_failed(resp)
+    assert _flow_cleared(resp)
+    assert not redis.store
+    assert override_get_db.exchange_calls == []
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_provider_denied_survives_redis_failure(no_redirect_client):
+    from app.dependencies import get_redis
+
+    cookie, _, _ = await _start_flow(no_redirect_client)
+    broken = make_flow_redis()
+    broken.getdel.side_effect = ConnectionError("redis down")
+    app.dependency_overrides[get_redis] = lambda: broken
+    resp = await no_redirect_client.get(
+        "/api/v1/auth/callback", params={"error": "access_denied"}, headers={"Cookie": cookie}
+    )
+    _assert_failed(resp)
+    assert _flow_cleared(resp)
+
+
+@pytest.mark.asyncio
+async def test_oauth_full_flow_exchanges_a_fresh_verifier_without_touching_shared_storage(
+    no_redirect_client, override_get_db
+):
+    from app.config import Settings
+    from app.services.auth_service import _supabase_clients
+
+    cookie, url, _ = await _start_flow(no_redirect_client)
+    code = override_get_db.issue_code(_query(url)["code_challenge"])
+    resp = await _callback(no_redirect_client, code, cookie)
+    assert "/auth/callback?code=" in resp.headers["location"]
+    verifier = override_get_db.exchange_calls[-1]["code_verifier"]
+    assert isinstance(verifier, str) and len(verifier) == 64
+
+    settings = Settings(SUPABASE_URL="https://isolated-full.supabase.co", SUPABASE_ANON_KEY="anon")
+    try:
+        client = await _real_get_supabase_client(settings)  # the fixture patches the module attribute
+        assert await client.auth._storage.get_item(f"{client.auth._storage_key}-code-verifier") is None
+    finally:
+        _supabase_clients.pop(settings.SUPABASE_URL, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verifier", ["", None])
+async def test_supabase_exchange_code_refuses_empty_verifier(verifier):
+    from app.services.auth_service import supabase_exchange_code
+
+    client = AsyncMock()
+    with pytest.raises(ValueError):
+        await supabase_exchange_code(client, "code", verifier)  # type: ignore[arg-type]
+    client.auth.exchange_code_for_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_supabase_exchange_code_passes_verifier_explicitly():
+    from app.services.auth_service import supabase_exchange_code
+
+    client = AsyncMock()
+    await supabase_exchange_code(client, "code", "v" * 43)
+    client.auth.exchange_code_for_session.assert_awaited_once_with({"auth_code": "code", "code_verifier": "v" * 43})
 
 
 @pytest.mark.asyncio
