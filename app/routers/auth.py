@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -553,6 +554,7 @@ async def oauth_exchange(
 
 
 _LOGOUT_BODY_MAX_BYTES = 2048
+_LOGOUT_BODY_READ_TIMEOUT_SECONDS = 3.0
 
 
 async def _optional_body_refresh_token(request: Request) -> str | None:
@@ -562,12 +564,20 @@ async def _optional_body_refresh_token(request: Request) -> str | None:
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > _LOGOUT_BODY_MAX_BYTES:
         return None
-    try:
+
+    async def read_capped() -> bytes | None:
         raw = bytearray()
         async for chunk in request.stream():
             raw += chunk
             if len(raw) > _LOGOUT_BODY_MAX_BYTES:  # chunked bodies carry no Content-Length
                 return None
+        return bytes(raw)
+
+    try:
+        # Bounded so an unauthenticated slow-drip body cannot hold the coroutine open.
+        raw = await asyncio.wait_for(read_capped(), _LOGOUT_BODY_READ_TIMEOUT_SECONDS)
+        if raw is None:
+            return None
         data = json.loads(raw)
     except Exception:  # CancelledError is a BaseException and still propagates
         return None

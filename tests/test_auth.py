@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from starlette.requests import ClientDisconnect, Request
 from structlog.testing import capture_logs
 from supabase_auth.errors import AuthApiError
 
@@ -1117,7 +1118,7 @@ async def test_logout_without_body_is_unchanged(async_client, override_get_db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("kwargs"),
+    "kwargs",
     [
         {"content": b"", "headers": {"Content-Type": "application/json"}},
         {"content": b"{not json", "headers": {"Content-Type": "application/json"}},
@@ -1196,6 +1197,49 @@ async def test_logout_oversized_chunked_body_is_ignored(async_client, override_g
     _assert_cookies_cleared(resp)
     refresh.assert_not_awaited()
     override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_slow_body_times_out_but_still_clears_cookies(async_client, override_get_db, monkeypatch):
+    monkeypatch.setattr("app.routers.auth._LOGOUT_BODY_READ_TIMEOUT_SECONDS", 0.05)
+    refresh = _spy_refresh(override_get_db)
+
+    async def dribble():
+        yield b'{"refreshToken": '
+        await asyncio.sleep(5)
+        yield b'"fake-refresh-token"}'
+
+    resp = await async_client.post(LOGOUT, content=dribble(), headers=JSON_CT)
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_not_awaited()
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_body_stream_error_still_clears_cookies(async_client, override_get_db, monkeypatch):
+    refresh = _spy_refresh(override_get_db)
+
+    async def broken_stream(self):
+        raise ClientDisconnect
+        yield b""
+
+    monkeypatch.setattr(Request, "stream", broken_stream)
+    resp = await async_client.post(LOGOUT, json={"refreshToken": "fake-refresh-token"})
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_not_awaited()
+    override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_logout_sign_out_failure_with_body_token_still_clears_cookies(async_client, override_get_db):
+    refresh = _spy_refresh(override_get_db)
+    override_get_db.admin.sign_out.side_effect = RuntimeError("boom")
+    resp = await async_client.post(LOGOUT, json={"refreshToken": "fake-refresh-token"})
+    assert resp.status_code == 204
+    _assert_cookies_cleared(resp)
+    refresh.assert_awaited_once_with("fake-refresh-token")
 
 
 @pytest.mark.asyncio
