@@ -7,9 +7,10 @@ from fastapi import HTTPException, status
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWTError
 from jwt.types import Options
-from supabase import AsyncClient, acreate_client
+from supabase import AsyncClient
+from supabase.lib.client_options import AsyncClientOptions
 from supabase_auth.errors import AuthApiError
-from supabase_auth.types import AuthResponse, CodeExchangeParams, Provider
+from supabase_auth.types import AuthChangeEvent, AuthResponse, CodeExchangeParams, Provider, Session
 
 from app.config import Settings
 
@@ -22,10 +23,20 @@ _jwks_clients: dict[str, PyJWKClient] = {}
 _supabase_clients: dict[str, AsyncClient] = {}
 
 
+class _StatelessClient(AsyncClient):
+    # The base listener copies each signed-in user's JWT into the shared client/auth/storage headers.
+    def _listen_to_auth_events(self, event: AuthChangeEvent, session: Session | None) -> None:
+        return None
+
+
 async def get_supabase_client(settings: Settings) -> AsyncClient:
     key = settings.SUPABASE_URL
     if key not in _supabase_clients:
-        _supabase_clients[key] = await acreate_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+        _supabase_clients[key] = await _StatelessClient.create(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_ANON_KEY,
+            AsyncClientOptions(auto_refresh_token=False),
+        )
     return _supabase_clients[key]
 
 
@@ -79,7 +90,6 @@ async def _revoke_session(settings: Settings, access_token: str | None, refresh_
     if refresh_token:
         # Access token missing/expired: a fresh one is the only way to address this session.
         # Rotation is harmless, the session being refreshed is the one signed out right after.
-        # refresh_session saves the session into the shared cached client (as /auth/refresh does); it is revoked next.
         refreshed = await supabase_refresh(client, refresh_token)
         if refreshed.session is not None:
             await client.auth.admin.sign_out(refreshed.session.access_token, "local")
