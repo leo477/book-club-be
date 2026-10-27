@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, cast
 
 import jwt
@@ -62,6 +63,15 @@ async def supabase_refresh(client: AsyncClient, refresh_token: str) -> AuthRespo
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid or expired refresh token", "code": "INVALID_REFRESH_TOKEN"},
         ) from exc
+
+
+async def supabase_revoke_session(settings: Settings, access_token: str) -> None:
+    # Best-effort: logout must still clear cookies if Supabase is unreachable or rejects the token.
+    try:
+        client = await get_supabase_client(settings)
+        await asyncio.wait_for(client.auth.admin.sign_out(access_token, "local"), timeout=5)
+    except Exception as exc:
+        logger.warning("supabase_session_revoke_failed", error_type=type(exc).__name__)
 
 
 async def supabase_sign_in(client: AsyncClient, email: str, password: str) -> AuthResponse:

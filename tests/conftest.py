@@ -81,6 +81,8 @@ class _FakeSupabaseAuth:
 
     def __init__(self) -> None:
         self._users: dict[str, tuple[str, uuid.UUID]] = {}
+        self.admin = MagicMock()
+        self.admin.sign_out = AsyncMock()
 
     async def sign_up(self, credentials: dict) -> MagicMock:
         email = credentials["email"]
@@ -230,12 +232,13 @@ async def override_get_db(test_engine):
 
     with (
         patch("app.routers.auth.get_supabase_client", new=AsyncMock(return_value=fake_client)),
+        patch("app.services.auth_service.get_supabase_client", new=AsyncMock(return_value=fake_client)),
         patch("app.services.auth_service.decode_access_token", side_effect=_fake_decode_access_token),
         # chat.py and dependencies.py bind decode_access_token at import time; patch the local
         # names so the WS handshake and REST auth use the same fake decoder.
         patch("app.dependencies.decode_access_token", side_effect=_fake_decode_access_token),
     ):
-        yield
+        yield fake_auth
 
     app.dependency_overrides.clear()
 

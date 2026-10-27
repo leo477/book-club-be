@@ -922,3 +922,42 @@ async def test_oauth_exchange_omits_tokens_for_a_trusted_origin(async_client, to
     assert resp.status_code == 200
     assert resp.json() == {}
     assert "access-x" in (_set_cookie_header(resp, "access_token") or "")
+
+
+@pytest.mark.asyncio
+async def test_logout_revokes_session_for_bearer_token(async_client, register_user, auth_headers, override_get_db):
+    await register_user()
+    headers = await auth_headers()
+    resp = await async_client.post("/api/v1/auth/logout", headers=headers)
+    assert resp.status_code == 204
+    override_get_db.admin.sign_out.assert_awaited_once_with(headers["Authorization"].split(" ", 1)[1], "local")
+
+
+@pytest.mark.asyncio
+async def test_logout_revokes_session_for_cookie_token(async_client, register_user, override_get_db):
+    token = (await register_user()).json()["accessToken"]
+    async_client.cookies.clear()
+    async_client.cookies.set("access_token", token)
+    resp = await async_client.post("/api/v1/auth/logout")
+    assert resp.status_code == 204
+    override_get_db.admin.sign_out.assert_awaited_once_with(token, "local")
+
+
+@pytest.mark.asyncio
+async def test_logout_still_succeeds_and_clears_cookies_when_revocation_fails(
+    async_client, register_user, auth_headers, override_get_db
+):
+    await register_user()
+    headers = await auth_headers()
+    override_get_db.admin.sign_out.side_effect = RuntimeError("supabase down")
+    resp = await async_client.post("/api/v1/auth/logout", headers=headers)
+    assert resp.status_code == 204
+    for name in ("refresh_token", "access_token"):
+        assert _set_cookie_header(resp, name) is not None
+
+
+@pytest.mark.asyncio
+async def test_logout_without_token_does_not_revoke(async_client, override_get_db):
+    resp = await async_client.post("/api/v1/auth/logout")
+    assert resp.status_code == 401
+    override_get_db.admin.sign_out.assert_not_awaited()

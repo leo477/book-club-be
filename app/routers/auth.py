@@ -37,6 +37,7 @@ from app.services.auth_service import (
     supabase_exchange_code,
     supabase_oauth_url,
     supabase_refresh,
+    supabase_revoke_session,
     supabase_sign_in,
     supabase_sign_up,
 )
@@ -553,10 +554,15 @@ async def oauth_exchange(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
+    request: Request,
     response: Response,
     settings: Annotated[Settings, Depends(get_settings_dep)],
     _current_user: Annotated[User, Depends(get_current_user)],
 ) -> Response:
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
+    if token:
+        await supabase_revoke_session(settings, token)
     # Mutate the injected `response`, not a freshly constructed one — a new Response()
     # here would discard the delete-cookie headers just set on it.
     _clear_session_cookies(response, settings)
