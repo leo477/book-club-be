@@ -10,6 +10,7 @@ from structlog.testing import capture_logs
 from supabase_auth.errors import AuthApiError
 
 from app.main import app
+from app.services.auth_service import get_supabase_client as _real_get_supabase_client
 from tests.conftest import make_flow_redis
 
 
@@ -18,11 +19,6 @@ async def no_redirect_client(override_get_db):
     """Client that does not follow redirects, for asserting 302 Location/cookies."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False) as ac:
         yield ac
-
-
-from app.services.auth_service import (
-    get_supabase_client as _real_get_supabase_client,
-)
 
 
 async def _start_flow(client, **params) -> tuple[str, str, str]:
