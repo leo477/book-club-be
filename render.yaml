@@ -32,6 +32,8 @@ services:
         sync: false
       - key: SUPABASE_JWT_SECRET # optional, legacy HS256 only
         sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY # optional; cover upload fails with 502 without it
+        sync: false
       - key: REDIS_URL
         sync: false
       - key: SENTRY_DSN

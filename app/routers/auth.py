@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -588,19 +589,64 @@ async def oauth_exchange(
     return OAuthExchangeResponse(**_body_tokens(request, data["accessToken"], data["refreshToken"], settings))
 
 
+_LOGOUT_BODY_MAX_BYTES = 2048
+_LOGOUT_BODY_READ_TIMEOUT_SECONDS = 3.0
+
+
+async def _optional_body_refresh_token(request: Request) -> str | None:
+    # Best-effort, never raises: logout must always clear cookies (a deeply nested body raises
+    # RecursionError, a dropped client raises ClientDisconnect). Parsed by hand, not a Body() param,
+    # because FastAPI answers 422 to malformed bodies. Cookie wins: the body is for cookie-less clients.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _LOGOUT_BODY_MAX_BYTES:
+        return None
+
+    async def read_capped() -> bytes | None:
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > _LOGOUT_BODY_MAX_BYTES:  # chunked bodies carry no Content-Length
+                return None
+        return bytes(raw)
+
+    try:
+        # Bounded so an unauthenticated slow-drip body cannot hold the coroutine open.
+        raw = await asyncio.wait_for(read_capped(), _LOGOUT_BODY_READ_TIMEOUT_SECONDS)
+        if raw is None:
+            return None
+        data = json.loads(raw)
+    except Exception:  # CancelledError is a BaseException and still propagates
+        return None
+    token = data.get("refreshToken") if isinstance(data, dict) else None
+    return token if isinstance(token, str) and token.strip() else None
+
+
 # noinspection PyUnusedLocal
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    openapi_extra={
+        "requestBody": {
+            "required": False,
+            "content": {
+                "application/json": {"schema": {"type": "object", "properties": {"refreshToken": {"type": "string"}}}}
+            },
+        }
+    },
+)
 @limiter.limit("20/minute")
 async def logout(
     request: Request,  # slowapi requires this exact parameter name
     response: Response,
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> Response:
+    """Clear session cookies and revoke; the refresh cookie wins, the optional body token is for cookie-less clients."""
     # No auth dependency: an expired access token must not block clearing cookies and revoking.
     # A 429 does not clear cookies, so the frontend must clear local state regardless.
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
-    await supabase_revoke_session(settings, token, request.cookies.get(_REFRESH_COOKIE))
+    refresh = request.cookies.get(_REFRESH_COOKIE) or await _optional_body_refresh_token(request)
+    await supabase_revoke_session(settings, token, refresh)
     # Mutate the injected `response`, not a freshly constructed one — a new Response()
     # here would discard the delete-cookie headers just set on it.
     _clear_session_cookies(response, settings)

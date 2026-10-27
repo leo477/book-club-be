@@ -10,7 +10,7 @@
 
 ## Env vars
 - `ENV`, `BACKEND_URL`, `FRONTEND_URL` are fixed in `render.yaml` and must equal the dashboard values; change them in the file.
-- `sync: false` vars (`DATABASE_URL`, `SECRET_KEY`, `SUPABASE_*`, `REDIS_URL`, `SENTRY_DSN`, `MAPS_*`, `WEB_REVALIDATE_*`) are asked for only at Blueprint creation, then edited only in the dashboard; new ones must be added by hand.
+- `sync: false` vars (`DATABASE_URL`, `SECRET_KEY`, `SUPABASE_*` (incl. `SUPABASE_SERVICE_ROLE_KEY`), `REDIS_URL`, `SENTRY_DSN`, `MAPS_*`, `WEB_REVALIDATE_*`) are asked for only at Blueprint creation, then edited only in the dashboard; new ones must be added by hand.
 - Never save a startup-critical var (`DATABASE_URL`, `SECRET_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`) empty: the deploy fails and the old instance keeps serving, hiding the problem.
 - `SECRET_KEY` is not `generateValue`; a wrong value invalidates all issued tokens.
 - The `keep-alive` cron is manual in the dashboard and is not in the Blueprint.
@@ -39,3 +39,11 @@ Dashboard -> service -> Events -> pick the last good deploy -> Rollback; then re
 Evidence (2026-10-18, `GET /health`): Render's proxy connects from a private `10.x` address (seen `10.216.24.138`) and **appends** the real client IP to any client-supplied `X-Forwarded-For`. Without the header the app logged `client=<real public IP>`; with a fake `X-Forwarded-For: 203.0.113.7` and the old `--forwarded-allow-ips=*` it logged `client=203.0.113.7` (leftmost, attacker-controlled), so IP-keyed slowapi limiters could be bypassed with a fresh bucket per request.
 
 Fix: the Dockerfile no longer passes `--forwarded-allow-ips=*`; it sets `ENV FORWARDED_ALLOW_IPS=10.0.0.0/8` (read natively by uvicorn). uvicorn trusts `X-Forwarded-For` only from that peer range and walks the header right to left, skipping trusted hops, so the first untrusted address (the one Render appended) is the client. Override via the `FORWARDED_ALLOW_IPS` env var on the Render service if Render changes its proxy range (comma-separated IPs/CIDRs). Never set it to `*`. If the peer is ever not in the range, all users collapse to the proxy IP (one shared bucket) - watch for `client=10.x` in logs.
+
+## Cover upload setup (SCRUM-214)
+
+`POST /api/v1/upload/cover` writes to Supabase Storage with a server-side service-role key (the anon key has no INSERT policy on `storage.objects`). Without the key the endpoint returns 502 `STORAGE_ERROR` (fails closed, never falls back to the anon key).
+
+1. Create the bucket: run `docs/supabase/001_covers_bucket.sql` in the Supabase SQL editor (public bucket `covers`, 5 MB, jpeg/png/webp/gif; no write policy on purpose).
+2. Render dashboard -> service -> Environment: add `SUPABASE_SERVICE_ROLE_KEY` (Supabase -> Project Settings -> API -> `service_role`/secret key). Server-only: never put it in a `NEXT_PUBLIC_*`/browser variable or in logs.
+3. Smoke test: upload a small PNG as a signed-in user to `/api/v1/upload/cover`; expect `200 {"url": ".../storage/v1/object/public/covers/<uuid>.png"}` and that the URL loads without auth.

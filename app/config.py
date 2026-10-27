@@ -2,6 +2,7 @@ import logging
 import uuid
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,8 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_JWT_SECRET: str = ""
+    # Server-only; used solely by cover upload (no anon INSERT policy on storage.objects). Never log it.
+    SUPABASE_SERVICE_ROLE_KEY: SecretStr = SecretStr("")  # SecretStr keeps it out of repr/Sentry locals
     # Pepper for hashing emails in per-account rate-limit keys; empty falls back to a fixed constant.
     RATE_LIMIT_KEY_PEPPER: str = ""
 

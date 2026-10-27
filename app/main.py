@@ -84,20 +84,27 @@ def _validate_production_settings(settings: Settings) -> None:
         raise RuntimeError("Supabase must be configured in production (SUPABASE_URL/ANON_KEY)")
 
 
+def _init_sentry(settings: Settings) -> None:
+    if not settings.SENTRY_DSN:
+        return
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.ENV,
+        integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+        traces_sample_rate=0.1,
+        # Frame locals repr the storage client, whose headers hold the raw service-role key.
+        include_local_variables=False,
+    )
+    logger.info("Sentry initialized", env=settings.ENV)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
 
     _validate_production_settings(settings)
 
-    if settings.SENTRY_DSN:
-        sentry_sdk.init(
-            dsn=settings.SENTRY_DSN,
-            environment=settings.ENV,
-            integrations=[FastApiIntegration(), SqlalchemyIntegration()],
-            traces_sample_rate=0.1,
-        )
-        logger.info("Sentry initialized", env=settings.ENV)
+    _init_sentry(settings)
 
     redis_pool = aioredis.ConnectionPool.from_url(
         settings.REDIS_URL,
