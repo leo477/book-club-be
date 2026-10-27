@@ -9,6 +9,9 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+SERVICE_KEY = "service-role-secret-value"
+
+
 def _make_mock_supabase(public_url: str = "https://cdn.example.com/covers/test.jpg") -> MagicMock:
     mock_supabase = MagicMock()
     mock_supabase.storage.from_.return_value.upload = AsyncMock(return_value=None)
@@ -21,15 +24,16 @@ def _make_mock_settings() -> MagicMock:
     s = MagicMock()
     s.SUPABASE_URL = "https://test.supabase.co"
     s.SUPABASE_ANON_KEY = "test-anon-key"
+    s.SUPABASE_SERVICE_ROLE_KEY = SERVICE_KEY
     return s
 
 
 @contextmanager
 def _supabase_patches(mock_supabase: MagicMock):
-    """Patch both get_settings (so 503 branch is skipped) and the async Supabase client factory."""
+    """Patch both get_settings (so 503 branch is skipped) and the service-role storage client factory."""
     with (
         patch("app.routers.upload.get_settings", return_value=_make_mock_settings()),
-        patch("app.routers.upload.get_supabase_client", AsyncMock(return_value=mock_supabase)),
+        patch("app.routers.upload.get_storage_client", return_value=mock_supabase.storage),
     ):
         yield
 
@@ -312,3 +316,71 @@ async def test_upload_cover_extension_from_sniffed_type(async_client, register_u
     path_arg = mock_supabase.storage.from_.return_value.upload.call_args[0][0]
     assert path_arg.endswith(".png")
     assert "html" not in path_arg
+
+
+@pytest.mark.asyncio
+async def test_upload_cover_missing_service_key_fails_closed(async_client, register_user, auth_headers, caplog):
+    await register_user(email="upload_nokey@example.com")
+    headers = await auth_headers(email="upload_nokey@example.com")
+
+    settings = _make_mock_settings()
+    settings.SUPABASE_SERVICE_ROLE_KEY = ""
+
+    with (
+        patch("app.routers.upload.get_settings", return_value=settings),
+        patch("app.services.auth_service.get_supabase_client", AsyncMock()) as anon_factory,
+    ):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("photo.jpg", io.BytesIO(JPEG), "image/jpeg")},
+        )
+
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "STORAGE_ERROR"
+    anon_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upload_cover_uses_service_role_client_and_hides_key(async_client, register_user, auth_headers, caplog):
+    await register_user(email="upload_svc@example.com")
+    headers = await auth_headers(email="upload_svc@example.com")
+    mock_supabase = _make_mock_supabase("https://x.supabase.co/storage/v1/object/public/covers/a.jpg")
+
+    with (
+        _supabase_patches(mock_supabase),
+        patch("app.services.auth_service.get_supabase_client", AsyncMock()) as anon_factory,
+    ):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("photo.jpg", io.BytesIO(JPEG), "image/jpeg")},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"url": "https://x.supabase.co/storage/v1/object/public/covers/a.jpg"}
+    anon_factory.assert_not_called()
+    path = mock_supabase.storage.from_.return_value.upload.call_args[0][0]
+    assert path.count("/") == 0
+    assert path.endswith(".jpg")
+    assert SERVICE_KEY not in resp.text
+    assert SERVICE_KEY not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_upload_cover_storage_error_does_not_leak_key(async_client, register_user, auth_headers, caplog):
+    await register_user(email="upload_err@example.com")
+    headers = await auth_headers(email="upload_err@example.com")
+    broken = MagicMock()
+    broken.storage.from_.return_value.upload = AsyncMock(side_effect=RuntimeError("bucket not found"))
+
+    with _supabase_patches(broken):
+        resp = await async_client.post(
+            "/api/v1/upload/cover",
+            headers=headers,
+            files={"file": ("photo.jpg", io.BytesIO(JPEG), "image/jpeg")},
+        )
+
+    assert resp.status_code == 502
+    assert SERVICE_KEY not in resp.text
+    assert SERVICE_KEY not in caplog.text
