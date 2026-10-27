@@ -32,7 +32,13 @@ def _sniff_image_type(data: bytes) -> tuple[str, str] | None:
 
 
 # noinspection PyUnusedLocal
-@router.post("/cover", responses={503: {"description": "Storage not configured"}})
+@router.post(
+    "/cover",
+    responses={
+        502: {"description": "Storage upload failed"},
+        503: {"description": "Storage not configured"},
+    },
+)
 @limiter.limit("10/minute")
 async def upload_cover(
     request: Request,  # slowapi requires this exact parameter name
@@ -47,7 +53,7 @@ async def upload_cover(
         )
 
     settings = get_settings()
-    if not settings.SUPABASE_URL or not settings.SUPABASE_ANON_KEY:
+    if not settings.SUPABASE_URL:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage not configured")
 
     contents = await file.read(_MAX_FILE_SIZE_BYTES + 1)
@@ -78,7 +84,7 @@ async def upload_cover(
     try:
         # Bucket is already named "covers", so the object key is just the file name.
         path = f"{uuid.uuid4()}.{ext}"
-        await storage.from_("covers").upload(path, contents, {"content-type": content_type})
+        await storage.from_("covers").upload(path, contents, {"content-type": content_type, "x-upsert": "false"})
         url: str = await storage.from_("covers").get_public_url(path)
     except Exception as exc:
         logger.exception("Supabase storage error", exc_info=True)

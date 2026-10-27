@@ -3,6 +3,8 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
+from structlog.testing import capture_logs
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -24,7 +26,7 @@ def _make_mock_settings() -> MagicMock:
     s = MagicMock()
     s.SUPABASE_URL = "https://test.supabase.co"
     s.SUPABASE_ANON_KEY = "test-anon-key"
-    s.SUPABASE_SERVICE_ROLE_KEY = SERVICE_KEY
+    s.SUPABASE_SERVICE_ROLE_KEY = SecretStr(SERVICE_KEY)
     return s
 
 
@@ -230,7 +232,7 @@ async def test_upload_cover_sniffed_types(async_client, register_user, auth_head
     assert resp.status_code == 200
     call_args = mock_supabase.storage.from_.return_value.upload.call_args
     assert call_args[0][0].endswith(ext)
-    assert call_args[0][2] == {"content-type": content_type}
+    assert call_args[0][2] == {"content-type": content_type, "x-upsert": "false"}
 
 
 @pytest.mark.asyncio
@@ -319,17 +321,14 @@ async def test_upload_cover_extension_from_sniffed_type(async_client, register_u
 
 
 @pytest.mark.asyncio
-async def test_upload_cover_missing_service_key_fails_closed(async_client, register_user, auth_headers, caplog):
+async def test_upload_cover_missing_service_key_fails_closed(async_client, register_user, auth_headers):
     await register_user(email="upload_nokey@example.com")
     headers = await auth_headers(email="upload_nokey@example.com")
 
     settings = _make_mock_settings()
-    settings.SUPABASE_SERVICE_ROLE_KEY = ""
+    settings.SUPABASE_SERVICE_ROLE_KEY = SecretStr("")
 
-    with (
-        patch("app.routers.upload.get_settings", return_value=settings),
-        patch("app.services.auth_service.get_supabase_client", AsyncMock()) as anon_factory,
-    ):
+    with patch("app.routers.upload.get_settings", return_value=settings):
         resp = await async_client.post(
             "/api/v1/upload/cover",
             headers=headers,
@@ -338,19 +337,15 @@ async def test_upload_cover_missing_service_key_fails_closed(async_client, regis
 
     assert resp.status_code == 502
     assert resp.json()["detail"]["code"] == "STORAGE_ERROR"
-    anon_factory.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_upload_cover_uses_service_role_client_and_hides_key(async_client, register_user, auth_headers, caplog):
+async def test_upload_cover_uses_service_role_client_and_hides_key(async_client, register_user, auth_headers):
     await register_user(email="upload_svc@example.com")
     headers = await auth_headers(email="upload_svc@example.com")
     mock_supabase = _make_mock_supabase("https://x.supabase.co/storage/v1/object/public/covers/a.jpg")
 
-    with (
-        _supabase_patches(mock_supabase),
-        patch("app.services.auth_service.get_supabase_client", AsyncMock()) as anon_factory,
-    ):
+    with _supabase_patches(mock_supabase):
         resp = await async_client.post(
             "/api/v1/upload/cover",
             headers=headers,
@@ -359,22 +354,22 @@ async def test_upload_cover_uses_service_role_client_and_hides_key(async_client,
 
     assert resp.status_code == 200
     assert resp.json() == {"url": "https://x.supabase.co/storage/v1/object/public/covers/a.jpg"}
-    anon_factory.assert_not_called()
     path = mock_supabase.storage.from_.return_value.upload.call_args[0][0]
     assert path.count("/") == 0
     assert path.endswith(".jpg")
     assert SERVICE_KEY not in resp.text
-    assert SERVICE_KEY not in caplog.text
+    upload_mock = mock_supabase.storage.from_.return_value.upload
+    assert upload_mock.call_args[0][2]["x-upsert"] == "false"
 
 
 @pytest.mark.asyncio
-async def test_upload_cover_storage_error_does_not_leak_key(async_client, register_user, auth_headers, caplog):
+async def test_upload_cover_storage_error_does_not_leak_key(async_client, register_user, auth_headers):
     await register_user(email="upload_err@example.com")
     headers = await auth_headers(email="upload_err@example.com")
     broken = MagicMock()
     broken.storage.from_.return_value.upload = AsyncMock(side_effect=RuntimeError("bucket not found"))
 
-    with _supabase_patches(broken):
+    with capture_logs() as logs, _supabase_patches(broken):
         resp = await async_client.post(
             "/api/v1/upload/cover",
             headers=headers,
@@ -383,4 +378,49 @@ async def test_upload_cover_storage_error_does_not_leak_key(async_client, regist
 
     assert resp.status_code == 502
     assert SERVICE_KEY not in resp.text
-    assert SERVICE_KEY not in caplog.text
+    assert any(e["event"] == "Supabase storage error" and e["log_level"] == "error" for e in logs)
+    assert SERVICE_KEY not in repr(logs)
+
+
+def test_settings_repr_hides_service_role_key():
+    from app.config import Settings
+
+    settings = Settings(SUPABASE_SERVICE_ROLE_KEY=SERVICE_KEY)
+    assert settings.SUPABASE_SERVICE_ROLE_KEY.get_secret_value() == SERVICE_KEY
+    assert SERVICE_KEY not in repr(settings)
+    assert SERVICE_KEY not in str(settings)
+
+
+def test_settings_loads_service_role_key_from_env(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", SERVICE_KEY)
+    assert Settings().SUPABASE_SERVICE_ROLE_KEY.get_secret_value() == SERVICE_KEY
+
+
+@pytest.fixture
+def clean_storage_cache():
+    from app.services import storage_service
+
+    storage_service._storage_clients.clear()
+    yield storage_service
+    storage_service._storage_clients.clear()
+
+
+@pytest.mark.parametrize(("url", "key"), [("", SERVICE_KEY), ("https://x.supabase.co", "")])
+def test_get_storage_client_none_when_unconfigured(clean_storage_cache, url, key):
+    settings = MagicMock(SUPABASE_URL=url, SUPABASE_SERVICE_ROLE_KEY=SecretStr(key))
+    assert clean_storage_cache.get_storage_client(settings) is None
+
+
+def test_get_storage_client_builds_service_role_client_and_caches(clean_storage_cache):
+    settings = MagicMock(SUPABASE_URL="https://x.supabase.co/", SUPABASE_SERVICE_ROLE_KEY=SecretStr(SERVICE_KEY))
+    with patch.object(clean_storage_cache, "AsyncStorageClient") as client_cls:
+        first = clean_storage_cache.get_storage_client(settings)
+        second = clean_storage_cache.get_storage_client(settings)
+
+    assert first is second is client_cls.return_value
+    client_cls.assert_called_once_with(
+        "https://x.supabase.co/storage/v1/",
+        {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}"},
+    )
