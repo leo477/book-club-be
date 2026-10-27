@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings
 from app.models.csp_report import CspReport
 from app.services import csp_report as svc
 from app.tasks.cleanup import cleanup_csp_reports, run_csp_report_cleanup_pass
@@ -55,7 +56,7 @@ async def test_reporting_api_array_of_two(async_client, test_engine):
     assert set(rows) == {"require-trusted-types-for", "script-src-elem"}
     tt = rows["require-trusted-types-for"]
     assert (tt.env, tt.sink, tt.disposition, tt.count) == ("dev", "Element innerHTML", "report", 1)
-    assert rows["script-src-elem"].blocked == "x.cdn.io"
+    assert rows["script-src-elem"].blocked == "other"
 
 
 @pytest.mark.asyncio
@@ -146,7 +147,7 @@ async def test_query_fragment_stripped_and_ids_normalised(async_client, test_eng
     assert (await _post(async_client, [body])).status_code == 204
     (row,) = await _rows(test_engine)
     assert row.route == "/clubs/:id/*"
-    assert row.blocked == "cdn.example.com"
+    assert row.blocked == "other"
     dump = f"{row.route}{row.blocked}{row.sample}"
     assert not any(s in dump for s in ("token", "secret", "frag", "tab=x", "me@x.io", "q=1"))
     assert len(row.sample) == 120
@@ -303,9 +304,9 @@ async def test_forged_route_directive_sample_stay_bounded(async_client, test_eng
 
 
 @pytest.mark.asyncio
-async def test_forged_blocked_hosts_are_capped_by_hourly_budget(async_client, test_engine):
+async def test_forged_blocked_hosts_collapse_to_other(async_client, test_engine):
     await _post_in_batches(async_client, [_tt(blockedURL=f"https://h{i}.evil.com/p") for i in range(290)])
-    assert len(await _rows(test_engine)) == 290 <= svc.HOURLY_UPSERT_CAP
+    assert {r.blocked for r in await _rows(test_engine)} == {"other"}
 
 
 @pytest.mark.asyncio
@@ -318,7 +319,7 @@ async def test_routes_directive_case_and_blocked_bounds(async_client, test_engin
     rows = await _rows(test_engine)
     assert {r.route for r in rows} == {"/", "/clubs/:id/*", "/events/new", "/other", "/profile/edit/*"}
     assert {r.directive for r in rows} >= {"script-src-elem"}
-    assert {r.blocked for r in rows} == {"trusted-types-sink", "x" * 64, ""}
+    assert {r.blocked for r in rows} == {"trusted-types-sink", "other", ""}
 
 
 @pytest.mark.asyncio
@@ -337,3 +338,17 @@ async def test_real_chrome_shapes_are_distinct_rows(async_client, test_engine):
         ("require-trusted-types-for", "Element innerHTML", "trusted-types-sink", "report"),
         ("script-src", "", "eval", "enforce"),
     }
+
+
+def test_blocked_keeps_known_hosts_and_maps_own_host_to_self():
+    cfg = Settings(SUPABASE_URL="https://abc.supabase.co", BACKEND_URL="https://api.example.com")
+
+    def blocked(url):
+        return svc.normalise(_tt(blockedURL=url), cfg)["blocked"]
+
+    assert blocked("https://abc.supabase.co/storage/v1/x.png") == "abc.supabase.co"
+    assert blocked("https://api.example.com/api/v1/x") == "api.example.com"
+    assert blocked("https://maps.googleapis.com/maps/api/js") == "maps.googleapis.com"
+    assert blocked("https://covers.openlibrary.org/b/id/1.jpg") == "covers.openlibrary.org"
+    assert blocked("http://localhost:4200/assets/a.js") == "self"
+    assert blocked("https://evil.example.net/a.js") == "other"

@@ -49,6 +49,12 @@ _ROUTES = {
 }  # fmt: skip
 _SUBROUTES = {"new", "create", "edit", "settings", "join", ":id"}
 _LOCAL_HOSTS = {"localhost", "127.0.0.1"}
+# Hosts the FE CSP legitimately allows; Supabase and BE hosts are added from settings.
+_KNOWN_HOSTS = {
+    "vercel.live", "va.vercel-scripts.com", "maps.googleapis.com", "maps.gstatic.com", "www.gstatic.com",
+    "fonts.googleapis.com", "fonts.gstatic.com", "openlibrary.org", "covers.openlibrary.org", "books.google.com",
+    "books.googleusercontent.com",
+}  # fmt: skip
 
 _KEY = ("day", "env", "route", "directive", "disposition", "sink", "blocked", "policy_name")
 
@@ -105,14 +111,19 @@ def _route(path: str) -> str:
     return "/" + "/".join(kept)
 
 
-def _blocked(raw: str) -> str:
+def _blocked(raw: str, doc_host: str, settings: Settings) -> str:
     raw = raw.strip()
     if raw in _KEYWORDS:
         return raw
     parts = urlsplit(raw)
-    if parts.scheme in ("http", "https", "ws", "wss") and parts.hostname:
-        return parts.hostname[:64]
-    return ""
+    if parts.scheme not in ("http", "https", "ws", "wss") or not parts.hostname:
+        return ""
+    host = parts.hostname
+    if host == doc_host:
+        return "self"
+    known = _KNOWN_HOSTS | {urlsplit(u).hostname for u in (settings.SUPABASE_URL, settings.BACKEND_URL)}
+    # Closed set: a forged host must not mint a new row; the first sample keeps the detail.
+    return host if host in known else "other"
 
 
 def _scrub_sample(sample: str) -> str:
@@ -147,7 +158,7 @@ def normalise(raw: object, settings: Settings) -> dict[str, str] | None:
         "directive": directive,
         "disposition": "enforce" if disposition == "enforce" else "report",
         "sink": sink.group(1)[:48] if sink else "",
-        "blocked": _blocked(_first(body, "blockedURL", "blocked-uri", "blockedUri")),
+        "blocked": _blocked(_first(body, "blockedURL", "blocked-uri", "blockedUri"), parts.hostname, settings),
         "policy_name": _SAFE_NAME_RE.sub("", policy.group(1))[:64] if policy else "",
         "sample": _scrub_sample(sample_raw),
     }
