@@ -1550,6 +1550,31 @@ async def test_logout_slow_body_times_out_but_still_clears_cookies(async_client,
 
 
 @pytest.mark.asyncio
+async def test_optional_body_token_enforces_deadline_when_the_timeout_cancel_is_swallowed(monkeypatch):
+    # BaseHTTPMiddleware's receive task group can swallow wait_for's one-shot cancel when it lands as a
+    # chunk arrives (flaky on slow CI runners); the per-chunk deadline check must still end the read.
+    from types import SimpleNamespace
+
+    from app.routers.auth import _optional_body_refresh_token
+
+    monkeypatch.setattr("app.routers.auth._LOGOUT_BODY_READ_TIMEOUT_SECONDS", 0.05)
+
+    async def stream():
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            pass  # swallowed, as the middleware race does
+        yield b'{"refreshToken": '
+        await asyncio.sleep(5)
+        yield b'"fake-refresh-token"}'
+
+    request = SimpleNamespace(headers={}, stream=stream)
+    started = asyncio.get_running_loop().time()
+    assert await _optional_body_refresh_token(request) is None  # type: ignore[arg-type]
+    assert asyncio.get_running_loop().time() - started < 2
+
+
+@pytest.mark.asyncio
 async def test_logout_body_stream_error_still_clears_cookies(async_client, override_get_db, monkeypatch):
     refresh = _spy_refresh(override_get_db)
 

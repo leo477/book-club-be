@@ -601,11 +601,18 @@ async def _optional_body_refresh_token(request: Request) -> str | None:
     if declared and declared.isdigit() and int(declared) > _LOGOUT_BODY_MAX_BYTES:
         return None
 
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _LOGOUT_BODY_READ_TIMEOUT_SECONDS
+
     async def read_capped() -> bytes | None:
         raw = bytearray()
         async for chunk in request.stream():
             raw += chunk
             if len(raw) > _LOGOUT_BODY_MAX_BYTES:  # chunked bodies carry no Content-Length
+                return None
+            # wait_for's cancel can be swallowed by the BaseHTTPMiddleware receive task group when it
+            # lands as a chunk arrives, and it never fires twice; the deadline is re-checked per chunk.
+            if loop.time() >= deadline:
                 return None
         return bytes(raw)
 
