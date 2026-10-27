@@ -424,3 +424,49 @@ def test_get_storage_client_builds_service_role_client_and_caches(clean_storage_
         "https://x.supabase.co/storage/v1/",
         {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}"},
     )
+
+
+def test_storage_client_sends_service_role_headers_and_hides_key_on_error(clean_storage_cache):
+    import asyncio
+
+    import httpx
+    from storage3.exceptions import StorageApiError
+
+    from app.services.storage_service import AsyncStorageClient as RealClient
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(400, json={"message": "bad", "error": "Bad", "statusCode": "400"})
+
+    def build(url, headers):
+        return RealClient(url, headers, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    settings = MagicMock(SUPABASE_URL="https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY=SecretStr(SERVICE_KEY))
+    with patch.object(clean_storage_cache, "AsyncStorageClient", side_effect=build):
+        client = clean_storage_cache.get_storage_client(settings)
+
+    async def run():
+        await client.from_("covers").upload("a.jpg", b"x", {"content-type": "image/jpeg", "x-upsert": "false"})
+
+    with pytest.raises(StorageApiError) as exc:
+        asyncio.run(run())
+
+    request = seen[0]
+    assert request.method == "POST"
+    assert str(request.url) == "https://x.supabase.co/storage/v1/object/covers/a.jpg"
+    assert request.headers["apikey"] == SERVICE_KEY
+    assert request.headers["authorization"] == f"Bearer {SERVICE_KEY}"
+    assert request.headers["x-upsert"] == "false"
+    assert SERVICE_KEY not in str(exc.value)
+    assert SERVICE_KEY not in repr(exc.value)
+
+
+def test_sentry_init_disables_local_variables():
+    from app.main import _init_sentry
+
+    settings = MagicMock(SENTRY_DSN="https://k@o.ingest.sentry.io/1", ENV="test")
+    with patch("app.main.sentry_sdk.init") as init:
+        _init_sentry(settings)
+    assert init.call_args.kwargs["include_local_variables"] is False
