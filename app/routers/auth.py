@@ -18,6 +18,7 @@ from pydantic import EmailStr
 from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from supabase_auth.types import Session as SupabaseSession
 from supabase_auth.types import User as SupabaseUser
 
 from app.config import Settings
@@ -466,6 +467,58 @@ async def oauth_google(
     return response
 
 
+async def _drop_abandoned_flow(redis: aioredis.Redis, flow_id: str | None) -> None:
+    if flow_id and _PKCE_CHALLENGE_RE.fullmatch(flow_id):
+        try:  # drop the abandoned flow now instead of at TTL
+            await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
+        except Exception:  # intentional: best-effort cleanup
+            logger.warning("Failed to drop abandoned OAuth flow")
+
+
+async def _take_flow_verifier(redis: aioredis.Redis, flow_id: str | None) -> str | None:
+    if not flow_id or not _PKCE_CHALLENGE_RE.fullmatch(flow_id):
+        return None
+    try:
+        raw_verifier = await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
+    except Exception:  # intentional: no verifier means no safe exchange
+        logger.exception("Failed to load OAuth flow")
+        return None
+    if not raw_verifier:
+        return None
+    # The pool is created with decode_responses=False, so Redis hands back bytes.
+    return raw_verifier.decode() if isinstance(raw_verifier, bytes) else raw_verifier
+
+
+def _valid_challenge_cookie(request: Request) -> str | None:
+    raw_challenge = request.cookies.get(_OAUTH_CHALLENGE_COOKIE)
+    return raw_challenge if raw_challenge and _PKCE_CHALLENGE_RE.fullmatch(raw_challenge) else None
+
+
+async def _store_handoff_code(
+    redis: aioredis.Redis, session: SupabaseSession, user: SupabaseUser, challenge: str | None
+) -> str | None:
+    # One-time handoff code so the SPA can fetch tokens from the response body via
+    # oauth_exchange, which establishes the session cookies on the frontend's proxied origin.
+    handoff_code = secrets.token_urlsafe(32)
+    try:
+        await redis.set(
+            f"{_OAUTH_HANDOFF_PREFIX}{handoff_code}",
+            json.dumps(
+                {
+                    "accessToken": session.access_token,
+                    "refreshToken": session.refresh_token,
+                    "userId": str(user.id),
+                    "challenge": challenge,
+                }
+            ),
+            ex=_OAUTH_HANDOFF_TTL,
+        )
+    except Exception:  # intentional: a Redis failure must not block the OAuth flow
+        logger.exception("Failed to store OAuth handoff code")
+        return None
+    return handoff_code
+
+
 @router.get("/callback")
 async def oauth_callback(
     request: Request,
@@ -490,25 +543,12 @@ async def oauth_callback(
     # The verifier is tied to the starting browser, so a code planted into another browser cannot log it in.
     flow_id = request.cookies.get(_OAUTH_FLOW_COOKIE)
     if not code:
-        if flow_id and _PKCE_CHALLENGE_RE.fullmatch(flow_id):
-            try:  # drop the abandoned flow now instead of at TTL
-                await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
-            except Exception:  # intentional: best-effort cleanup
-                logger.warning("Failed to drop abandoned OAuth flow")
+        await _drop_abandoned_flow(redis, flow_id)
         return _redirect(_OAUTH_FAILED_PATH)
-    if not flow_id or not _PKCE_CHALLENGE_RE.fullmatch(flow_id):
+    verifier = await _take_flow_verifier(redis, flow_id)
+    if not verifier:
         return _redirect(_OAUTH_FAILED_PATH)
-    try:
-        raw_verifier = await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
-    except Exception:  # intentional: no verifier means no safe exchange
-        logger.exception("Failed to load OAuth flow")
-        return _redirect(_OAUTH_FAILED_PATH)
-    if not raw_verifier:
-        return _redirect(_OAUTH_FAILED_PATH)
-    # The pool is created with decode_responses=False, so Redis hands back bytes.
-    verifier = raw_verifier.decode() if isinstance(raw_verifier, bytes) else raw_verifier
-    raw_challenge = request.cookies.get(_OAUTH_CHALLENGE_COOKIE)
-    challenge = raw_challenge if raw_challenge and _PKCE_CHALLENGE_RE.fullmatch(raw_challenge) else None
+    challenge = _valid_challenge_cookie(request)
     if settings.OAUTH_REQUIRE_PKCE and not challenge:
         return _redirect(_OAUTH_FAILED_PATH)
     try:
@@ -532,24 +572,8 @@ async def oauth_callback(
             logger.exception("Failed to provision user during OAuth callback")
             return _redirect("/login?oauth=failed")
 
-        # One-time handoff code so the SPA can fetch tokens from the response body via
-        # oauth_exchange, which establishes the session cookies on the frontend's proxied origin.
-        handoff_code = secrets.token_urlsafe(32)
-        try:
-            await redis.set(
-                f"{_OAUTH_HANDOFF_PREFIX}{handoff_code}",
-                json.dumps(
-                    {
-                        "accessToken": auth_response.session.access_token,
-                        "refreshToken": auth_response.session.refresh_token,
-                        "userId": str(auth_response.user.id),
-                        "challenge": challenge,
-                    }
-                ),
-                ex=_OAUTH_HANDOFF_TTL,
-            )
-        except Exception:  # intentional: a Redis failure must not block the OAuth flow
-            logger.exception("Failed to store OAuth handoff code")
+        handoff_code = await _store_handoff_code(redis, auth_response.session, auth_response.user, challenge)
+        if not handoff_code:
             return _redirect(_OAUTH_FAILED_PATH)
 
         return _redirect(f"/auth/callback?code={handoff_code}")
@@ -601,11 +625,18 @@ async def _optional_body_refresh_token(request: Request) -> str | None:
     if declared and declared.isdigit() and int(declared) > _LOGOUT_BODY_MAX_BYTES:
         return None
 
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _LOGOUT_BODY_READ_TIMEOUT_SECONDS
+
     async def read_capped() -> bytes | None:
         raw = bytearray()
         async for chunk in request.stream():
             raw += chunk
             if len(raw) > _LOGOUT_BODY_MAX_BYTES:  # chunked bodies carry no Content-Length
+                return None
+            # wait_for's cancel can be swallowed by the BaseHTTPMiddleware receive task group when it
+            # lands as a chunk arrives, and it never fires twice; the deadline is re-checked per chunk.
+            if loop.time() >= deadline:
                 return None
         return bytes(raw)
 

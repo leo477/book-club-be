@@ -1161,7 +1161,9 @@ async def test_oauth_start_binds_verifier_to_httponly_flow_cookie(no_redirect_cl
     assert redis.set.await_args_list[0].kwargs["ex"] == 600
 
     lowered = header.lower()
-    assert "httponly" in lowered and "samesite=lax" in lowered and "path=/api/v1/auth" in lowered
+    assert "httponly" in lowered
+    assert "samesite=lax" in lowered
+    assert "path=/api/v1/auth" in lowered
     assert "max-age=600" in lowered
 
     query = _query(url)
@@ -1198,7 +1200,8 @@ async def test_logout_body_refresh_token_refreshes_then_revokes_without_cookies(
     refresh.assert_awaited_once_with("fake-refresh-token")
     override_get_db.admin.sign_out.assert_awaited_once()
     fresh_token, scope = override_get_db.admin.sign_out.await_args.args
-    assert fresh_token and scope == "local"
+    assert fresh_token
+    assert scope == "local"
 
 
 @pytest.mark.asyncio
@@ -1212,7 +1215,8 @@ async def test_logout_body_refresh_token_after_expired_bearer_falls_back(async_c
     refresh.assert_awaited_once_with("fake-refresh-token")
     calls = override_get_db.admin.sign_out.await_args_list
     assert calls[0].args[0] == "expired-token"
-    assert calls[1].args[0] != "expired-token" and calls[1].args[1] == "local"
+    assert calls[1].args[0] != "expired-token"
+    assert calls[1].args[1] == "local"
 
 
 @pytest.mark.asyncio
@@ -1419,7 +1423,8 @@ async def test_oauth_full_flow_exchanges_a_fresh_verifier_without_touching_share
     resp = await _callback(no_redirect_client, code, cookie)
     assert "/auth/callback?code=" in resp.headers["location"]
     verifier = override_get_db.exchange_calls[-1]["code_verifier"]
-    assert isinstance(verifier, str) and len(verifier) == 64
+    assert isinstance(verifier, str)
+    assert len(verifier) == 64
 
     settings = Settings(SUPABASE_URL="https://isolated-full.supabase.co", SUPABASE_ANON_KEY="anon")
     try:
@@ -1547,6 +1552,31 @@ async def test_logout_slow_body_times_out_but_still_clears_cookies(async_client,
     _assert_cookies_cleared(resp)
     refresh.assert_not_awaited()
     override_get_db.admin.sign_out.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_optional_body_token_enforces_deadline_when_the_timeout_cancel_is_swallowed(monkeypatch):
+    # BaseHTTPMiddleware's receive task group can swallow wait_for's one-shot cancel when it lands as a
+    # chunk arrives (flaky on slow CI runners); the per-chunk deadline check must still end the read.
+    from types import SimpleNamespace
+
+    from app.routers.auth import _optional_body_refresh_token
+
+    monkeypatch.setattr("app.routers.auth._LOGOUT_BODY_READ_TIMEOUT_SECONDS", 0.05)
+
+    async def stream():
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            pass  # swallowed, as the middleware race does
+        yield b'{"refreshToken": '
+        await asyncio.sleep(5)
+        yield b'"fake-refresh-token"}'
+
+    request = SimpleNamespace(headers={}, stream=stream)
+    started = asyncio.get_running_loop().time()
+    assert await _optional_body_refresh_token(request) is None  # type: ignore[arg-type]
+    assert asyncio.get_running_loop().time() - started < 2
 
 
 @pytest.mark.asyncio
