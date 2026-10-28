@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -17,6 +18,7 @@ from pydantic import EmailStr
 from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from supabase_auth.types import Session as SupabaseSession
 from supabase_auth.types import User as SupabaseUser
 
 from app.config import Settings
@@ -33,9 +35,9 @@ from app.schemas.auth import (
     WsTicketResponse,
 )
 from app.services.auth_service import (
+    build_oauth_authorize_url,
     get_supabase_client,
     supabase_exchange_code,
-    supabase_oauth_url,
     supabase_refresh,
     supabase_revoke_session,
     supabase_sign_in,
@@ -51,6 +53,8 @@ _REFRESH_COOKIE = "refresh_token"
 _ACCESS_COOKIE = "access_token"
 _FE_ORIGIN_COOKIE = "fe_origin"
 _OAUTH_CHALLENGE_COOKIE = "oauth_challenge"
+_OAUTH_FLOW_COOKIE = "oauth_flow"
+_OAUTH_FLOW_PREFIX = "oauth:flow:"
 _OAUTH_FAILED_PATH = "/login?oauth=failed"
 _PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _OAUTH_HANDOFF_PREFIX = "oauth:handoff:"
@@ -410,13 +414,28 @@ async def refresh_token(
 async def oauth_google(
     request: Request,  # slowapi requires this exact parameter name
     settings: Annotated[Settings, Depends(get_settings_dep)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
     origin: Annotated[str | None, Query()] = None,
     challenge: Annotated[str | None, Query(pattern=_PKCE_CHALLENGE_RE.pattern)] = None,
 ) -> RedirectResponse:
-    client = await get_supabase_client(settings)
     redirect_to = f"{settings.BACKEND_URL}{_AUTH_PREFIX}/callback"
-    url = await supabase_oauth_url(client, "google", redirect_to)
+    url, verifier = build_oauth_authorize_url(settings, "google", redirect_to)
+    flow_id = secrets.token_urlsafe(32)
+    try:
+        await redis.set(f"{_OAUTH_FLOW_PREFIX}{flow_id}", verifier, ex=settings.OAUTH_FLOW_TTL)
+    except Exception as exc:  # intentional: fail closed, a flow without a stored verifier can never complete
+        logger.exception("Failed to store OAuth flow")
+        raise AppError(status.HTTP_503_SERVICE_UNAVAILABLE, "OAuth provider unavailable", "OAUTH_INIT_ERROR") from exc
     response = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        key=_OAUTH_FLOW_COOKIE,
+        value=flow_id,
+        httponly=True,
+        secure=settings.ENV == "production",
+        samesite="lax",
+        max_age=settings.OAUTH_FLOW_TTL,
+        path=_AUTH_PREFIX,
+    )
 
     candidate = origin or request.headers.get("referer")
     fe_origin = _resolve_frontend_origin(candidate, settings)
@@ -448,6 +467,58 @@ async def oauth_google(
     return response
 
 
+async def _drop_abandoned_flow(redis: aioredis.Redis, flow_id: str | None) -> None:
+    if flow_id and _PKCE_CHALLENGE_RE.fullmatch(flow_id):
+        try:  # drop the abandoned flow now instead of at TTL
+            await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
+        except Exception:  # intentional: best-effort cleanup
+            logger.warning("Failed to drop abandoned OAuth flow")
+
+
+async def _take_flow_verifier(redis: aioredis.Redis, flow_id: str | None) -> str | None:
+    if not flow_id or not _PKCE_CHALLENGE_RE.fullmatch(flow_id):
+        return None
+    try:
+        raw_verifier = await redis.getdel(f"{_OAUTH_FLOW_PREFIX}{flow_id}")
+    except Exception:  # intentional: no verifier means no safe exchange
+        logger.exception("Failed to load OAuth flow")
+        return None
+    if not raw_verifier:
+        return None
+    # The pool is created with decode_responses=False, so Redis hands back bytes.
+    return raw_verifier.decode() if isinstance(raw_verifier, bytes) else raw_verifier
+
+
+def _valid_challenge_cookie(request: Request) -> str | None:
+    raw_challenge = request.cookies.get(_OAUTH_CHALLENGE_COOKIE)
+    return raw_challenge if raw_challenge and _PKCE_CHALLENGE_RE.fullmatch(raw_challenge) else None
+
+
+async def _store_handoff_code(
+    redis: aioredis.Redis, session: SupabaseSession, user: SupabaseUser, challenge: str | None
+) -> str | None:
+    # One-time handoff code so the SPA can fetch tokens from the response body via
+    # oauth_exchange, which establishes the session cookies on the frontend's proxied origin.
+    handoff_code = secrets.token_urlsafe(32)
+    try:
+        await redis.set(
+            f"{_OAUTH_HANDOFF_PREFIX}{handoff_code}",
+            json.dumps(
+                {
+                    "accessToken": session.access_token,
+                    "refreshToken": session.refresh_token,
+                    "userId": str(user.id),
+                    "challenge": challenge,
+                }
+            ),
+            ex=_OAUTH_HANDOFF_TTL,
+        )
+    except Exception:  # intentional: a Redis failure must not block the OAuth flow
+        logger.exception("Failed to store OAuth handoff code")
+        return None
+    return handoff_code
+
+
 @router.get("/callback")
 async def oauth_callback(
     request: Request,
@@ -466,19 +537,25 @@ async def oauth_callback(
         response = RedirectResponse(f"{frontend}{path}", status_code=status.HTTP_302_FOUND)
         response.delete_cookie(_FE_ORIGIN_COOKIE, path=_AUTH_PREFIX)
         response.delete_cookie(_OAUTH_CHALLENGE_COOKIE, path=_AUTH_PREFIX)
+        response.delete_cookie(_OAUTH_FLOW_COOKIE, path=_AUTH_PREFIX)
         return response
 
+    # The verifier is tied to the starting browser, so a code planted into another browser cannot log it in.
+    flow_id = request.cookies.get(_OAUTH_FLOW_COOKIE)
     if not code:
+        await _drop_abandoned_flow(redis, flow_id)
         return _redirect(_OAUTH_FAILED_PATH)
-    raw_challenge = request.cookies.get(_OAUTH_CHALLENGE_COOKIE)
-    challenge = raw_challenge if raw_challenge and _PKCE_CHALLENGE_RE.fullmatch(raw_challenge) else None
+    verifier = await _take_flow_verifier(redis, flow_id)
+    if not verifier:
+        return _redirect(_OAUTH_FAILED_PATH)
+    challenge = _valid_challenge_cookie(request)
     if settings.OAUTH_REQUIRE_PKCE and not challenge:
         return _redirect(_OAUTH_FAILED_PATH)
     try:
         client = await get_supabase_client(settings)
         # noinspection PyBroadException
         try:
-            auth_response = await supabase_exchange_code(client, code)
+            auth_response = await supabase_exchange_code(client, code, verifier)
         except HTTPException:
             return _redirect(_OAUTH_FAILED_PATH)
         except Exception:  # intentional: any failure redirects to the OAuth failure page
@@ -495,24 +572,8 @@ async def oauth_callback(
             logger.exception("Failed to provision user during OAuth callback")
             return _redirect("/login?oauth=failed")
 
-        # One-time handoff code so the SPA can fetch tokens from the response body via
-        # oauth_exchange, which establishes the session cookies on the frontend's proxied origin.
-        handoff_code = secrets.token_urlsafe(32)
-        try:
-            await redis.set(
-                f"{_OAUTH_HANDOFF_PREFIX}{handoff_code}",
-                json.dumps(
-                    {
-                        "accessToken": auth_response.session.access_token,
-                        "refreshToken": auth_response.session.refresh_token,
-                        "userId": str(auth_response.user.id),
-                        "challenge": challenge,
-                    }
-                ),
-                ex=_OAUTH_HANDOFF_TTL,
-            )
-        except Exception:  # intentional: a Redis failure must not block the OAuth flow
-            logger.exception("Failed to store OAuth handoff code")
+        handoff_code = await _store_handoff_code(redis, auth_response.session, auth_response.user, challenge)
+        if not handoff_code:
             return _redirect(_OAUTH_FAILED_PATH)
 
         return _redirect(f"/auth/callback?code={handoff_code}")
@@ -552,19 +613,71 @@ async def oauth_exchange(
     return OAuthExchangeResponse(**_body_tokens(request, data["accessToken"], data["refreshToken"], settings))
 
 
+_LOGOUT_BODY_MAX_BYTES = 2048
+_LOGOUT_BODY_READ_TIMEOUT_SECONDS = 3.0
+
+
+async def _optional_body_refresh_token(request: Request) -> str | None:
+    # Best-effort, never raises: logout must always clear cookies (a deeply nested body raises
+    # RecursionError, a dropped client raises ClientDisconnect). Parsed by hand, not a Body() param,
+    # because FastAPI answers 422 to malformed bodies. Cookie wins: the body is for cookie-less clients.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _LOGOUT_BODY_MAX_BYTES:
+        return None
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _LOGOUT_BODY_READ_TIMEOUT_SECONDS
+
+    async def read_capped() -> bytes | None:
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > _LOGOUT_BODY_MAX_BYTES:  # chunked bodies carry no Content-Length
+                return None
+            # wait_for's cancel can be swallowed by the BaseHTTPMiddleware receive task group when it
+            # lands as a chunk arrives, and it never fires twice; the deadline is re-checked per chunk.
+            if loop.time() >= deadline:
+                return None
+        return bytes(raw)
+
+    try:
+        # Bounded so an unauthenticated slow-drip body cannot hold the coroutine open.
+        raw = await asyncio.wait_for(read_capped(), _LOGOUT_BODY_READ_TIMEOUT_SECONDS)
+        if raw is None:
+            return None
+        data = json.loads(raw)
+    except Exception:  # CancelledError is a BaseException and still propagates
+        return None
+    token = data.get("refreshToken") if isinstance(data, dict) else None
+    return token if isinstance(token, str) and token.strip() else None
+
+
 # noinspection PyUnusedLocal
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    openapi_extra={
+        "requestBody": {
+            "required": False,
+            "content": {
+                "application/json": {"schema": {"type": "object", "properties": {"refreshToken": {"type": "string"}}}}
+            },
+        }
+    },
+)
 @limiter.limit("20/minute")
 async def logout(
     request: Request,  # slowapi requires this exact parameter name
     response: Response,
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> Response:
+    """Clear session cookies and revoke; the refresh cookie wins, the optional body token is for cookie-less clients."""
     # No auth dependency: an expired access token must not block clearing cookies and revoking.
     # A 429 does not clear cookies, so the frontend must clear local state regardless.
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else request.cookies.get("access_token")
-    await supabase_revoke_session(settings, token, request.cookies.get(_REFRESH_COOKIE))
+    refresh = request.cookies.get(_REFRESH_COOKIE) or await _optional_body_refresh_token(request)
+    await supabase_revoke_session(settings, token, refresh)
     # Mutate the injected `response`, not a freshly constructed one — a new Response()
     # here would discard the delete-cookie headers just set on it.
     _clear_session_cookies(response, settings)

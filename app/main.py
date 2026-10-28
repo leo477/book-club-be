@@ -39,6 +39,7 @@ from app.routers.upload import router as upload_router
 from app.routers.users import router as users_router
 from app.tasks.cleanup import (
     cleanup_analytics_events,
+    cleanup_csp_reports,
     cleanup_expired_event_chat_rooms,
     cleanup_inactive_chat_rooms,
 )
@@ -84,20 +85,27 @@ def _validate_production_settings(settings: Settings) -> None:
         raise RuntimeError("Supabase must be configured in production (SUPABASE_URL/ANON_KEY)")
 
 
+def _init_sentry(settings: Settings) -> None:
+    if not settings.SENTRY_DSN:
+        return
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.ENV,
+        integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+        traces_sample_rate=0.1,
+        # Frame locals repr the storage client, whose headers hold the raw service-role key.
+        include_local_variables=False,
+    )
+    logger.info("Sentry initialized", env=settings.ENV)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
 
     _validate_production_settings(settings)
 
-    if settings.SENTRY_DSN:
-        sentry_sdk.init(
-            dsn=settings.SENTRY_DSN,
-            environment=settings.ENV,
-            integrations=[FastApiIntegration(), SqlalchemyIntegration()],
-            traces_sample_rate=0.1,
-        )
-        logger.info("Sentry initialized", env=settings.ENV)
+    _init_sentry(settings)
 
     redis_pool = aioredis.ConnectionPool.from_url(
         settings.REDIS_URL,
@@ -134,18 +142,24 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     cleanup_task: asyncio.Task[None] | None = None
     event_chat_lifecycle_task: asyncio.Task[None] | None = None
     analytics_cleanup_task: asyncio.Task[None] | None = None
+    csp_cleanup_task: asyncio.Task[None] | None = None
     if settings.RUN_BACKGROUND_TASKS:
         cleanup_task = asyncio.create_task(cleanup_inactive_chat_rooms())
         event_chat_lifecycle_task = asyncio.create_task(cleanup_expired_event_chat_rooms())
         analytics_cleanup_task = asyncio.create_task(cleanup_analytics_events())
+        csp_cleanup_task = asyncio.create_task(cleanup_csp_reports())
 
     yield
 
-    for task in (cleanup_task, event_chat_lifecycle_task, analytics_cleanup_task):
+    for task in (cleanup_task, event_chat_lifecycle_task, analytics_cleanup_task, csp_cleanup_task):
         if task is not None:
             task.cancel()
     await asyncio.gather(
-        *(t for t in (cleanup_task, event_chat_lifecycle_task, analytics_cleanup_task) if t is not None),
+        *(
+            t
+            for t in (cleanup_task, event_chat_lifecycle_task, analytics_cleanup_task, csp_cleanup_task)
+            if t is not None
+        ),
         return_exceptions=True,
     )
 
