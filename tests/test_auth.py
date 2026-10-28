@@ -1161,7 +1161,9 @@ async def test_oauth_start_binds_verifier_to_httponly_flow_cookie(no_redirect_cl
     assert redis.set.await_args_list[0].kwargs["ex"] == 600
 
     lowered = header.lower()
-    assert "httponly" in lowered and "samesite=lax" in lowered and "path=/api/v1/auth" in lowered
+    assert "httponly" in lowered
+    assert "samesite=lax" in lowered
+    assert "path=/api/v1/auth" in lowered
     assert "max-age=600" in lowered
 
     query = _query(url)
@@ -1198,7 +1200,8 @@ async def test_logout_body_refresh_token_refreshes_then_revokes_without_cookies(
     refresh.assert_awaited_once_with("fake-refresh-token")
     override_get_db.admin.sign_out.assert_awaited_once()
     fresh_token, scope = override_get_db.admin.sign_out.await_args.args
-    assert fresh_token and scope == "local"
+    assert fresh_token
+    assert scope == "local"
 
 
 @pytest.mark.asyncio
@@ -1212,7 +1215,8 @@ async def test_logout_body_refresh_token_after_expired_bearer_falls_back(async_c
     refresh.assert_awaited_once_with("fake-refresh-token")
     calls = override_get_db.admin.sign_out.await_args_list
     assert calls[0].args[0] == "expired-token"
-    assert calls[1].args[0] != "expired-token" and calls[1].args[1] == "local"
+    assert calls[1].args[0] != "expired-token"
+    assert calls[1].args[1] == "local"
 
 
 @pytest.mark.asyncio
@@ -1419,7 +1423,8 @@ async def test_oauth_full_flow_exchanges_a_fresh_verifier_without_touching_share
     resp = await _callback(no_redirect_client, code, cookie)
     assert "/auth/callback?code=" in resp.headers["location"]
     verifier = override_get_db.exchange_calls[-1]["code_verifier"]
-    assert isinstance(verifier, str) and len(verifier) == 64
+    assert isinstance(verifier, str)
+    assert len(verifier) == 64
 
     settings = Settings(SUPABASE_URL="https://isolated-full.supabase.co", SUPABASE_ANON_KEY="anon")
     try:
